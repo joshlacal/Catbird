@@ -9,6 +9,7 @@ struct HashtagView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.locale) private var locale
     @State private var posts: [AppBskyFeedDefs.PostView] = []
     @State private var relatedTags: [String] = []
     @State private var isLoading = false
@@ -21,9 +22,13 @@ struct HashtagView: View {
     
     private static let contentFilterService = ContentFilterService()
     private static let hashtagRegex = try? NSRegularExpression(pattern: "#([a-zA-Z0-9_]+)")
+    private var hashtagTitle: String {
+        "#\(tag)"
+    }
+
     var body: some View {
         postsList
-            .navigationTitle("#\(tag)")
+            .navigationTitle(hashtagTitle)
             .modifier(HashtagNavigationTitleModifier())
             .safeAreaPadding([.top, .bottom])
             .toolbar {
@@ -35,7 +40,12 @@ struct HashtagView: View {
                               ? "line.3.horizontal.decrease.circle"
                               : "line.3.horizontal.decrease.circle.fill")
                     }
-                    .accessibilityLabel("Filter by language, \(languageFilterName)")
+                    .accessibilityLabel(
+                        Text(
+                            "Filter by language, \(languageFilterName)",
+                            comment: "Toolbar button accessibility label for hashtag language filter — variable is the selected language name"
+                        )
+                    )
                     .accessibilityIdentifier("hashtag.languageFilter")
                 }
             }
@@ -78,7 +88,7 @@ struct HashtagView: View {
                             Button {
                                 path.append(NavigationDestination.hashtag(relatedTag))
                             } label: {
-                                Text("#\(relatedTag)")
+                                Text(verbatim: "#\(relatedTag)")
                                     .appFont(AppTextRole.subheadline)
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 8)
@@ -116,14 +126,21 @@ struct HashtagView: View {
 
     private var sortOptions: some View {
         Picker("Sort posts", selection: $sortByRecent) {
-            Text("Latest").tag(true)
-            Text("Top").tag(false)
+            Text("Latest", comment: "Sort option for most recent posts in a hashtag feed").tag(true)
+            Text("Top", comment: "Sort option for top posts in a hashtag feed").tag(false)
         }
     }
 
     private var languageFilterName: String {
-        guard let languageFilter else { return "Any language" }
-        return Locale.current.localizedString(forLanguageCode: languageFilter) ?? languageFilter
+        guard let languageFilter else {
+            var resource = LocalizedStringResource(
+                "Any language",
+                comment: "Filter label when all post languages are shown"
+            )
+            resource.locale = locale
+            return String(localized: resource)
+        }
+        return locale.localizedString(forLanguageCode: languageFilter) ?? languageFilter
     }
 
     private func reloadPosts() {
@@ -438,6 +455,7 @@ struct HashtagFilterView: View {
     @Binding var languageFilter: String?
     var onApply: () -> Void
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.locale) private var locale
     /// Edited locally so Cancel leaves the applied language untouched.
     @State private var draftLanguage: String?
     
@@ -447,19 +465,9 @@ struct HashtagFilterView: View {
         self._draftLanguage = State(initialValue: languageFilter.wrappedValue)
     }
     
-    // Define a list of common languages
-    private let languages = [
-        (name: "Any", code: nil as String?),
-        (name: "English", code: "en" as String?),
-        (name: "Spanish", code: "es" as String?),
-        (name: "Japanese", code: "ja" as String?),
-        (name: "German", code: "de" as String?),
-        (name: "French", code: "fr" as String?),
-        (name: "Portuguese", code: "pt" as String?),
-        (name: "Italian", code: "it" as String?),
-        (name: "Russian", code: "ru" as String?),
-        (name: "Korean", code: "ko" as String?),
-        (name: "Chinese", code: "zh" as String?)
+    // Common language codes for hashtag filtering
+    private let languageCodes: [String] = [
+        "en", "es", "ja", "de", "fr", "pt", "it", "ru", "ko", "zh"
     ]
 
     var body: some View {
@@ -467,8 +475,10 @@ struct HashtagFilterView: View {
             Form {
                 Section("Language") {
                     Picker("Language", selection: $draftLanguage) {
-                        ForEach(languages, id: \.name) { lang in
-                            Text(lang.name).tag(lang.code)
+                        Text("Any", comment: "Language filter option to include posts in any language").tag(String?.none)
+                        ForEach(languageCodes, id: \.self) { code in
+                            Text(locale.localizedString(forLanguageCode: code) ?? code)
+                                .tag(String?.some(code))
                         }
                     }
                 }

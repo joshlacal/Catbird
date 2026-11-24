@@ -5,7 +5,7 @@ import UIKit
 /// Configuration for the inline UIKit composer hosted inside ChatCollectionViewController.
 /// Pass `nil` to omit the composer (e.g. for ConversationView, UnifiedChatView).
 struct InlineComposerConfig {
-  var placeholderText: String = "Message"
+  var placeholderText: String = String(localized: "Message")
   /// When true the send button is disabled and taps are ignored, leaving the
   /// draft intact (WS-6.5: sends blocked during conversation recovery).
   var isSendBlocked: Bool = false

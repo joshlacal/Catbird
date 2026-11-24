@@ -154,7 +154,7 @@ extension DisplayMessage {
                 id: msg.id.uuidString,
                 user: User(
                     id: msg.senderDID,
-                    name: "You", // Optimistic messages are always from current user
+                    name: String(localized: "You"),
                     avatarURL: nil, // We could fetch this if needed
                     isCurrentUser: true
                 ),
@@ -171,13 +171,13 @@ extension DisplayMessage {
                 id: msg.id,
                 user: User(
                     id: "unknown",
-                    name: "Unknown",
+                    name: String(localized: "Unknown", comment: "Fallback display name when sender identity is unavailable"),
                     avatarURL: nil,
                     isCurrentUser: false
                 ),
                 status: nil, // Confirmed messages are sent
                 createdAt: msg.createdAt.date,
-                text: "Encrypted Message", // Placeholder, actual decryption happens in view or cache
+                text: String(localized: "Encrypted Message", comment: "Placeholder text for an encrypted message before decryption"),
                 embed: nil // Embeds handled separately or need decryption
             )
         case .system(let msg):
@@ -186,7 +186,7 @@ extension DisplayMessage {
                 id: msg.id,
                 user: User(
                     id: "system",
-                    name: "System",
+                    name: String(localized: "System", comment: "Sender name for system messages"),
                     avatarURL: nil,
                     isCurrentUser: false
                 ),
@@ -204,25 +204,25 @@ extension SystemMessageType {
     var defaultDisplayText: String {
         switch self {
         case .memberJoined:
-            return "A member joined the conversation"
+            return String(localized: "A member joined the conversation")
         case .memberLeft:
-            return "A member left the conversation"
+            return String(localized: "A member left the conversation")
         case .memberRemoved:
-            return "A member was removed"
+            return String(localized: "A member was removed", comment: "System message when a member is removed from a conversation")
         case .memberKicked:
-            return "A member was kicked"
+            return String(localized: "A member was kicked", comment: "System message when a member is kicked from a conversation")
         case .groupCreated:
-            return "Conversation created"
+            return String(localized: "Conversation created")
         case .epochRotated:
-            return "Security keys updated"
+            return String(localized: "Security keys updated", comment: "System message when MLS security keys are updated")
         case .adminPromoted:
-            return "Admin promoted"
+            return String(localized: "Admin promoted", comment: "System message when a member is promoted to admin")
         case .deviceAdded:
-            return "New device added"
+            return String(localized: "New device added", comment: "System message when a new device is added")
         case .groupReset:
-            return "Encryption was reset"
+            return String(localized: "Encryption was reset")
         case .infoMessage:
-            return "System notification"
+            return String(localized: "System notification", comment: "Fallback label for a system notification message")
         }
     }
 }

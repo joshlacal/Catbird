@@ -203,7 +203,7 @@ struct PDSDirectDeletionClient: Sendable {
 
 struct AccountErasureRecoveryRequired: LocalizedError {
   var errorDescription: String? {
-    "Catbird could not confirm erasure of your encrypted chat history. Sign in to this account on a device authorized for encrypted chat, or open Encrypted Chat to enroll and approve this device, then retry. Your hosted account remains active."
+    String(localized: "Catbird could not confirm erasure of your encrypted chat history. Sign in to this account on a device authorized for encrypted chat, or open Encrypted Chat to enroll and approve this device, then retry. Your hosted account remains active.", comment: "Account deletion error when encrypted chat erasure needs an authorized device.")
   }
 }
 
@@ -214,9 +214,9 @@ enum HostedPeerErasureError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .pending:
-      "Other chat services are still processing the request to erase your encrypted history. Keep this device signed in and retry. Your hosted account is still active."
+      String(localized: "Other chat services are still processing the request to erase your encrypted history. Keep this device signed in and retry. Your hosted account is still active.", comment: "Account deletion error while peer chat services process erasure.")
     case .unverified:
-      "Catbird could not verify that every chat service erased your encrypted history. Your hosted account is still active. Keep this device signed in and retry after the chat services can confirm erasure."
+      String(localized: "Catbird could not verify that every chat service erased your encrypted history. Your hosted account is still active. Keep this device signed in and retry after the chat services can confirm erasure.", comment: "Account deletion error when peer chat erasure cannot yet be verified.")
     }
   }
 }

@@ -16,7 +16,16 @@ import Foundation
 /// An account App Intents can resolve as a parameter (e.g. "post as Account").
 @available(iOS 18.0, *)
 struct AccountEntity: AppEntity {
-  static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Account")
+  static var typeDisplayRepresentation = TypeDisplayRepresentation(
+    name: LocalizedStringResource(
+      "Account",
+      comment: "App Intents entity type name for a signed-in Bluesky account."
+    ),
+    numericFormat: LocalizedStringResource(
+      "\(placeholder: .int) accounts",
+      comment: "Pluralized count of signed-in Bluesky accounts in Shortcuts."
+    )
+  )
   static var defaultQuery = AccountEntityQuery()
 
   let id: String  // DID
@@ -25,9 +34,10 @@ struct AccountEntity: AppEntity {
   let avatarURL: URL?
 
   var displayRepresentation: DisplayRepresentation {
-    DisplayRepresentation(
+    let formattedHandle = "@\(handle)"
+    return DisplayRepresentation(
       title: "\(displayName)",
-      subtitle: "@\(handle)"
+      subtitle: "\(formattedHandle)"
     )
   }
 }

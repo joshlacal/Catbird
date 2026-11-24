@@ -48,16 +48,22 @@ struct MLSConversationPrompt: Identifiable {
   static func deleteForMe(_ conversation: MLSConversationModel, targetDID: String) -> Self {
     .init(
       kind: .confirmDeleteForMe(conversation, targetDID: targetDID),
-      title: "Delete Conversation for Me?",
-      message: "This will remove the conversation and its message history from this device only. You will not leave the conversation, and other participants will not be affected. This cannot be undone."
+      title: String(localized: "Delete Conversation for Me?", comment: "Alert title confirming local deletion of an encrypted conversation"),
+      message: String(
+        localized: "This will remove the conversation and its message history from this device only. You will not leave the conversation, and other participants will not be affected. This cannot be undone.",
+        comment: "Alert message explaining local-only deletion of an encrypted conversation"
+      )
     )
   }
 
   static func leave(_ conversation: MLSConversationModel) -> Self {
     .init(
       kind: .confirmLeave(conversation),
-      title: "Leave Conversation?",
-      message: "Are you sure you want to leave this conversation? You will no longer be able to send or receive messages."
+      title: String(localized: "Leave Conversation?", comment: "Alert title confirming leaving an encrypted conversation"),
+      message: String(
+        localized: "Are you sure you want to leave this conversation? You will no longer be able to send or receive messages.",
+        comment: "Alert message explaining consequences of leaving an encrypted conversation"
+      )
     )
   }
 
@@ -118,6 +124,15 @@ struct ChatTabView: View {
   enum ChatMode: String, CaseIterable {
     case bluesky = "Bluesky DMs"
     case mls = "Catbird Groups"
+
+    var displayName: String {
+      switch self {
+      case .bluesky:
+        return String(localized: "Bluesky DMs", comment: "Chat mode label for Bluesky direct messages")
+      case .mls:
+        return String(localized: "Catbird Groups", comment: "Chat mode label for Catbird encrypted groups")
+      }
+    }
 
     var icon: String {
       switch self {
@@ -452,8 +467,11 @@ struct ChatTabView: View {
         Button {
           toggleMLSMute(convo)
         } label: {
-          Label(convo.isMuted ? "Unmute" : "Mute",
-                systemImage: convo.isMuted ? "bell" : "bell.slash")
+          if convo.isMuted {
+            Label("Unmute", systemImage: "bell")
+          } else {
+            Label("Mute", systemImage: "bell.slash")
+          }
         }
         .tint(convo.isMuted ? .blue : .orange)
       }
@@ -534,7 +552,7 @@ struct ChatTabView: View {
           Text(profileBasic.chatDisplayName)
             .appHeadline()
             .foregroundColor(.primary)
-          Text("@\(profileBasic.handle.description)")
+          Text(verbatim: "@\(profileBasic.handle.description)")
             .appSubheadline()
             .foregroundColor(.secondary)
           if profileBasic.chatDisabled == true {
@@ -770,9 +788,14 @@ struct ChatTabView: View {
   }
 
   private func createErrorAlert() -> Alert {
-    Alert(
+    let messageView: Text = if let lastErrorMessage {
+      Text(lastErrorMessage)
+    } else {
+      Text("Something went wrong. Try again.")
+    }
+    return Alert(
       title: Text("Messages"),
-      message: Text(lastErrorMessage ?? "Something went wrong. Try again."),
+      message: messageView,
       dismissButton: .default(Text("OK")) {
         appState.chatManager.errorState = nil
         lastErrorMessage = nil
@@ -911,12 +934,18 @@ struct ChatTabView: View {
             if let plaintext = payload.text, !plaintext.isEmpty {
               canonicalLastMessages[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: plaintext)
             } else if case .some(.image(_)) = payload.embed {
-              canonicalLastMessages[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: "Sent a photo")
+              canonicalLastMessages[convoID] = MLSLastMessagePreview(
+                senderDID: message.senderID,
+                text: String(localized: "Sent a photo", comment: "Conversation list preview when the last message is a photo")
+              )
             } else {
               continue
             }
           case .reaction:
-            canonicalLastMessages[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: "Reacted to a message")
+            canonicalLastMessages[convoID] = MLSLastMessagePreview(
+              senderDID: message.senderID,
+              text: String(localized: "Reacted to a message", comment: "Conversation list preview when the last activity is an emoji reaction")
+            )
           case .readReceipt, .typing, .adminRoster, .adminAction, .deliveryAck, .recoveryRequest,
                .edit, .unknown:
             continue
@@ -1177,7 +1206,11 @@ private struct ConditionalSwipeActions: ViewModifier {
               Task { await appState.chatManager.muteConversation(convoId: conversation.id) }
             }
           } label: {
-            Label(conversation.muted ? "Unmute" : "Mute", systemImage: conversation.muted ? "bell" : "bell.slash")
+            if conversation.muted {
+              Label("Unmute", systemImage: "bell")
+            } else {
+              Label("Mute", systemImage: "bell.slash")
+            }
           }
           .tint(conversation.muted ? .blue : .orange)
         }

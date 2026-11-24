@@ -17,23 +17,23 @@ enum ListError: Error, LocalizedError {
   var errorDescription: String? {
     switch self {
     case .clientNotInitialized:
-      return "You’re signed out. Sign in and try again."
+      return String(localized: "You’re signed out. Sign in and try again.", comment: "List operation error when signed out.")
     case .invalidResponse:
-      return "Something went wrong. Try again."
+      return String(localized: "Something went wrong. Try again.", comment: "List operation error for unexpected server response.")
     case .networkError:
-      return "Couldn’t reach Bluesky. Check your connection and try again."
+      return String(localized: "Couldn’t reach Bluesky. Check your connection and try again.", comment: "List operation error when offline.")
     case .listNotFound:
-      return "This list no longer exists."
+      return String(localized: "This list no longer exists.", comment: "List operation error when list is missing.")
     case .permissionDenied:
-      return "You don’t have permission to change this list."
+      return String(localized: "You don’t have permission to change this list.", comment: "List operation error when unauthorized.")
     case .memberAlreadyAdded:
-      return "This person is already on the list."
+      return String(localized: "This person is already on the list.", comment: "List operation error when adding an existing member.")
     case .memberNotInList:
-      return "This person isn’t on the list anymore."
+      return String(localized: "This person isn’t on the list anymore.", comment: "List operation error when removing a non-member.")
     case .avatarUploadFailed:
-      return "Couldn’t upload the list image. Try a different image."
+      return String(localized: "Couldn’t upload the list image. Try a different image.", comment: "List operation error when avatar upload fails.")
     case .unknown:
-      return "Something went wrong. Try again."
+      return String(localized: "Something went wrong. Try again.", comment: "Generic list operation error.")
     }
   }
 

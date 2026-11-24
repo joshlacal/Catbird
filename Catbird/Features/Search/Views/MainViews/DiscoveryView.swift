@@ -197,7 +197,7 @@ struct DiscoveryToolsSection: View {
         }
     }
 
-    private func tool(_ title: String, detail: String, icon: String, action: @escaping () -> Void) -> some View {
+    private func tool(_ title: LocalizedStringResource, detail: LocalizedStringResource, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(alignment: .center, spacing: DesignTokens.Spacing.base) {
                 Image(systemName: icon)
@@ -215,7 +215,7 @@ struct DiscoveryToolsSection: View {
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: "chevron.right")
+                Image(systemName: "chevron.forward")
                     .appFont(AppTextRole.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -240,6 +240,7 @@ struct AllTrendingTopicsView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.locale) private var locale
     @State private var selectedCategory: String?
     @State private var showContributors: Bool = false
     @State private var viewMode: ViewMode = .list
@@ -328,8 +329,11 @@ private struct InlineTopicSummaryLine: View {
                         Divider()
                         
                         Button(action: { showContributors.toggle() }) {
-                            Label(showContributors ? "Hide Contributors" : "Show Contributors", 
-                                  systemImage: showContributors ? "eye.slash" : "eye")
+                            if showContributors {
+                                Label("Hide Contributors", systemImage: "eye.slash")
+                            } else {
+                                Label("Show Contributors", systemImage: "eye")
+                            }
                         }
                     } label: {
                         Image(systemName: "ellipsis")
@@ -394,7 +398,10 @@ private struct InlineTopicSummaryLine: View {
                 selectedCategory = category
             }
         } label: {
-            Text(category.map { TrendingTopicCategoryStyle.name(for: $0) } ?? "All")
+            Text(
+                category.map { TrendingTopicCategoryStyle.name(for: $0) }
+                    ?? String(localized: "All", comment: "Filter chip to show trending topics from all categories")
+            )
                 .appFont(AppTextRole.subheadline.weight(selectedCategory == category ? .semibold : .medium))
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
@@ -538,7 +545,7 @@ private struct InlineTopicSummaryLine: View {
                         .lineLimit(1)
                         .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
                     
-                    Text("@\(actor.handle)")
+                    Text(verbatim: "@\(actor.handle)")
                         .appFont(AppTextRole.caption2)
                         .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
                         .lineLimit(1)
@@ -561,15 +568,7 @@ private struct InlineTopicSummaryLine: View {
     }
     
     private func formatPostCount(_ count: Int) -> String {
-        if count >= 1_000_000 {
-            let formatted = Double(count) / 1_000_000.0
-            return String(format: "%.1fM", formatted)
-        } else if count >= 1_000 {
-            let formatted = Double(count) / 1_000.0
-            return String(format: "%.1fK", formatted)
-        } else {
-            return "\(count)"
-        }
+        count.formatted(.number.notation(.compactName).locale(locale))
     }
     
     private func formatTimeSince(_ date: Date) -> String {
@@ -630,11 +629,17 @@ private extension AllTrendingTopicsView {
 
   @ViewBuilder
   func largeTopicStatistics(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
-    largeTopicStatistic(value: formatPostCount(topic.postCount), title: "Posts")
-    largeTopicStatistic(value: formatTimeSince(topic.startedAt.date), title: "Trending")
+    largeTopicStatistic(
+      value: formatPostCount(topic.postCount),
+      title: LocalizedStringResource("Posts", comment: "Label under the post count statistic for a trending topic")
+    )
+    largeTopicStatistic(
+      value: formatTimeSince(topic.startedAt.date),
+      title: LocalizedStringResource("Trending", comment: "Label under the elapsed time statistic for a trending topic")
+    )
   }
 
-  func largeTopicStatistic(value: String, title: LocalizedStringKey) -> some View {
+  func largeTopicStatistic(value: String, title: LocalizedStringResource) -> some View {
     VStack(alignment: .leading, spacing: 2) {
       Text(value)
         .appFont(AppTextRole.subheadline.weight(.semibold))

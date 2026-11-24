@@ -29,52 +29,72 @@ struct OnboardingStep {
 struct OnboardingContent {
   
   /// Welcome screen content for new Catbird users
-  static let welcome = OnboardingStep(
-    id: "welcome",
-    type: .welcome,
-    title: "Welcome to Catbird",
-    description: "A native Bluesky client for Apple platforms. Catbird makes it easy to connect with friends, discover new voices, and join conversations that matter to you.",
-    imageName: "CatbirdIcon",
-    primaryButtonTitle: "Get Started",
-    secondaryButtonTitle: nil,
-    showSkipButton: false
-  )
+  static var welcome: OnboardingStep {
+    OnboardingStep(
+      id: "welcome",
+      type: .welcome,
+      title: String(localized: "Welcome to Catbird", comment: "Onboarding welcome screen title."),
+      description: String(
+        localized: "A native Bluesky client for Apple platforms. Catbird makes it easy to connect with friends, discover new voices, and join conversations that matter to you.",
+        comment: "Onboarding welcome screen description."
+      ),
+      imageName: "CatbirdIcon",
+      primaryButtonTitle: String(localized: "Get Started", comment: "Primary action button on onboarding welcome screen."),
+      secondaryButtonTitle: nil,
+      showSkipButton: false
+    )
+  }
   
   /// Feed discovery help
-  static let feedDiscovery = OnboardingStep(
-    id: "feedDiscovery",
-    type: .feedDiscovery,
-    title: "Discover Custom Feeds",
-    description: "Bluesky's custom feeds let you see exactly what you want. Tap Add Feed to explore feeds curated by the community.",
-    imageName: "plus.circle.fill",
-    primaryButtonTitle: "Got it",
-    secondaryButtonTitle: nil,
-    showSkipButton: true
-  )
+  static var feedDiscovery: OnboardingStep {
+    OnboardingStep(
+      id: "feedDiscovery",
+      type: .feedDiscovery,
+      title: String(localized: "Discover Custom Feeds", comment: "Onboarding step title for discovering custom feeds."),
+      description: String(
+        localized: "Bluesky's custom feeds let you see exactly what you want. Tap Add Feed to explore feeds curated by the community.",
+        comment: "Onboarding step description explaining Bluesky custom feeds."
+      ),
+      imageName: "plus.circle.fill",
+      primaryButtonTitle: String(localized: "Got it", comment: "Button dismissing an onboarding help step."),
+      secondaryButtonTitle: nil,
+      showSkipButton: true
+    )
+  }
   
   /// Post creation tutorial
-  static let postCreation = OnboardingStep(
-    id: "postCreation",
-    type: .postCreation,
-    title: "Share Your Thoughts",
-    description: "Ready to post? Tap the compose button to share text, photos, or start a conversation. You can also reply to posts and join discussions.",
-    imageName: "square.and.pencil",
-    primaryButtonTitle: "Got it",
-    secondaryButtonTitle: nil,
-    showSkipButton: true
-  )
+  static var postCreation: OnboardingStep {
+    OnboardingStep(
+      id: "postCreation",
+      type: .postCreation,
+      title: String(localized: "Share Your Thoughts", comment: "Onboarding step title for creating posts."),
+      description: String(
+        localized: "Ready to post? Tap the compose button to share text, photos, or start a conversation. You can also reply to posts and join discussions.",
+        comment: "Onboarding step description explaining how to compose posts."
+      ),
+      imageName: "square.and.pencil",
+      primaryButtonTitle: String(localized: "Got it", comment: "Button dismissing an onboarding help step."),
+      secondaryButtonTitle: nil,
+      showSkipButton: true
+    )
+  }
   
   /// Profile setup reminder
-  static let profileSetup = OnboardingStep(
-    id: "profileSetup",
-    type: .profileSetup,
-    title: "Complete Your Profile",
-    description: "Add a profile picture, bio, and banner to help others discover and connect with you. A complete profile gets more engagement!",
-    imageName: "person.circle.fill",
-    primaryButtonTitle: "Set Up Profile",
-    secondaryButtonTitle: "Maybe Later",
-    showSkipButton: true
-  )
+  static var profileSetup: OnboardingStep {
+    OnboardingStep(
+      id: "profileSetup",
+      type: .profileSetup,
+      title: String(localized: "Complete Your Profile", comment: "Onboarding step title reminding user to set up their profile."),
+      description: String(
+        localized: "Add a profile picture, bio, and banner to help others discover and connect with you. A complete profile gets more engagement!",
+        comment: "Onboarding step description encouraging profile completion."
+      ),
+      imageName: "person.circle.fill",
+      primaryButtonTitle: String(localized: "Set Up Profile", comment: "Button to begin profile setup from onboarding."),
+      secondaryButtonTitle: String(localized: "Maybe Later", comment: "Secondary button to defer profile setup."),
+      showSkipButton: true
+    )
+  }
 }
 
 /// Tip overlay model for contextual hints
@@ -99,32 +119,38 @@ enum TipPosition {
 /// Predefined tips for different app areas
 struct OnboardingTips {
   
-  static let feedDiscovery = OnboardingTip(
-    id: "feedDiscovery",
-    title: "Discover Feeds",
-    message: "Tap + to explore custom feeds created by the community",
-    targetView: "addFeedButton",
-    position: .bottom,
-    showArrow: true
-  )
+  static var feedDiscovery: OnboardingTip {
+    OnboardingTip(
+      id: "feedDiscovery",
+      title: String(localized: "Discover Feeds", comment: "Contextual tip title for feed discovery."),
+      message: String(localized: "Tap + to explore custom feeds created by the community", comment: "Contextual tip message for adding feeds."),
+      targetView: "addFeedButton",
+      position: .bottom,
+      showArrow: true
+    )
+  }
   
-  static let composePost = OnboardingTip(
-    id: "composePost",
-    title: "Create Your First Post",
-    message: "Share your thoughts with the world",
-    targetView: "composeButton",
-    position: .top,
-    showArrow: true
-  )
+  static var composePost: OnboardingTip {
+    OnboardingTip(
+      id: "composePost",
+      title: String(localized: "Create Your First Post", comment: "Contextual tip title for composing a post."),
+      message: String(localized: "Share your thoughts with the world", comment: "Contextual tip message for composing a post."),
+      targetView: "composeButton",
+      position: .top,
+      showArrow: true
+    )
+  }
   
-  static let profileCompletion = OnboardingTip(
-    id: "profileCompletion",
-    title: "Complete Your Profile",
-    message: "Add a photo and bio to help others connect with you",
-    targetView: "profileTab",
-    position: .top,
-    showArrow: true
-  )
+  static var profileCompletion: OnboardingTip {
+    OnboardingTip(
+      id: "profileCompletion",
+      title: String(localized: "Complete Your Profile", comment: "Contextual tip title for completing profile."),
+      message: String(localized: "Add a photo and bio to help others connect with you", comment: "Contextual tip message for completing profile."),
+      targetView: "profileTab",
+      position: .top,
+      showArrow: true
+    )
+  }
 }
 
 /// Interactive onboarding wizard steps
@@ -138,19 +164,19 @@ public enum OnboardingFlowStep: Int, CaseIterable, Identifiable, Sendable {
   
   public var title: String {
     switch self {
-    case .avatar: return "Your Profile"
-    case .interests: return "Your Interests"
-    case .suggestedAccounts: return "Suggested Accounts"
-    case .finish: return "You’re All Set"
+    case .avatar: return String(localized: "Your Profile", comment: "Onboarding wizard step title for profile avatar.")
+    case .interests: return String(localized: "Your Interests", comment: "Onboarding wizard step title for choosing interests.")
+    case .suggestedAccounts: return String(localized: "Suggested Accounts", comment: "Onboarding wizard step title for suggested accounts.")
+    case .finish: return String(localized: "You’re All Set", comment: "Onboarding wizard final step title.")
     }
   }
   
   public var subtitle: String {
     switch self {
-    case .avatar: return "Choose a photo or build an avatar to help others find you."
-    case .interests: return "Select topics you care about to personalize your experience."
-    case .suggestedAccounts: return "Follow interesting people to kickstart your timeline."
-    case .finish: return "Catbird is ready for you. Let’s dive in."
+    case .avatar: return String(localized: "Choose a photo or build an avatar to help others find you.", comment: "Onboarding wizard avatar step subtitle.")
+    case .interests: return String(localized: "Select topics you care about to personalize your experience.", comment: "Onboarding wizard interests step subtitle.")
+    case .suggestedAccounts: return String(localized: "Follow interesting people to kickstart your timeline.", comment: "Onboarding wizard suggested accounts step subtitle.")
+    case .finish: return String(localized: "Catbird is ready for you. Let’s dive in.", comment: "Onboarding wizard final step subtitle.")
     }
   }
 }

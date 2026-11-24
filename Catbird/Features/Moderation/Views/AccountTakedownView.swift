@@ -283,7 +283,7 @@ struct AccountTakedownView: View {
         errorMessage = nil
         
         guard let client = appState.atProtoClient else {
-            errorMessage = "You’re signed out. Sign in again to submit an appeal."
+            errorMessage = String(localized: "You’re signed out. Sign in again to submit an appeal.", comment: "Account takedown appeal error when signed out.")
             isSubmitting = false
             return
         }
@@ -300,18 +300,18 @@ struct AccountTakedownView: View {
                 appealSubmitted = true
                 showingAppealForm = false
             } else {
-                errorMessage = "Couldn’t send your appeal. Try again later."
+                errorMessage = String(localized: "Couldn’t send your appeal. Try again later.", comment: "Account takedown appeal error.")
             }
         } catch let appealError as LabelAppealError {
             logger.error("Account appeal rejected: \(appealError.localizedDescription, privacy: .public)")
             if appealError == .alreadyAppealed {
-                errorMessage = "You’ve already appealed this decision, and it’s under review."
+                errorMessage = String(localized: "You’ve already appealed this decision, and it’s under review.", comment: "Account takedown appeal error when appeal was already submitted.")
             } else {
-                errorMessage = "Couldn’t send your appeal. Check your connection and try again."
+                errorMessage = String(localized: "Couldn’t send your appeal. Check your connection and try again.", comment: "Account takedown appeal error.")
             }
         } catch {
             logger.error("Account appeal failed: \(error.localizedDescription, privacy: .public)")
-            errorMessage = "Couldn’t send your appeal. Check your connection and try again."
+            errorMessage = String(localized: "Couldn’t send your appeal. Check your connection and try again.", comment: "Account takedown appeal error.")
         }
         
         isSubmitting = false

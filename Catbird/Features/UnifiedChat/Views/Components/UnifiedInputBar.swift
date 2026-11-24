@@ -9,7 +9,7 @@ struct UnifiedInputBar: View {
   var onAttachTapped: (() -> Void)?
   var onMicTapped: (() -> Void)?
   var isRecording: Bool = false
-  var placeholder: String = "Message"
+  var placeholder: String = String(localized: "Message", comment: "Placeholder text in the chat message input bar")
   var isDisabled: Bool = false
   var showsInputBackground: Bool = true
   var clearsDraftOnSend: Bool = true
@@ -149,21 +149,21 @@ struct UnifiedInputBar: View {
   private func embedTitle(for embed: UnifiedEmbed) -> String {
     switch embed {
     case .blueskyRecord:
-      return "Shared Post"
+      return String(localized: "Shared Post")
     case .link(let link):
-      return link.title ?? "Link"
+      return link.title ?? String(localized: "Link", comment: "Fallback title for a link attachment in chat")
     case .gif:
-      return "GIF"
+      return String(localized: "GIF", comment: "Title for a GIF attachment in chat")
     case .post(let post):
-      return post.authorHandle ?? "Shared Post"
+      return post.authorHandle ?? String(localized: "Shared Post")
     case .tile(let tile):
       return tile.name
     case .image:
-      return "Image"
+      return String(localized: "Image", comment: "Title for an image attachment in chat")
     case .audio:
-      return "Voice Message"
+      return String(localized: "Voice Message", comment: "Title for a voice message attachment in chat")
     case .groupInvite, .groupInvitation:
-      return "Group Invite"
+      return String(localized: "Group Invite", comment: "Title for a group chat invite attachment")
     }
   }
 
@@ -182,15 +182,15 @@ struct UnifiedInputBar: View {
     case .image(let imageData):
       return "\(imageData.width)x\(imageData.height)"
     case .audio(let data):
-      return "\(data.durationMs / 1000)s"
+      return Duration.milliseconds(data.durationMs).formatted(.units(allowed: [.minutes, .seconds], width: .narrow))
     case .groupInvitation:
-      return "Separate group invitation"
+      return String(localized: "Separate group invitation", comment: "Subtitle for an encrypted group invitation attachment")
     case .groupInvite(let invite):
       switch invite {
       case .preview(let name, _, _, _):
         return name
       case .unavailable:
-        return "Invite unavailable"
+        return String(localized: "Invite unavailable", comment: "Subtitle when a group invite link is no longer valid")
       }
     }
   }

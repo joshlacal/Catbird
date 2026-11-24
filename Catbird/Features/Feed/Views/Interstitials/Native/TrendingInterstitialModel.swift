@@ -37,7 +37,12 @@ struct TrendingInterstitialModel {
     let accessibilityLabel: String
   }
 
-  static let emptyVideosMessage = "No video previews right now. Pull to refresh, or open The Vids."
+  static var emptyVideosMessage: String {
+    String(
+      localized: "No video previews right now. Pull to refresh, or open The Vids.",
+      comment: "Empty state message when trending video previews are unavailable"
+    )
+  }
 
   let showTopics: Bool
   let showVideos: Bool
@@ -87,12 +92,16 @@ struct TrendingInterstitialModel {
       media: Array(artwork.preview.media.prefix(3)),
       participants: participants,
       accessibilityLabel: [categoryName, trend.displayName, description, postCount]
-        .compactMap { $0 }.joined(separator: ", "))
+        .compactMap { $0 }.formatted(.list(type: .and, width: .narrow)))
   }
 
   /// "48K posts": compact notation, as the topic rows in Search.
   static func postCountText(_ count: Int) -> String {
-    "\(count.formatted(.number.notation(.compactName))) posts"
+    let compactCount = count.formatted(.number.notation(.compactName))
+    return String(
+      localized: "\(compactCount) posts",
+      comment: "Compact post count on a trending topic card — variable is a compact formatted count such as '48K'."
+    )
   }
 
   /// One video card, as `TrendingVideosSection.videoCard` derives it.
@@ -110,9 +119,22 @@ struct TrendingInterstitialModel {
     }
     let displayName = post.author.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
     let author = displayName.flatMap { $0.isEmpty ? nil : $0 } ?? "@\(post.author.handle)"
+    let detail = coverTitle ?? altText
+    let accessibilityLabel: String
+    if let detail {
+      accessibilityLabel = String(
+        localized: "Video by \(author), \(detail)",
+        comment: "VoiceOver label for a trending video card with description or moderation label — first variable is the author name, second is the video alt text or moderation cover title."
+      )
+    } else {
+      accessibilityLabel = String(
+        localized: "Video by \(author)",
+        comment: "VoiceOver label for a trending video card — variable is the author name."
+      )
+    }
     return VideoCard(
       post: post, uri: post.uri.uriString(), authorName: author, thumbnail: thumbnail,
-      accessibilityLabel: "Video by \(author)\((coverTitle ?? altText).map { ", \($0)" } ?? "")")
+      accessibilityLabel: accessibilityLabel)
   }
 
   func layoutInput(width: CGFloat, typography: TrendingInterstitialTypography) -> TrendingInterstitialLayoutInput {

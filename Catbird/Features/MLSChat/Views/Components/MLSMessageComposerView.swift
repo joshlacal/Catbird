@@ -17,7 +17,7 @@ import SwiftUI
     var supportsEmbeds: Bool = true
     var showsAttachmentMenu: Bool = true
     var dismissKeyboardOnSend: Bool = false
-    var placeholderText: String = "Message"
+    var placeholderText: String = String(localized: "Message")
 
     init(
       text: Binding<String>,
@@ -29,7 +29,7 @@ import SwiftUI
       supportsEmbeds: Bool = true,
       showsAttachmentMenu: Bool = true,
       dismissKeyboardOnSend: Bool = false,
-      placeholderText: String = "Message",
+      placeholderText: String = String(localized: "Message"),
       imageSender: MLSImageSender? = nil,
       onVoiceTapped: (() -> Void)? = nil,
       isRecording: Bool = false
@@ -140,7 +140,11 @@ import SwiftUI
       .alert("Image Error", isPresented: $showingImageUploadError) {
         Button("OK") {}
       } message: {
-        Text(imageUploadError ?? "Could not process image")
+        if let imageUploadError {
+          Text(imageUploadError)
+        } else {
+          Text("Could not process image", comment: "Fallback error message when processing an image attachment fails")
+        }
       }
     }
 
@@ -428,7 +432,7 @@ import SwiftUI
               .designFootnote()
               .fontWeight(.semibold)
           } else if let handle = postEmbed.authorHandle {
-            Text("@\(handle)")
+            Text(verbatim: "@\(handle)")
               .designFootnote()
               .fontWeight(.semibold)
           }
@@ -477,7 +481,7 @@ import SwiftUI
             Text("Voice Message")
               .designFootnote()
               .fontWeight(.semibold)
-            Text("\(audioEmbed.durationMs / 1000)s")
+            Text(Duration.milliseconds(audioEmbed.durationMs).formatted(.units(allowed: [.minutes, .seconds], width: .narrow)))
               .designCaption()
               .foregroundColor(.secondary)
           }

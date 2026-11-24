@@ -40,7 +40,10 @@ struct NewConversationView: View {
   @State private var creationProgress = ""
   @State private var creationTask: Task<Void, Never>?
   @State private var showingError = false
-  @State private var errorTitle = "Couldn’t Start Conversation"
+  @State private var errorTitle = String(
+    localized: "Couldn’t Start Conversation",
+    comment: "Default alert title when starting a conversation fails"
+  )
   @State private var errorMessage: String?
   @State private var isCheckingExisting = false
   @State private var pendingGroupCreation: PendingGroupCreationStatus?
@@ -52,6 +55,17 @@ struct NewConversationView: View {
     case bluesky = "Message"
     case blueskyGroup = "Bluesky Group"
     case catbirdGroup = "Encrypted Group"
+
+    var title: LocalizedStringKey {
+      switch self {
+      case .bluesky:
+        return "Message"
+      case .blueskyGroup:
+        return "Bluesky Group"
+      case .catbirdGroup:
+        return "Encrypted Group"
+      }
+    }
   }
 
   enum Step {
@@ -70,13 +84,24 @@ struct NewConversationView: View {
 
   private var navigationTitle: String {
     switch (mode, step) {
-    case (.bluesky, _): return kindModel == nil ? "New Message" : "Start a Conversation"
-    case (.blueskyGroup, .selectContacts): return "Add Participants"
-    case (.blueskyGroup, .configureGroup): return "Group Details"
-    case (.blueskyGroup, .creating): return "Creating Group"
-    case (.catbirdGroup, .selectContacts): return mlsEnabled ? "Add Participants" : "Encrypted Groups"
-    case (.catbirdGroup, .configureGroup): return "Group Details"
-    case (.catbirdGroup, .creating): return "Creating Group"
+    case (.bluesky, _):
+      return kindModel == nil
+        ? String(localized: "New Message", comment: "Navigation title when picking a contact for a new message")
+        : String(localized: "Start a Conversation", comment: "Navigation title when choosing conversation type")
+    case (.blueskyGroup, .selectContacts):
+      return String(localized: "Add Participants", comment: "Navigation title when selecting group chat participants")
+    case (.blueskyGroup, .configureGroup):
+      return String(localized: "Group Details", comment: "Navigation title when naming and configuring a group chat")
+    case (.blueskyGroup, .creating):
+      return String(localized: "Creating Group", comment: "Navigation title while group creation is in progress")
+    case (.catbirdGroup, .selectContacts):
+      return mlsEnabled
+        ? String(localized: "Add Participants", comment: "Navigation title when selecting group chat participants")
+        : String(localized: "Encrypted Groups", comment: "Navigation title when encrypted chat opt-in gate is shown")
+    case (.catbirdGroup, .configureGroup):
+      return String(localized: "Group Details", comment: "Navigation title when naming and configuring a group chat")
+    case (.catbirdGroup, .creating):
+      return String(localized: "Creating Group", comment: "Navigation title while group creation is in progress")
     }
   }
 
@@ -141,7 +166,11 @@ struct NewConversationView: View {
           openEncryptedConversation(conversationID)
         }
       }
-      .navigationTitle(invitationNotes == nil ? navigationTitle : "Invitation Notes")
+      .navigationTitle(
+        invitationNotes == nil
+          ? navigationTitle
+          : String(localized: "Invitation Notes", comment: "Navigation title when sending individual encrypted group invitation notes")
+      )
       .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
@@ -205,7 +234,7 @@ struct NewConversationView: View {
   private var segmentedPicker: some View {
     Picker("Type", selection: $mode) {
       ForEach(availableModes, id: \.self) { m in
-        Text(m.rawValue).tag(m)
+        Text(m.title).tag(m)
       }
     }
     .pickerStyle(.segmented)
@@ -324,26 +353,37 @@ struct NewConversationView: View {
   }
 
   private func memberNames(_ dids: [String]) -> String {
-    dids.map { did in selectedProfiles[did].map { "@\($0.handle)" } ?? did }.joined(separator: ", ")
+    dids.map { did in selectedProfiles[did].map { "@\($0.handle)" } ?? did }.formatted(.list(type: .and))
   }
 
   @ViewBuilder
   private var encryptedGroupMembershipNotice: some View {
     let evaluation = encryptedGroupEvaluation
     if mode == .catbirdGroup, !evaluation.notCapable.isEmpty {
-      Label(
-        "Encrypted chat isn’t available yet for \(memberNames(evaluation.notCapable)).",
-        systemImage: "lock.slash"
-      )
+      Label {
+        Text(
+          "Encrypted chat isn’t available yet for \(memberNames(evaluation.notCapable)).",
+          comment: "Notice listing selected contacts who cannot join an encrypted group yet (%@ = formatted list of handles)"
+        )
+      } icon: {
+        Image(systemName: "lock.slash")
+      }
       .designCaption()
       .foregroundColor(.secondary)
       .frame(maxWidth: .infinity, alignment: .leading)
       .accessibilityIdentifier("newConversation.groupNotCapable")
     } else if mode == .catbirdGroup, !evaluation.unchecked.isEmpty {
-      Label("Checking encrypted chat for \(memberNames(evaluation.unchecked))…", systemImage: "clock")
-        .designCaption()
-        .foregroundColor(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
+      Label {
+        Text(
+          "Checking encrypted chat for \(memberNames(evaluation.unchecked))…",
+          comment: "Progress notice while checking encrypted chat support for selected contacts (%@ = formatted list of handles)"
+        )
+      } icon: {
+        Image(systemName: "clock")
+      }
+      .designCaption()
+      .foregroundColor(.secondary)
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
   }
 
@@ -355,9 +395,16 @@ struct NewConversationView: View {
       encryptedGroupMembershipNotice
       HStack {
         if !selectedDIDs.isEmpty {
-          Label("\(selectedDIDs.count) selected", systemImage: "person.3")
-            .designCaption()
-            .foregroundColor(.secondary)
+          Label {
+            Text(
+              "\(selectedDIDs.count) selected",
+              comment: "Count of selected contacts in new group bar (%lld = selected count)"
+            )
+          } icon: {
+            Image(systemName: "person.3")
+          }
+          .designCaption()
+          .foregroundColor(.secondary)
         } else {
           Label("Select at least one person", systemImage: "person.badge.plus")
             .designCaption()
@@ -379,9 +426,18 @@ struct NewConversationView: View {
           ProgressView()
             .frame(maxWidth: .infinity)
         } else {
-          Text(selectedDIDs.isEmpty ? "Continue" : "Continue (\(selectedDIDs.count))")
-            .fontWeight(.semibold)
-            .frame(maxWidth: .infinity)
+          Group {
+            if selectedDIDs.isEmpty {
+              Text("Continue")
+            } else {
+              Text(
+                "Continue (\(selectedDIDs.count))",
+                comment: "Continue button showing selected contact count (%lld = selected count)"
+              )
+            }
+          }
+          .fontWeight(.semibold)
+          .frame(maxWidth: .infinity)
         }
       }
       .buttonStyle(.borderedProminent)
@@ -457,10 +513,16 @@ struct NewConversationView: View {
         }
 
         VStack(spacing: DesignTokens.Spacing.sm) {
-          Text(isBlueskyGroup ? "Creating Group Chat" : "Creating Secure Group")
-            .font(.title3)
-            .fontWeight(.semibold)
-            .foregroundColor(.white)
+          Group {
+            if isBlueskyGroup {
+              Text("Creating Group Chat")
+            } else {
+              Text("Creating Secure Group")
+            }
+          }
+          .font(.title3)
+          .fontWeight(.semibold)
+          .foregroundColor(.white)
           Text(creationProgress)
             .designCallout()
             .foregroundColor(.white.opacity(0.8))
@@ -482,23 +544,23 @@ struct NewConversationView: View {
 
   @MainActor
   private func createBlueskyGroup() async {
-    errorTitle = "Couldn’t Create Group"
+    errorTitle = String(localized: "Couldn’t Create Group", comment: "Alert title when creating a group chat fails")
     guard !selectedDIDs.isEmpty else {
-      errorMessage = "Select at least one person."
+      errorMessage = String(localized: "Select at least one person.", comment: "Validation error when no group members are selected")
       showingError = true
       return
     }
 
     let trimmedName = groupName.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedName.isEmpty else {
-      errorMessage = "Enter a name for the group."
+      errorMessage = String(localized: "Enter a name for the group.", comment: "Validation error when group name is blank")
       showingError = true
       return
     }
 
     isCreating = true
     step = .creating
-    creationProgress = "Creating group chat…"
+    creationProgress = String(localized: "Creating group chat…", comment: "Progress message while creating a Bluesky group chat")
 
     if let convoId = await appState.chatManager.startGroupConversation(
       memberDIDs: Array(selectedDIDs),
@@ -511,7 +573,10 @@ struct NewConversationView: View {
       logger.error("Failed to create Bluesky group conversation")
       // Show the specific reason here; the sheet hides the Messages tab's alert
       errorMessage = appState.chatManager.errorState?.localizedDescription
-        ?? "Couldn’t create the group chat. Please try again."
+        ?? String(
+          localized: "Couldn’t create the group chat. Please try again.",
+          comment: "Fallback error when creating a Bluesky group chat fails"
+        )
       appState.chatManager.errorState = nil
       showingError = true
       step = .configureGroup
@@ -580,7 +645,7 @@ struct NewConversationView: View {
       presentIntroduction: { showingIntroduction = true },
       presentChatSettingsPointer: { showingChatSettingsPointer = true },
       presentAccountNotEligible: { message in
-        errorTitle = "Encrypted Chat Unavailable"
+        errorTitle = String(localized: "Encrypted Chat Unavailable", comment: "Alert title when account is not eligible for encrypted chat")
         errorMessage = message
         showingError = true
       }
@@ -605,7 +670,7 @@ struct NewConversationView: View {
           try await appState.optOutOfMLSChat()
         } catch {
           logger.error("Encrypted chat opt-out from the new conversation screen failed")
-          errorTitle = "Couldn’t Disable Encrypted Chat"
+          errorTitle = String(localized: "Couldn’t Disable Encrypted Chat", comment: "Alert title when opting out of encrypted chat fails")
           errorMessage = error.localizedDescription
           showingError = true
         }
@@ -626,10 +691,16 @@ struct NewConversationView: View {
     let canMessage = await appState.chatManager.canMessage(members: [accountDID, did])
     guard !Task.isCancelled, appState.userDID == accountDID else { return }
     guard canMessage == true else {
-      errorTitle = "Bluesky DM Unavailable"
+      errorTitle = String(localized: "Bluesky DM Unavailable", comment: "Alert title when recipient cannot receive Bluesky DMs")
       errorMessage = canMessage == false
-        ? "This person isn’t accepting new Bluesky DMs."
-        : "Couldn’t check whether this person accepts Bluesky DMs. Try again."
+        ? String(
+            localized: "This person isn’t accepting new Bluesky DMs.",
+            comment: "Error message when recipient's privacy settings disallow Bluesky DMs"
+          )
+        : String(
+            localized: "Couldn’t check whether this person accepts Bluesky DMs. Try again.",
+            comment: "Error message when checking Bluesky DM availability fails"
+          )
       showingError = true
       return
     }
@@ -640,9 +711,12 @@ struct NewConversationView: View {
       openBlueskyConversation(convoId)
     } else {
       // Show the specific reason here; the sheet hides the Messages tab's alert
-      errorTitle = "Couldn’t Start Conversation"
+      errorTitle = String(localized: "Couldn’t Start Conversation", comment: "Alert title when starting a conversation fails")
       errorMessage = appState.chatManager.errorState?.localizedDescription
-        ?? "Couldn’t start this conversation. Please try again."
+        ?? String(
+          localized: "Couldn’t start this conversation. Please try again.",
+          comment: "Fallback error when starting a Bluesky conversation fails"
+        )
       appState.chatManager.errorState = nil
       showingError = true
     }
@@ -653,7 +727,7 @@ struct NewConversationView: View {
   @MainActor
   private func handleDirectMLSMessage(participantDid: String) async {
     let accountDID = appState.userDID
-    errorTitle = "Couldn’t Start Conversation"
+    errorTitle = String(localized: "Couldn’t Start Conversation", comment: "Alert title when starting a conversation fails")
 
     isCheckingExisting = true
     defer { isCheckingExisting = false }
@@ -661,7 +735,10 @@ struct NewConversationView: View {
     guard await appState.getOrOpenMLSCoordinator() != nil else {
       guard !Task.isCancelled else { return }
       errorMessage = appState.spacesEligibility.flatMap { $0.eligible ? nil : $0.userMessage }
-        ?? "Encrypted chat isn’t ready on this device yet. Try again in a moment."
+        ?? String(
+          localized: "Encrypted chat isn’t ready on this device yet. Try again in a moment.",
+          comment: "Error when encrypted chat engine is not initialized yet"
+        )
       showingError = true
       return
     }
@@ -688,18 +765,24 @@ struct NewConversationView: View {
     let membersSnapshot = Array(selectedDIDs)
     let nameSnapshot = groupName.trimmingCharacters(in: .whitespacesAndNewlines)
     let noteSnapshot = introductionText
-    errorTitle = "Couldn’t Create Group"
+    errorTitle = String(localized: "Couldn’t Create Group", comment: "Alert title when creating a group chat fails")
     guard !membersSnapshot.isEmpty,
           let mlsCoordinator = await appState.getOrOpenMLSCoordinator() else {
       guard !Task.isCancelled else { return }
       errorMessage = appState.spacesEligibility.flatMap { $0.eligible ? nil : $0.userMessage }
-        ?? "Encrypted chat isn’t ready on this device yet. Try again in a moment."
+        ?? String(
+          localized: "Encrypted chat isn’t ready on this device yet. Try again in a moment.",
+          comment: "Error when encrypted chat engine is not initialized yet"
+        )
       showingError = true
       return
     }
     guard EncryptedGroupMembership.evaluate(selected: membersSnapshot, capabilities: groupCapabilities).canContinue
     else {
-      errorMessage = "Everyone in an encrypted group must be able to use encrypted chat."
+      errorMessage = String(
+        localized: "Everyone in an encrypted group must be able to use encrypted chat.",
+        comment: "Validation error when one or more selected members cannot join an encrypted group"
+      )
       showingError = true
       return
     }
@@ -711,7 +794,7 @@ struct NewConversationView: View {
 
     let conversationID = UUID().uuidString.lowercased()
     do {
-      creationProgress = "Setting up secure group..."
+      creationProgress = String(localized: "Setting up secure group…", comment: "Progress message while creating an encrypted group")
       let created = try await mlsCoordinator.createGroup(
         conversationId: conversationID,
         sequencerDid: appState.defaultMLSSequencerDID,
@@ -734,7 +817,7 @@ struct NewConversationView: View {
         return
       }
 
-      creationProgress = "Finalizing..."
+      creationProgress = String(localized: "Finalizing…", comment: "Progress message while finalizing encrypted group creation")
       await appState.reloadMLSConversations()
 
       guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }

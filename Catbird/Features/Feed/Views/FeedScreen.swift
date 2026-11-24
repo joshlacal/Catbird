@@ -35,7 +35,7 @@ struct FeedScreen: View {
     .modifier(FeedHeaderInjector(
       header: headerAnyView
     ))
-    .navigationTitle(metadata.generator?.displayName ?? "Feed")
+    .navigationTitle(metadata.generator?.displayName ?? String(localized: "Feed", comment: "Fallback navigation title for a custom feed screen"))
     .modifier(FeedScreenTitleDisplayMode())
     // The header's own menu also offers Report, but the header only appears once
     // the feed has posts; this keeps reporting reachable while it is loading,
@@ -63,12 +63,15 @@ struct FeedScreen: View {
         ReportFormView(
           reportingService: reportingService,
           subject: subject,
-          contentDescription: "Feed: \(generatorView.displayName)"
+          contentDescription: String(
+            localized: "Feed: \(generatorView.displayName)",
+            comment: "Report sheet target description for a custom feed — variable is the feed display name"
+          )
         )
       }
     }
     .sheet(isPresented: $isShowingCopilot) {
-      let feedName = metadata.generator?.displayName ?? "Feed"
+      let feedName = metadata.generator?.displayName ?? String(localized: "Feed", comment: "Fallback display name for a custom feed")
       let feedURI = uri.uriString()
       CatbirdCopilotSheet(
         context: .feed(uri: feedURI, name: feedName),
@@ -124,13 +127,19 @@ struct FeedScreen: View {
 
     do {
       guard let client = appState.atProtoClient else {
-        metadata.error = "Couldn’t load this feed’s details. Sign in again and try again."
+        metadata.error = String(
+          localized: "Couldn’t load this feed’s details. Sign in again and try again.",
+          comment: "Error message when feed details fail to load due to missing session"
+        )
         return
       }
       let response = try await client.app.bsky.feed.getFeedGenerator(input: .init(feed: uri))
       try Task.checkCancellation()
       guard response.responseCode == 200, let data = response.data else {
-        metadata.error = "Couldn’t load this feed’s details. Try again."
+        metadata.error = String(
+          localized: "Couldn’t load this feed’s details. Try again.",
+          comment: "Error message when loading feed details fails"
+        )
         return
       }
       metadata.generator = data.view

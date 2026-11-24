@@ -106,13 +106,25 @@ enum GraphError: Error, LocalizedError {
   var errorDescription: String? {
     switch self {
     case .clientNotInitialized:
-      return "ATProto client not initialized"
+      return String(
+        localized: "ATProto client not initialized",
+        comment: "Error message when the AT Protocol client is not ready for a social graph action."
+      )
     case .invalidResponse:
-      return "Invalid response from server"
+      return String(
+        localized: "Invalid response from server",
+        comment: "Error message when the server returns an unexpected response for a social graph request."
+      )
     case .networkError(let error):
-      return "Network error: \(error.localizedDescription)"
+      return String(
+        localized: "Network error: \(error.localizedDescription)",
+        comment: "Error message when a network failure occurs during a social graph action — %1$@ is the underlying error description."
+      )
     case .unknown(let error):
-      return "Unknown error: \(error.localizedDescription)"
+      return String(
+        localized: "Unknown error: \(error.localizedDescription)",
+        comment: "Error message for an unexpected social graph failure — %1$@ is the underlying error description."
+      )
     }
   }
 }

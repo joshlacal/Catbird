@@ -15,8 +15,8 @@ struct ChatReportFormView: View {
 
   private struct ReasonOption: Identifiable {
     let type: ComAtprotoModerationDefs.ReasonType
-    let title: String
-    let description: String
+    let title: LocalizedStringResource
+    let description: LocalizedStringResource
 
     var id: String { type.rawValue }
   }
@@ -24,33 +24,33 @@ struct ChatReportFormView: View {
   private let reasons: [ReasonOption] = [
     ReasonOption(
       type: .comatprotomoderationdefsreasonspam,
-      title: "Spam",
-      description: "Excessive, unwanted, or repetitive messages"
+      title: LocalizedStringResource("Spam", comment: "Chat report reason title"),
+      description: LocalizedStringResource("Excessive, unwanted, or repetitive messages", comment: "Chat report reason description for spam")
     ),
     ReasonOption(
       type: .comatprotomoderationdefsreasonviolation,
-      title: "Terms of Service Violation",
-      description: "Violates the platform terms or safety rules"
+      title: LocalizedStringResource("Terms of Service Violation", comment: "Chat report reason title"),
+      description: LocalizedStringResource("Violates the platform terms or safety rules", comment: "Chat report reason description for terms violation")
     ),
     ReasonOption(
       type: .comatprotomoderationdefsreasonmisleading,
-      title: "Scam or Fraud",
-      description: "Phishing, impersonation, or financial deception"
+      title: LocalizedStringResource("Scam or Fraud", comment: "Chat report reason title"),
+      description: LocalizedStringResource("Phishing, impersonation, or financial deception", comment: "Chat report reason description for scam or fraud")
     ),
     ReasonOption(
       type: .comatprotomoderationdefsreasonsexual,
-      title: "Unwanted Sexual Content",
-      description: "Explicit, harassing, or non-consensual sexual content"
+      title: LocalizedStringResource("Unwanted Sexual Content", comment: "Chat report reason title"),
+      description: LocalizedStringResource("Explicit, harassing, or non-consensual sexual content", comment: "Chat report reason description for unwanted sexual content")
     ),
     ReasonOption(
       type: .comatprotomoderationdefsreasonrude,
-      title: "Harassment or Hate",
-      description: "Targeted harassment, bullying, or hate speech"
+      title: LocalizedStringResource("Harassment or Hate", comment: "Chat report reason title"),
+      description: LocalizedStringResource("Targeted harassment, bullying, or hate speech", comment: "Chat report reason description for harassment or hate")
     ),
     ReasonOption(
       type: .comatprotomoderationdefsreasonother,
-      title: "Other",
-      description: "An issue not covered by other categories"
+      title: LocalizedStringResource("Other", comment: "Chat report reason title"),
+      description: LocalizedStringResource("An issue not covered by other categories", comment: "Chat report reason description for other issues")
     ),
   ]
 

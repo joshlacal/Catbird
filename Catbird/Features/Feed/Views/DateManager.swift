@@ -16,17 +16,17 @@ func shortTimeAgoString(from date: Date) -> String {
     let components = calendar.dateComponents([.minute, .hour, .day, .month, .year], from: date, to: now)
 
     if let years = components.year, years > 0 {
-        return "\(years)y"
+        return String(localized: "\(years)y", comment: "Compact relative time in years — variable is the number of years")
     } else if let months = components.month, months > 0 {
-        return "\(months)mo"
+        return String(localized: "\(months)mo", comment: "Compact relative time in months — variable is the number of months")
     } else if let days = components.day, days > 0 {
-        return "\(days)d"
+        return String(localized: "\(days)d", comment: "Compact relative time in days — variable is the number of days")
     } else if let hours = components.hour, hours > 0 {
-        return "\(hours)h"
+        return String(localized: "\(hours)h", comment: "Compact relative time in hours — variable is the number of hours")
     } else if let minutes = components.minute, minutes > 0 {
-        return "\(minutes)m"
+        return String(localized: "\(minutes)m", comment: "Compact relative time in minutes — variable is the number of minutes")
     } else {
-        return "now"
+        return String(localized: "now", comment: "Compact relative time for a post published moments ago")
     }
 }
 
@@ -38,6 +38,7 @@ private enum TimeAgoFormatters {
 
     nonisolated(unsafe) private static let accessibilityFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
+        formatter.locale = .autoupdatingCurrent
         formatter.unitsStyle = .full
         formatter.dateTimeStyle = .named
         return formatter

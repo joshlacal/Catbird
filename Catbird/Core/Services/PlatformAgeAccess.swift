@@ -10,7 +10,10 @@ final class PlatformAgeAccess {
     case restricted(AgeRestrictedOperation)
 
     var errorDescription: String? {
-      "This action is unavailable under the current age requirements."
+      String(
+        localized: "This action is unavailable under the current age requirements.",
+        comment: "Error shown when an action is blocked by platform age requirements."
+      )
     }
   }
 

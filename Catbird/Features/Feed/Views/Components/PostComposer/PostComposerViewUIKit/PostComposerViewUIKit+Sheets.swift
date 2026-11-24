@@ -75,7 +75,7 @@ extension PostComposerViewUIKit {
                   if !attached, viewModel === vm, vm.ownsEditingDraft, vm.editingClaim == previewClaim,
                      vm.pendingAudioURL == audioURL {
                     appState.toastManager.show(ToastItem(
-                      message: "Your draft changed. Your recording was kept; tap Finish Audio Attachment to try again.",
+                      message: String(localized: "Your draft changed. Your recording was kept; tap Finish Audio Attachment to try again.", comment: "Toast shown when draft state changed while audio visualizer video was being generated"),
                       icon: "waveform"
                     ))
                   }
@@ -83,10 +83,12 @@ extension PostComposerViewUIKit {
                   guard !Task.isCancelled, viewModel === vm, vm.ownsEditingDraft,
                         vm.editingClaim == previewClaim, vm.pendingAudioURL == audioURL else { return }
                   pcSheetsLogger.error("PostComposerSheets: Audio attachment failed - \(String(describing: error), privacy: .public)")
-                  let reason = UserFacingError.message(for: error, action: "attach your recording")
-                    ?? "Couldn’t attach your recording."
+                  let reason = UserFacingError.message(
+                    for: error,
+                    action: String(localized: "attach your recording", comment: "Action phrase following 'Couldn't' when attaching recorded audio fails")
+                  ) ?? String(localized: "Couldn’t attach your recording.", comment: "Error when attaching recorded audio fails")
                   appState.toastManager.show(ToastItem(
-                    message: "\(reason) Your recording was kept.",
+                    message: String(localized: "\(reason) Your recording was kept.", comment: "Toast shown when attaching recorded audio fails; variable is failure reason sentence"),
                     icon: "exclamationmark.triangle.fill"
                   ))
                 }
@@ -343,7 +345,7 @@ private struct PendingComposerAudioPreview: View {
         duration = loadedDuration
       } catch {
         guard !Task.isCancelled else { return }
-        loadingError = "This recording couldn’t be loaded."
+        loadingError = String(localized: "This recording couldn’t be loaded.", comment: "Error shown when recorded audio file cannot be loaded for preview")
       }
     }
   }

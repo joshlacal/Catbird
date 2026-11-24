@@ -40,7 +40,7 @@ final class LoadMoreCell: UICollectionViewCell {
     activityIndicator.isAccessibilityElement = false
     
     label.translatesAutoresizingMaskIntoConstraints = false
-    label.text = "Loading earlier posts…"
+    label.text = String(localized: "Loading earlier posts…", comment: "Status indicator shown while loading older posts in a thread")
     label.isHidden = true
       label.font = UIFont.preferredFont(forTextStyle: UIFont.TextStyle.subheadline)
     label.textColor = UIColor.systemGray
@@ -72,7 +72,7 @@ final class LoadMoreCell: UICollectionViewCell {
     if isLoading {
       activityIndicator.startAnimating()
       label.isHidden = false
-      label.text = "Loading earlier posts…"
+      label.text = String(localized: "Loading earlier posts…", comment: "Status indicator shown while loading older posts in a thread")
       label.alpha = 1.0
     } else {
       activityIndicator.stopAnimating()

@@ -44,7 +44,7 @@ struct StatLabel: View {
     
     var body: some View {
         Label {
-            Text("\(count)")
+            Text(count, format: .number)
         } icon: {
             Image(systemName: iconName)
                 .appFont(AppTextRole.caption)

@@ -907,7 +907,7 @@ struct BlockedAccountsView: View {
                                     .fontWeight(.medium)
                                 
                                 if profile.displayName != nil {
-                                    Text("@\(profile.handle)")
+                                    Text(verbatim: "@\(profile.handle)")
                                         .appFont(AppTextRole.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -919,7 +919,7 @@ struct BlockedAccountsView: View {
                                 profileToUnblock = profile
                                 showingUnblockAlert = true
                             } label: {
-                                Text("Unblock")
+                                Text("Unblock", comment: "Button action to unblock an account.")
                                     .appFont(AppTextRole.caption)
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 4)
@@ -1088,7 +1088,7 @@ struct MutedAccountsView: View {
                                     .fontWeight(.medium)
                                 
                                 if profile.displayName != nil {
-                                    Text("@\(profile.handle)")
+                                    Text(verbatim: "@\(profile.handle)")
                                         .appFont(AppTextRole.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -1100,7 +1100,7 @@ struct MutedAccountsView: View {
                                 profileToUnmute = profile
                                 showingUnmuteAlert = true
                             } label: {
-                                Text("Unmute")
+                                Text("Unmute", comment: "Button action to unmute an account.")
                                     .appFont(AppTextRole.caption)
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 4)

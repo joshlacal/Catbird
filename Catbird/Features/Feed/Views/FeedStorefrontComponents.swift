@@ -74,7 +74,9 @@ struct FeedStorefrontQuickAddButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(
-          "\(feed.displayName), \(displayedMembership == .pinned ? "Pinned" : "Saved"). Manage feed"
+          displayedMembership == .pinned
+            ? Text("\(feed.displayName), Pinned. Manage feed", comment: "Accessibility label for manage menu on a pinned feed — variable is feed name")
+            : Text("\(feed.displayName), Saved. Manage feed", comment: "Accessibility label for manage menu on a saved feed — variable is feed name")
         )
         .accessibilityIdentifier("feed.library.manage.\(feed.uri.uriString())")
       }
@@ -110,7 +112,10 @@ struct FeedStorefrontQuickAddButton: View {
       } catch {
         optimisticMembership = nil
         appState.toastManager.show(ToastItem(
-          message: "Couldn’t add \(feed.displayName). Try again.",
+          message: String(
+            localized: "Couldn’t add \(feed.displayName). Try again.",
+            comment: "Error toast when adding a feed to library fails — variable is the feed display name"
+          ),
           icon: "exclamationmark.triangle.fill"
         ))
       }
@@ -148,7 +153,10 @@ struct FeedStorefrontQuickAddButton: View {
       } catch {
         optimisticMembership = nil
         appState.toastManager.show(ToastItem(
-          message: "Couldn’t update \(feed.displayName). Try again.",
+          message: String(
+            localized: "Couldn’t update \(feed.displayName). Try again.",
+            comment: "Error toast when updating feed library status fails — variable is the feed display name"
+          ),
           icon: "exclamationmark.triangle.fill"
         ))
       }
@@ -174,11 +182,21 @@ struct FeedStorefrontRow: View {
       !desc.isEmpty {
       return desc
     }
-    let handle = "@\(feed.creator.handle.description)"
+    let creatorHandle = feed.creator.handle.description
     if let likes = feed.likeCount, likes > 0 {
-      return "\(handle) · \(FeedCountFormatter.compact(likes)) likes"
+      if likes < 1_000 {
+        return String(
+          localized: "@\(creatorHandle) · \(likes) likes",
+          comment: "Feed row subtitle with creator handle and like count — first variable is handle, second is number of likes"
+        )
+      }
+      let compactLikes = FeedCountFormatter.compact(likes)
+      return String(
+        localized: "@\(creatorHandle) · \(compactLikes) likes",
+        comment: "Feed row subtitle with creator handle and compact like count — first variable is handle, second is compact count like 1.2K"
+      )
     }
-    return handle
+    return "@\(creatorHandle)"
   }
 
   var body: some View {
@@ -350,14 +368,6 @@ struct FeedShelfHeader: View {
 
 enum FeedCountFormatter {
   static func compact(_ count: Int) -> String {
-    if count >= 1_000_000 {
-      let millions = Double(count) / 1_000_000.0
-      return "\(millions.formatted(.number.precision(.fractionLength(1))))M"
-    } else if count >= 1_000 {
-      let thousands = Double(count) / 1_000.0
-      return "\(thousands.formatted(.number.precision(.fractionLength(1))))K"
-    } else {
-      return count.formatted()
-    }
+    count.formatted(.number.notation(.compactName).precision(.fractionLength(0...1)))
   }
 }

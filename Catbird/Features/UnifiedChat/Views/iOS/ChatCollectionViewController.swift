@@ -119,7 +119,8 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(scale: .small)
     config.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 14, bottom: 8, trailing: 14)
 
-    var titleAttr = AttributedString("New messages")
+    let newMessagesTitle = String(localized: "New messages", comment: "Floating pill button in chat to jump down to new messages")
+    var titleAttr = AttributedString(newMessagesTitle)
     let baseFont = UIFont.preferredFont(forTextStyle: UIFont.TextStyle.subheadline)
     let descriptor = baseFont.fontDescriptor.addingAttributes([.traits: [UIFontDescriptor.TraitKey.weight: UIFont.Weight.medium]])
     titleAttr.font = UIFont(descriptor: descriptor, size: 0)
@@ -127,8 +128,8 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
 
     let button = UIButton(configuration: config)
     button.translatesAutoresizingMaskIntoConstraints = false
-    button.accessibilityLabel = "New messages"
-    button.accessibilityHint = "Jump to latest messages"
+    button.accessibilityLabel = newMessagesTitle
+    button.accessibilityHint = String(localized: "Jump to latest messages", comment: "Accessibility hint for the new messages pill button")
     button.layer.shadowColor = UIColor.black.cgColor
     button.layer.shadowOpacity = 0.12
     button.layer.shadowRadius = 8
@@ -1247,7 +1248,11 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     dismissMessageMenus()
     let identity = messageMenuIdentity(messageID: messageID)
     guard let message = message(for: identity), let anchor = menuAnchor(messageID: messageID) else { return }
-    let alert = UIAlertController(title: "Message Actions", message: nil, preferredStyle: .actionSheet)
+    let alert = UIAlertController(
+      title: String(localized: "Message Actions", comment: "Action sheet title for VoiceOver chat message actions"),
+      message: nil,
+      preferredStyle: .actionSheet
+    )
     for action in menuActions(for: message) {
       alert.addAction(UIAlertAction(title: action.title, style: action.isDestructive ? .destructive : .default) { [weak self, weak alert] _ in
         guard let self else { return }
@@ -1255,7 +1260,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
         if let alert { alert.dismiss(animated: true, completion: perform) } else { perform() }
       })
     }
-    alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+    alert.addAction(UIAlertAction(title: String(localized: "Cancel", comment: "Button to dismiss an action sheet or dialog"), style: .cancel))
     alert.popoverPresentationController?.sourceView = anchor.cell.contentView
     alert.popoverPresentationController?.sourceRect = anchor.rect
     messageActionsController = alert
@@ -1285,10 +1290,12 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       onEditMessage?(message)
     case .unsend:
       let alert = UIAlertController(
-        title: "Unsend Message", message: "This removes the message for everyone in the conversation.", preferredStyle: .alert
+        title: String(localized: "Unsend Message", comment: "Confirmation alert title before unsending an encrypted message"),
+        message: String(localized: "This removes the message for everyone in the conversation.", comment: "Confirmation alert body explaining what unsending a message does"),
+        preferredStyle: .alert
       )
-      alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-      alert.addAction(UIAlertAction(title: "Unsend", style: .destructive) { [weak self] _ in
+      alert.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel))
+      alert.addAction(UIAlertAction(title: String(localized: "Unsend", comment: "Destructive button to unsend a message for everyone"), style: .destructive) { [weak self] _ in
         guard let self, let current = self.message(for: identity), current.canUnsend else { return }
         self.onUnsendMessage?(current)
       })

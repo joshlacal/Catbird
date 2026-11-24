@@ -108,38 +108,44 @@ struct PostComposerSubmitValidationState: Equatable {
     var message: String? {
         switch reason {
         case .emptyContent:
-            return "Add text or media before posting."
+            return String(localized: "Add text or media before posting.", comment: "Validation message when user tries to submit an empty post")
         case .overCharacterLimit(let current, let max):
             let over = current - max
-            return "\(over) character\(over == 1 ? "" : "s") over the limit."
+            return String(
+                localized: "\(over) characters over the limit.",
+                comment: "Validation message when post exceeds character limit; variable is number of extra characters"
+            )
         case .threadPostOverCharacterLimit(let postNumber, let over):
-            return "Post \(postNumber) is \(over) character\(over == 1 ? "" : "s") over the limit."
+            return String(
+                localized: "Post \(postNumber) is \(over) characters over the limit.",
+                comment: "Validation message when a numbered post in a thread exceeds character limit; first variable is 1-based post number, second is number of extra characters"
+            )
         case .posting:
-            return "Posting…"
+            return String(localized: "Posting…", comment: "Status message while post is being published")
         case .mediaPreparing:
-            return "Media is still preparing."
+            return String(localized: "Media is still preparing.", comment: "Validation message while image or media attachments are still loading")
         case .mediaUnavailable:
-            return "An attachment couldn’t be loaded. Retry it or remove it before posting."
+            return String(localized: "An attachment couldn’t be loaded. Retry it or remove it before posting.", comment: "Validation message when a media attachment failed to load")
         case .videoPreparing:
-            return "Video is still preparing."
+            return String(localized: "Video is still preparing.", comment: "Validation message while attached video is still loading")
         case .videoBlocked(let reason):
             return reason
         case .circleUnsupportedMedia:
-            return "GIFs, video, and audio are unavailable in Circles. Remove the attachment to continue."
+            return String(localized: "GIFs, video, and audio are unavailable in Circles. Remove the attachment to continue.", comment: "Validation message when unsupported media is attached to a Circle post")
         case .circleImagesUnavailable:
-            return "Images are unavailable for this Circle. Remove the attachments to post text."
+            return String(localized: "Images are unavailable for this Circle. Remove the attachments to post text.", comment: "Validation message when images are not supported for the selected Circle")
         case .circleEncryptionKeysUnavailable:
             return CircleAudienceRowState.keysUnavailable.message
         case .missingAltText:
-            return "Add alt text to every media attachment before posting."
+            return String(localized: "Add alt text to every media attachment before posting.", comment: "Validation message when user has require-alt-text enabled and media lacks alt text")
         case .replyLoading:
-            return "Loading the original post…"
+            return String(localized: "Loading the original post…", comment: "Validation message while parent post for a reply is still loading")
         case .replyUnavailable:
-            return "The post you’re replying to is unavailable."
+            return String(localized: "The post you’re replying to is unavailable.", comment: "Validation message when parent post for a reply cannot be loaded")
         case .quoteLoading:
-            return "The quoted post must load before this draft can be posted."
+            return String(localized: "The quoted post must load before this draft can be posted.", comment: "Validation message while quoted post is still loading")
         case .pendingAudio:
-            return "Finish or remove your audio attachment before posting."
+            return String(localized: "Finish or remove your audio attachment before posting.", comment: "Validation message while audio recording is still pending visualizer generation")
         case nil:
             return nil
         }

@@ -22,10 +22,18 @@ struct ReportChatMessageView: View {
   var body: some View {
     NavigationStack {
       ChatReportFormView(
-        title: "Report Message",
+        title: String(localized: "Report Message", comment: "Navigation title for reporting a chat message"),
         subtitle: message.text.isEmpty
-          ? "Reporting a message"
-          : "Reporting message: “\(message.text.prefix(60))\(message.text.count > 60 ? "…" : "")”",
+          ? String(localized: "Reporting a message", comment: "Subtitle when reporting a message without text")
+          : (message.text.count > 60
+              ? String(
+                  localized: "Reporting message: “\(String(message.text.prefix(60)))…”",
+                  comment: "Subtitle showing truncated text of message being reported (%@ = truncated message preview)"
+                )
+              : String(
+                  localized: "Reporting message: “\(message.text)”",
+                  comment: "Subtitle showing text of message being reported (%@ = message text)"
+                )),
         isSubmitting: isSubmitting,
         errorMessage: errorMessage,
         onSubmit: { reason, details in
@@ -46,7 +54,10 @@ struct ReportChatMessageView: View {
       guard let reportingService = reportingService else {
         await MainActor.run {
           self.isSubmitting = false
-          self.errorMessage = "Sign in to report this message."
+          self.errorMessage = String(
+            localized: "Sign in to report this message.",
+            comment: "Error message when attempting to report a chat message while signed out"
+          )
         }
         return
       }
@@ -70,16 +81,29 @@ struct ReportChatMessageView: View {
         await MainActor.run {
           self.isSubmitting = false
           if success {
-            appState.toastManager.show(ToastItem(message: "Report sent. Thanks for helping keep Bluesky safe."))
+            appState.toastManager.show(
+              ToastItem(
+                message: String(
+                  localized: "Report sent. Thanks for helping keep Bluesky safe.",
+                  comment: "Toast confirmation after reporting a chat message"
+                )
+              )
+            )
             onDismiss()
           } else {
-            self.errorMessage = "Couldn’t send the report. Please try again."
+            self.errorMessage = String(
+              localized: "Couldn’t send the report. Please try again.",
+              comment: "Error message when submitting a chat message report fails"
+            )
           }
         }
       } catch {
         await MainActor.run {
           self.isSubmitting = false
-          self.errorMessage = UserFacingError.message(for: error, action: "send the report")
+          self.errorMessage = UserFacingError.message(
+            for: error,
+            action: String(localized: "send the report", comment: "Action phrase when submitting a moderation report fails")
+          )
         }
       }
     }

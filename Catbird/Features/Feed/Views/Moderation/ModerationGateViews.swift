@@ -407,9 +407,18 @@ func withoutRevealAnimation(_ change: () -> Void) {
 // MARK: - Shared copy
 
 enum ModerationGateText {
-  static let adultContentOffExplanation =
-    "Adult content is turned off for this account. You can change this at bsky.app."
-  static let moderatorsExplanation = "This content was hidden by the moderators."
+  static var adultContentOffExplanation: String {
+    String(
+      localized: "Adult content is turned off for this account. You can change this at bsky.app.",
+      comment: "Explanation shown when media or a post cannot be revealed because adult content is disabled"
+    )
+  }
+  static var moderatorsExplanation: String {
+    String(
+      localized: "This content was hidden by the moderators.",
+      comment: "Explanation shown when media or a post was hidden by the moderation service and cannot be overridden"
+    )
+  }
 
   /// The highest-priority blur cause, which a cover or a locked bar names.
   static func primaryCause(of ui: ModerationUI) -> ModerationCause? {
@@ -428,15 +437,20 @@ enum ModerationGateText {
 
   /// The short label a locked bar shows in place of Show: who locked it.
   static func lockedLabel(for ui: ModerationUI) -> String {
-    primaryCause(of: ui)?.isAdultContentDisabled == true ? "Adult content off" : "Hidden by moderators"
+    primaryCause(of: ui)?.isAdultContentDisabled == true
+      ? String(localized: "Adult content off", comment: "Short badge shown on a locked moderation gate when adult content is disabled")
+      : String(localized: "Hidden by moderators", comment: "Short badge shown on a locked moderation gate when hidden by moderators")
   }
 
   /// The hidden row's headline, naming who hides the post.
   static func hiddenRowHeadline(for presentation: PostModerationPresentation) -> String {
     switch presentation.hiddenRowReason {
-    case .adultContentOff: return "Post hidden while adult content is off"
-    case .moderators: return "Post hidden by moderators"
-    case .userSetting: return "Post hidden by your moderation settings"
+    case .adultContentOff:
+      return String(localized: "Post hidden while adult content is off", comment: "Headline on a hidden post row when adult content is disabled")
+    case .moderators:
+      return String(localized: "Post hidden by moderators", comment: "Headline on a hidden post row when hidden by moderators")
+    case .userSetting:
+      return String(localized: "Post hidden by your moderation settings", comment: "Headline on a hidden post row when hidden by the user's label preferences")
     }
   }
 
@@ -446,8 +460,13 @@ enum ModerationGateText {
     let title = presentation.hiddenRowCause.map { ModerationPresentation.title(for: $0) }
       ?? ModerationPresentation.fallbackTitle
     switch presentation.hiddenRowReason {
-    case .adultContentOff: return "\(title) · Change this at bsky.app"
-    case .moderators, .userSetting: return title
+    case .adultContentOff:
+      return String(
+        localized: "\(title) · Change this at bsky.app",
+        comment: "Subheadline on a hidden adult-content post row — variable is the moderation label title."
+      )
+    case .moderators, .userSetting:
+      return title
     }
   }
 }

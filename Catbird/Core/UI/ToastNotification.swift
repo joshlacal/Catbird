@@ -144,7 +144,7 @@ struct ToastView: View {
     .animation(.spring(response: 0.3, dampingFraction: 0.9), value: dragOffset)
     .accessibilityElement(children: .combine)
     .accessibilityAddTraits(.isStaticText)
-    .accessibilityAction(named: "Dismiss") { onDismiss() }
+    .accessibilityAction(named: Text("Dismiss", comment: "Accessibility action to dismiss a toast banner.")) { onDismiss() }
     .onTapGesture { onDismiss() }
     .gesture(
       DragGesture()

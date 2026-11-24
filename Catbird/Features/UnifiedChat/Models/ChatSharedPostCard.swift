@@ -14,7 +14,11 @@ struct ChatSharedPostCard: Equatable, Sendable {
   }
 
   /// The card's look before its record is confirmed, the same for Bluesky DM and MLS posts.
-  static let placeholder = Placeholder(title: "Shared Post", detail: "Shared post", accessibilityLabel: "Shared post")
+  static let placeholder = Placeholder(
+    title: String(localized: "Shared Post", comment: "Title for a shared post embed placeholder in chat"),
+    detail: String(localized: "Shared post", comment: "Subtitle for a shared post embed placeholder in chat"),
+    accessibilityLabel: String(localized: "Shared post")
+  )
 
   let uri: String
 

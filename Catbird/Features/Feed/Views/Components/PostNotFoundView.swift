@@ -91,31 +91,31 @@ extension PostNotFoundView {
     private var primaryMessage: String {
         switch reason {
         case .deleted, .notFound:
-            return "Deleted post"
+            return String(localized: "Deleted post", comment: "Placeholder title when a referenced post was deleted or not found")
         case .networkError:
-            return "Couldn’t load this post"
+            return String(localized: "Couldn’t load this post", comment: "Placeholder title when loading a post failed due to network error")
         case .parseError:
-            return "This post can’t be shown"
+            return String(localized: "This post can’t be shown", comment: "Placeholder title when a post record could not be parsed")
         case .permissionDenied:
-            return "Post unavailable"
+            return String(localized: "Post unavailable", comment: "Placeholder title when viewer lacks permission to view a post")
         case .temporarilyUnavailable:
-            return "Post temporarily unavailable"
+            return String(localized: "Post temporarily unavailable", comment: "Placeholder title when a post is temporarily unavailable")
         }
     }
     
     private var currentSecondaryMessage: String? {
         if retryFailed {
-            return "Still unavailable. Try again later."
+            return String(localized: "Still unavailable. Try again later.", comment: "Subtitle shown when retrying to load an unavailable post fails")
         }
         switch reason {
         case .deleted, .notFound, .parseError:
             return nil
         case .networkError:
-            return "Check your connection and try again."
+            return String(localized: "Check your connection and try again.", comment: "Subtitle prompting user to check network connection")
         case .permissionDenied:
-            return "You don’t have permission to view this post."
+            return String(localized: "You don’t have permission to view this post.", comment: "Subtitle when viewer cannot access a restricted post")
         case .temporarilyUnavailable:
-            return "Try again in a moment."
+            return String(localized: "Try again in a moment.", comment: "Subtitle when a post is temporarily unavailable")
         }
     }
     

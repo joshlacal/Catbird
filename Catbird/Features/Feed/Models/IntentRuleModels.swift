@@ -16,8 +16,10 @@ public enum IntentRuleAction: String, Codable, Sendable, CaseIterable, Identifia
 
     public var displayName: String {
         switch self {
-        case .hide: return "Hide"
-        case .demote: return "Demote"
+        case .hide:
+            return String(localized: "Hide", comment: "Timeline intent rule action that hides matching posts")
+        case .demote:
+            return String(localized: "Demote", comment: "Timeline intent rule action that moves matching posts lower")
         }
     }
 
@@ -31,9 +33,15 @@ public enum IntentRuleAction: String, Codable, Sendable, CaseIterable, Identifia
     public var explanation: String {
         switch self {
         case .hide:
-            return "Collapses matching posts into a placeholder with tap-to-reveal."
+            return String(
+                localized: "Collapses matching posts into a placeholder with tap-to-reveal.",
+                comment: "Explanation of the Hide timeline intent rule action"
+            )
         case .demote:
-            return "Moves matching posts toward the bottom of the loaded timeline page."
+            return String(
+                localized: "Moves matching posts toward the bottom of the loaded timeline page.",
+                comment: "Explanation of the Demote timeline intent rule action"
+            )
         }
     }
 }

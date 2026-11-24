@@ -25,9 +25,19 @@ struct ProfileSectionView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = loadError {
                 ContentUnavailableView {
-                    Label("Couldn’t Load \(tab.title)", systemImage: "exclamationmark.triangle")
+                    Label {
+                        Text(sectionLoadFailureTitle(for: tab))
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle")
+                    }
                 } description: {
-                    Text(UserFacingError.message(for: error, action: "load \(tab.title.lowercased())") ?? "Check your connection and try again.")
+                    Text(
+                        UserFacingError.message(for: error, action: sectionLoadAction(for: tab))
+                            ?? String(
+                                localized: "Check your connection and try again.",
+                                comment: "Fallback recovery suggestion when loading a profile section fails."
+                            )
+                    )
                 } actions: {
                     Button("Try Again") {
                         Task { await loadContent() }
@@ -201,7 +211,12 @@ struct ProfileSectionView: View {
         .frame(maxWidth: .infinity, minHeight: 100)
         .padding()
     } else if viewModel.lists.isEmpty {
-      emptyContentView("No Lists", viewModel.isCurrentUser ? "You haven’t created any lists yet." : "This user hasn’t created any lists yet.")
+      emptyContentView(
+        "No Lists",
+        viewModel.isCurrentUser
+          ? LocalizedStringResource("You haven’t created any lists yet.", comment: "Empty state message on the user's own Lists profile section.")
+          : LocalizedStringResource("This user hasn’t created any lists yet.", comment: "Empty state message on another user's Lists profile section.")
+      )
     } else {
       ForEach(viewModel.lists, id: \.uri) { list in
         Button {
@@ -238,7 +253,12 @@ struct ProfileSectionView: View {
         .padding()
     } else if viewModel.starterPacks.isEmpty {
       VStack(spacing: 16) {
-        emptyContentView("No Starter Packs", viewModel.isCurrentUser ? "You haven’t created any starter packs yet." : "This user hasn’t created any starter packs yet.")
+        emptyContentView(
+          "No Starter Packs",
+          viewModel.isCurrentUser
+            ? LocalizedStringResource("You haven’t created any starter packs yet.", comment: "Empty state message on the user's own Starter Packs profile section.")
+            : LocalizedStringResource("This user hasn’t created any starter packs yet.", comment: "Empty state message on another user's Starter Packs profile section.")
+        )
         
         if viewModel.isCurrentUser {
           Button {
@@ -309,7 +329,12 @@ struct ProfileSectionView: View {
         .frame(maxWidth: .infinity, minHeight: 100)
         .padding()
     } else if viewModel.feeds.isEmpty {
-      emptyContentView("No Feeds", viewModel.isCurrentUser ? "You haven’t created any feeds yet." : "This user hasn’t created any feeds yet.")
+      emptyContentView(
+        "No Feeds",
+        viewModel.isCurrentUser
+          ? LocalizedStringResource("You haven’t created any feeds yet.", comment: "Empty state message on the user's own Feeds profile section.")
+          : LocalizedStringResource("This user hasn’t created any feeds yet.", comment: "Empty state message on another user's Feeds profile section.")
+      )
     } else {
       ForEach(viewModel.feeds, id: \.uri) { feed in
         Button {
@@ -337,7 +362,7 @@ struct ProfileSectionView: View {
   }
 
   @ViewBuilder
-  private func emptyContentView(_ title: String, _ message: String) -> some View {
+  private func emptyContentView(_ title: LocalizedStringResource, _ message: LocalizedStringResource) -> some View {
     VStack(spacing: 16) {
       Spacer()
 
@@ -359,6 +384,34 @@ struct ProfileSectionView: View {
     .frame(maxWidth: .infinity, minHeight: 300)
     .listRowSeparator(.hidden)
   }
+}
+
+private func sectionLoadFailureTitle(for tab: ProfileTab) -> LocalizedStringResource {
+    switch tab {
+    case .likes:
+        return LocalizedStringResource("Couldn’t Load Likes", comment: "Error title when loading a profile's Likes section fails.")
+    case .lists:
+        return LocalizedStringResource("Couldn’t Load Lists", comment: "Error title when loading a profile's Lists section fails.")
+    case .starterPacks:
+        return LocalizedStringResource("Couldn’t Load Starter Packs", comment: "Error title when loading a profile's Starter Packs section fails.")
+    case .feeds:
+        return LocalizedStringResource("Couldn’t Load Feeds", comment: "Error title when loading a profile's Feeds section fails.")
+    case .videos:
+        return LocalizedStringResource("Couldn’t Load Videos", comment: "Error title when loading a profile's Videos section fails.")
+    default:
+        return LocalizedStringResource("Couldn’t Load Section", comment: "Error title when loading a profile section fails.")
+    }
+}
+
+private func sectionLoadAction(for tab: ProfileTab) -> String {
+    switch tab {
+    case .likes: return "load likes"
+    case .lists: return "load lists"
+    case .starterPacks: return "load starter packs"
+    case .feeds: return "load feeds"
+    case .videos: return "load videos"
+    default: return "load this section"
+    }
 }
 
 /// Shows a profile's More section for any account, independent of which profile screen
@@ -406,11 +459,15 @@ struct ProfileSectionHostView: View {
                 ProfileSectionView(viewModel: viewModel, tab: tab, path: $path)
             } else if let error = viewModel.error {
                 ContentUnavailableView {
-                    Label("Couldn’t Load \(tab.title)", systemImage: "exclamationmark.triangle")
+                    Label {
+                        Text(sectionLoadFailureTitle(for: tab))
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle")
+                    }
                 } description: {
                     Text((error as? ProfileError)?.errorDescription
                         ?? UserFacingError.message(for: error, action: "load this profile")
-                        ?? "Try again.")
+                        ?? String(localized: "Try again.", comment: "Generic retry prompt when loading a profile section fails."))
                 } actions: {
                     Button("Try Again") {
                         Task { await viewModel.loadProfile() }

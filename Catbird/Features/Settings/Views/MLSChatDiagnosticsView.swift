@@ -90,7 +90,7 @@ struct MLSChatDiagnosticsView: View {
 
         if !records.isEmpty {
           HStack {
-            Text("\(records.count) event\(records.count == 1 ? "" : "s") recorded")
+            Text("\(records.count) events recorded", comment: "Count of diagnostic events recorded for MLS encrypted chat.")
               .font(.caption2)
               .foregroundStyle(.tertiary)
             Spacer()
@@ -253,19 +253,19 @@ private struct DiagnosticRecordRow: View {
   private var eventTitle: String {
     switch record.event {
     case .sendFailed:
-      return "Send Failed"
+      return String(localized: "Send Failed", comment: "MLS chat diagnostic event title.")
     case .sendRecovered:
-      return "Send Recovered"
+      return String(localized: "Send Recovered", comment: "MLS chat diagnostic event title.")
     case .streamPaused:
-      return "Stream Paused"
+      return String(localized: "Stream Paused", comment: "MLS chat diagnostic event title.")
     case .streamResumed:
-      return "Stream Resumed"
+      return String(localized: "Stream Resumed", comment: "MLS chat diagnostic event title.")
     case .rejoinWaiting:
-      return "Rejoin Waiting"
+      return String(localized: "Rejoin Waiting", comment: "MLS chat diagnostic event title.")
     case .conversationLoadFailed:
-      return "Load Failed"
+      return String(localized: "Load Failed", comment: "MLS chat diagnostic event title.")
     case .decryptRefused:
-      return "Decryption Refused"
+      return String(localized: "Decryption Refused", comment: "MLS chat diagnostic event title.")
     }
   }
 
@@ -353,7 +353,8 @@ private struct DiagnosticRecordRow: View {
       tags.append(MetadataTag(label: "attempt", value: "#\(attempt)"))
     }
     if let retry = record.retryAfter, retry > 0 {
-      tags.append(MetadataTag(label: "retryIn", value: String(format: "%.1fs", retry)))
+      let formattedRetry = retry.formatted(.number.precision(.fractionLength(1)))
+      tags.append(MetadataTag(label: "retryIn", value: "\(formattedRetry)s"))
     }
 
     return tags

@@ -178,7 +178,10 @@ struct ListFeedView: View {
         selectedTab: $selectedTab
       )
     }
-    .navigationTitle(viewModel.listDetails?.name ?? "List Feed")
+    .navigationTitle(
+      viewModel.listDetails.map { Text(verbatim: $0.name) }
+        ?? Text("List Feed", comment: "Fallback navigation title for a list feed.")
+    )
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
     #endif
@@ -202,10 +205,18 @@ struct ListFeedView: View {
           Button {
             viewModel.showingMembersList = true
           } label: {
-            Label("View Members (\(viewModel.listDetails?.listItemCount ?? viewModel.members.count))", systemImage: "person.2")
+            Label {
+              Text(
+                "View Members (\(viewModel.listDetails?.listItemCount ?? viewModel.members.count))",
+                comment: "Menu button to view list members — %1$lld is the member count."
+              )
+            } icon: {
+              Image(systemName: "person.2")
+            }
           }
         } label: {
           Image(systemName: "ellipsis.circle")
+            .accessibilityLabel(Text("More Options", comment: "Accessibility label for the list feed options menu."))
         }
       }
     }
@@ -268,11 +279,14 @@ struct ListFeedView: View {
           }
           
           HStack(spacing: 16) {
-            Text(MemberCountFormatter.format(count: listDetails.listItemCount ?? viewModel.members.count))
+            Text(
+              "\(listDetails.listItemCount ?? viewModel.members.count) members",
+              comment: "Number of members on a user list — %1$lld is the member count."
+            )
               .font(.caption)
               .foregroundStyle(.tertiary)
             
-            Text("by @\(listDetails.creator.handle)")
+            Text("by @\(listDetails.creator.handle)", comment: "List creator attribution — %1$@ is the creator's handle (without @).")
               .font(.caption)
               .foregroundStyle(.tertiary)
           }
@@ -336,7 +350,7 @@ struct ListFeedView: View {
                   .font(.subheadline)
                   .fontWeight(.medium)
                 
-                Text("@\(member.handle)")
+                Text(verbatim: "@\(member.handle)")
                   .font(.caption)
                   .foregroundStyle(.secondary)
               }
@@ -371,6 +385,7 @@ struct ListFeedView: View {
           } label: {
               Image(systemName: "xmark")
           }
+          .accessibilityLabel(Text("Close", comment: "Button to close the list members sheet."))
 
       }
     }
@@ -414,16 +429,16 @@ struct ListFeedView: View {
     }
   }
   
-  private func textForPurpose(_ purpose: AppBskyGraphDefs.ListPurpose) -> String {
+  private func textForPurpose(_ purpose: AppBskyGraphDefs.ListPurpose) -> LocalizedStringResource {
     switch purpose {
     case .appbskygraphdefscuratelist:
-      return "Curated"
+      return LocalizedStringResource("Curated", comment: "Short badge label for a curated people list.")
     case .appbskygraphdefsmodlist:
-      return "Moderation"
+      return LocalizedStringResource("Moderation", comment: "Short badge label for a moderation list used to mute or block accounts.")
     case .appbskygraphdefsreferencelist:
-      return "Reference"
+      return LocalizedStringResource("Reference", comment: "Short badge label for a starter-pack reference list.")
     default:
-      return "Unknown"
+      return LocalizedStringResource("Unknown", comment: "Fallback badge label for an unrecognized list purpose.")
     }
   }
   

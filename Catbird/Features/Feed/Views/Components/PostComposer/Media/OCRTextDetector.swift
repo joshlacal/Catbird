@@ -99,11 +99,11 @@ enum OCRError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .invalidImageData:
-      return "Unable to process image data"
+      return String(localized: "Unable to process image data", comment: "Error when image data cannot be decoded for text recognition")
     case .visionProcessingFailed(let error):
-      return "Text detection failed: \(error.localizedDescription)"
+      return String(localized: "Text detection failed: \(error.localizedDescription)", comment: "Error when Vision OCR fails; variable is underlying error description")
     case .noTextDetected:
-      return "No text detected in image"
+      return String(localized: "No text detected in image", comment: "Error when OCR finds no text in an image")
     }
   }
 }

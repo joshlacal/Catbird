@@ -33,7 +33,7 @@ struct FeedRowView: View {
                     .appFont(AppTextRole.headline)
                     .lineLimit(1)
 
-                Text("by @\(feed.creator.handle)")
+                Text("by @\(feed.creator.handle)", comment: "Feed creator attribution — %1$@ is the creator's handle (without @).")
                     .appFont(AppTextRole.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -47,7 +47,7 @@ struct FeedRowView: View {
                 }
 
                 if let likeCount = feed.likeCount, likeCount > 0 {
-                    Text("^[\(likeCount) like](inflect: true)")
+                    Text("\(likeCount) likes", comment: "Number of likes on a custom feed — %1$lld is the like count.")
                         .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -55,7 +55,7 @@ struct FeedRowView: View {
 
             Spacer()
 
-            Image(systemName: "chevron.right")
+            Image(systemName: "chevron.forward")
                 .foregroundStyle(.secondary)
                 .appFont(AppTextRole.caption)
         }

@@ -15,9 +15,21 @@ struct ActivitySubscriptionsView: View {
 
       if let error = service.lastError {
         Section("Status") {
-          Text(UserFacingError.message(for: error, action: "load your subscriptions") ?? "Couldn’t load your subscriptions. Pull to refresh to try again.")
-            .foregroundStyle(.red)
-            .appBody()
+          if let message = UserFacingError.message(
+            for: error,
+            action: String(
+              localized: "load your subscriptions",
+              comment: "Action phrase interpolated into an error message when loading activity subscriptions fails"
+            )
+          ) {
+            Text(message)
+              .foregroundStyle(.red)
+              .appBody()
+          } else {
+            Text("Couldn’t load your subscriptions. Pull to refresh to try again.")
+              .foregroundStyle(.red)
+              .appBody()
+          }
         }
       }
 
@@ -102,7 +114,7 @@ private struct ActivitySubscriptionRow: View {
             .foregroundStyle(.primary)
             .lineLimit(1)
 
-          Text("@\(entry.profile.handle)")
+          Text(verbatim: "@\(entry.profile.handle)")
             .appSubheadline()
             .foregroundStyle(.secondary)
         }
@@ -184,8 +196,13 @@ private struct ActivitySubscriptionRow: View {
       .background(Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme))
       .clipShape(RoundedRectangle(cornerRadius: 8))
     }
-    .accessibilityLabel("Alerts for \(entry.profile.displayNameOrHandle)")
-    .accessibilityValue(currentState.title)
+    .accessibilityLabel(
+      Text(
+        "Alerts for \(entry.profile.displayNameOrHandle)",
+        comment: "Accessibility label for activity alert settings menu. %@ is the user's display name or handle."
+      )
+    )
+    .accessibilityValue(Text(currentState.title))
   }
 
   private var currentState: SubscriptionState {
@@ -205,7 +222,13 @@ private struct ActivitySubscriptionRow: View {
       do {
         try await service.setSubscription(for: entry.id, posts: posts, replies: replies)
       } catch {
-        actionError = UserFacingError.message(for: error, action: "update this subscription")
+        actionError = UserFacingError.message(
+          for: error,
+          action: String(
+            localized: "update this subscription",
+            comment: "Action phrase interpolated into an error message when updating an activity subscription fails"
+          )
+        )
       }
     }
   }
@@ -216,16 +239,16 @@ private struct ActivitySubscriptionRow: View {
     case postsAndReplies
     case repliesOnly
 
-    var title: String {
+    var title: LocalizedStringResource {
       switch self {
       case .none:
-        return "Off"
+        return LocalizedStringResource("Off", comment: "Activity subscription state when alerts are disabled")
       case .postsOnly:
-        return "Posts"
+        return LocalizedStringResource("Posts", comment: "Activity subscription state for new posts only")
       case .postsAndReplies:
-        return "Posts & Replies"
+        return LocalizedStringResource("Posts & Replies", comment: "Activity subscription state for both posts and replies")
       case .repliesOnly:
-        return "Replies"
+        return LocalizedStringResource("Replies", comment: "Activity subscription state for replies only")
       }
     }
   }

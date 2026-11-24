@@ -130,7 +130,7 @@ struct ConversationInvitationRow: View {
                 .fill(Color.gray.opacity(0.3))
                 .frame(width: 32, height: 32)
               
-              Text("+\(otherMembers.count - 3)")
+              Text(verbatim: "+\(otherMembers.count - 3)")
                 .appFont(AppTextRole.caption)
                 .fontWeight(.medium)
             }
@@ -148,25 +148,50 @@ struct ConversationInvitationRow: View {
       // Invitation text
       VStack(alignment: .leading, spacing: 4) {
         if otherMembers.count == 1 {
-          Text("@\(otherMembers.first?.handle.description ?? "unknown") wants to start a conversation")
-                            .appFont(AppTextRole.body)
+          if let handle = otherMembers.first?.handle.description {
+            Text(
+              "@\(handle) wants to start a conversation",
+              comment: "Invitation row title when one user invites you (%@ = sender handle without @)"
+            )
+            .appFont(AppTextRole.body)
             .fontWeight(.medium)
+          } else {
+            Text(
+              "Someone wants to start a conversation",
+              comment: "Fallback invitation row title when sender handle is unavailable"
+            )
+            .appFont(AppTextRole.body)
+            .fontWeight(.medium)
+          }
           
           if let displayName = otherMembers.first?.displayName {
-            Text(displayName)
+            Text(verbatim: displayName)
               .appFont(AppTextRole.subheadline)
               .foregroundColor(.secondary)
           }
         } else {
-          Text("\(otherMembers.count) people want to start a group conversation")
-                            .appFont(AppTextRole.body)
-            .fontWeight(.medium)
+          Text(
+            "\(otherMembers.count) people want to start a group conversation",
+            comment: "Invitation row title for a group chat (%lld = participant count)"
+          )
+          .appFont(AppTextRole.body)
+          .fontWeight(.medium)
           
-          let names = otherMembers.prefix(2).compactMap { $0.displayName ?? "@\(otherMembers.first?.handle.description ?? "unknown")" }
+          let names = otherMembers.prefix(2).map { $0.chatDisplayName }
           if !names.isEmpty {
-            Text(names.joined(separator: ", ") + (otherMembers.count > 2 ? " and others" : ""))
+            if otherMembers.count > 2, names.count >= 2 {
+              let remaining = otherMembers.count - 2
+              Text(
+                "\(names[0]), \(names[1]), and \(remaining) others",
+                comment: "Group invitation participant preview (%1$@ = first person, %2$@ = second person, %3$lld = remaining count)"
+              )
               .appFont(AppTextRole.subheadline)
               .foregroundColor(.secondary)
+            } else {
+              Text(verbatim: names.formatted(.list(type: .and)))
+                .appFont(AppTextRole.subheadline)
+                .foregroundColor(.secondary)
+            }
           }
         }
       }

@@ -163,19 +163,22 @@ struct FeedCollectionViewWrapper: View {
         VStack {
             if stateManager.contentState == .error {
                 ContentUnavailableStateView(
-                    title: "Couldn’t Load Feed",
+                    title: String(localized: "Couldn’t Load Feed", comment: "Empty state title when loading a feed fails"),
                     description: stateManager.feedLoadError.flatMap {
-                        UserFacingError.message(for: $0, action: "load this feed")
-                    } ?? "Couldn’t load this feed. Try again.",
+                        UserFacingError.message(
+                            for: $0,
+                            action: String(localized: "load this feed", comment: "Action phrase for error message when loading a feed fails")
+                        )
+                    } ?? String(localized: "Couldn’t load this feed. Try again.", comment: "Fallback error message when loading a feed fails"),
                     systemImage: "wifi.exclamationmark",
-                    actionTitle: "Try Again"
+                    actionTitle: String(localized: "Try Again", comment: "Button to retry loading a failed feed")
                 ) {
                     Task { await stateManager.retry() }
                 }
             } else if stateManager.contentState == .loading {
                 // Includes the interval before the initial task starts.
                 LoadingStateView(
-                    message: "Loading feed…"
+                    message: String(localized: "Loading feed…", comment: "Status message shown while loading a feed")
                 )
             } else if stateManager.contentState == .empty {
                 // A successful request established an empty feed.

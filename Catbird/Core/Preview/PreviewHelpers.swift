@@ -58,13 +58,15 @@ struct AsyncPreviewContent<Content: View>: View {
         content(appState)
           .modifier(AuthenticatedPreviewModifier(appState: appState))
       } else if isLoading {
-        ProgressView("Authenticating…")
+        ProgressView {
+          Text(verbatim: "Authenticating…")
+        }
           .task {
             appState = await PreviewContainer.shared.appState
             isLoading = false
           }
       } else {
-        Text("Configure PreviewSecrets.xcconfig")
+        Text(verbatim: "Configure PreviewSecrets.xcconfig")
           .foregroundStyle(.secondary)
       }
     }
@@ -99,7 +101,9 @@ struct AsyncPreviewDataContent<Data: Sendable, Content: View>: View {
         content(appState, loadedData)
           .modifier(AuthenticatedPreviewModifier(appState: appState))
       } else if isLoading {
-        ProgressView("Loading preview data…")
+        ProgressView {
+          Text(verbatim: "Loading preview data…")
+        }
           .task {
             let state = await PreviewContainer.shared.appState
             appState = state
@@ -109,7 +113,7 @@ struct AsyncPreviewDataContent<Data: Sendable, Content: View>: View {
             isLoading = false
           }
       } else {
-        Text("No preview data available")
+        Text(verbatim: "No preview data available")
           .foregroundStyle(.secondary)
       }
     }

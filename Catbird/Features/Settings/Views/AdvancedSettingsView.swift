@@ -13,6 +13,14 @@ struct AdvancedSettingsView: View {
     case custom = "Custom"
     
     var id: String { rawValue }
+
+    var displayName: LocalizedStringResource {
+      switch self {
+      case .blueskyPBC: LocalizedStringResource("Bluesky PBC", comment: "AppView provider option.")
+      case .blacksky: LocalizedStringResource("Blacksky", comment: "AppView provider option.")
+      case .custom: LocalizedStringResource("Custom", comment: "Custom AppView provider option.")
+      }
+    }
     
     var did: String? {
       switch self {
@@ -32,6 +40,13 @@ struct AdvancedSettingsView: View {
     case custom = "Custom"
     
     var id: String { rawValue }
+
+    var displayName: LocalizedStringResource {
+      switch self {
+      case .blueskyPBC: LocalizedStringResource("Bluesky PBC", comment: "Chat service provider option.")
+      case .custom: LocalizedStringResource("Custom", comment: "Custom chat service provider option.")
+      }
+    }
     
     var did: String? {
       switch self {
@@ -116,7 +131,7 @@ struct AdvancedSettingsView: View {
     .toolbar {
       if hasUnsavedChanges || saveOutcomeUnconfirmed {
         ToolbarItem(placement: .cancellationAction) {
-          Button("Back", systemImage: "chevron.left") { confirmingDeparture = true }.disabled(isSaving)
+          Button("Back", systemImage: "chevron.backward") { confirmingDeparture = true }.disabled(isSaving)
         }
       }
     }
@@ -206,7 +221,7 @@ struct AdvancedSettingsView: View {
   private var appViewPicker: some View {
     Picker("AppView", selection: $selectedAppViewOption) {
       ForEach(AppViewOption.allCases) { option in
-        Text(option.rawValue).tag(option)
+        Text(option.displayName).tag(option)
       }
     }
     .pickerStyle(.segmented)
@@ -254,7 +269,7 @@ struct AdvancedSettingsView: View {
   private var chatPicker: some View {
     Picker("Chat", selection: $selectedChatOption) {
       ForEach(ChatOption.allCases) { option in
-        Text(option.rawValue).tag(option)
+        Text(option.displayName).tag(option)
       }
     }
     .pickerStyle(.segmented)
@@ -334,11 +349,11 @@ struct AdvancedSettingsView: View {
   private var appViewDescription: String {
     switch selectedAppViewOption {
     case .blueskyPBC:
-      return "Official AppView operated by Bluesky PBC."
+      return String(localized: "Official AppView operated by Bluesky PBC.", comment: "AppView provider description.")
     case .blacksky:
-      return "AppView with custom moderation operated by Blacksky Algorithms Inc."
+      return String(localized: "AppView with custom moderation operated by Blacksky Algorithms Inc.", comment: "AppView provider description.")
     case .custom:
-      return "Use a custom AppView service. The AppView handles timeline, profiles, and search functionality."
+      return String(localized: "Use a custom AppView service. The AppView handles timeline, profiles, and search functionality.", comment: "AppView provider description.")
     }
   }
   
@@ -397,7 +412,7 @@ struct AdvancedSettingsView: View {
     } catch {
       guard SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return false }
       if reconcileRuntime {
-        self.error = NSError(domain: "AdvancedSettings", code: -4, userInfo: [NSLocalizedDescriptionKey: "Couldn’t reload saved providers. Your choices are still here. Try again."])
+        self.error = NSError(domain: "AdvancedSettings", code: -4, userInfo: [NSLocalizedDescriptionKey: String(localized: "Couldn’t reload saved providers. Your choices are still here. Try again.", comment: "Error when reloading saved service providers fails.")])
       }
       return false
     }
@@ -423,7 +438,7 @@ struct AdvancedSettingsView: View {
       error = NSError(
         domain: "AdvancedSettings",
         code: -1,
-        userInfo: [NSLocalizedDescriptionKey: "Sign in again to change service providers."]
+        userInfo: [NSLocalizedDescriptionKey: String(localized: "Sign in again to change service providers.", comment: "Error when saving service providers without an active session.")]
       )
       return false
     }
@@ -448,7 +463,7 @@ struct AdvancedSettingsView: View {
       error = NSError(
         domain: "AdvancedSettings",
         code: -2,
-        userInfo: [NSLocalizedDescriptionKey: "Enter a valid AppView service identifier. It starts with “did:”."]
+        userInfo: [NSLocalizedDescriptionKey: String(localized: "Enter a valid AppView service identifier. It starts with “did:”.", comment: "Validation error for custom AppView DID.")]
       )
       return false
     }
@@ -457,7 +472,7 @@ struct AdvancedSettingsView: View {
       error = NSError(
         domain: "AdvancedSettings",
         code: -3,
-        userInfo: [NSLocalizedDescriptionKey: "Enter a valid chat service identifier. It starts with “did:”."]
+        userInfo: [NSLocalizedDescriptionKey: String(localized: "Enter a valid chat service identifier. It starts with “did:”.", comment: "Validation error for custom chat DID.")]
       )
       return false
     }
@@ -500,7 +515,7 @@ struct AdvancedSettingsView: View {
       saveOutcomeUnconfirmed = saveOutcomeUnconfirmed || didAttemptSDKSave
       publishDraftGuard()
       if didAttemptSDKSave {
-        self.error = NSError(domain: "AdvancedSettings", code: -5, userInfo: [NSLocalizedDescriptionKey: "Catbird couldn’t confirm which providers were saved. Your choices are still here. Reload to check, or try again."])
+        self.error = NSError(domain: "AdvancedSettings", code: -5, userInfo: [NSLocalizedDescriptionKey: String(localized: "Catbird couldn’t confirm which providers were saved. Your choices are still here. Reload to check, or try again.", comment: "Error when SDK provider persistence outcome could not be confirmed.")])
       } else {
         self.error = error
       }

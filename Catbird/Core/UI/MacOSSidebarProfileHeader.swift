@@ -35,7 +35,7 @@ struct MacOSSidebarProfileHeader: View {
             .lineLimit(1)
             .truncationMode(.tail)
 
-          Text("@\(handle)")
+          Text(verbatim: "@\(handle)")
             .font(.subheadline)
             .foregroundStyle(.secondary)
             .lineLimit(1)

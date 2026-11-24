@@ -143,20 +143,23 @@ struct RepositoryTimelineView: View {
                     .font(.headline)
                     .foregroundColor(.secondary)
                 
-                Text("Repository ID: \(repository.id.uuidString)")
+                Text(verbatim: "Repository ID: \(repository.id.uuidString)")
                     .font(.caption)
                     .foregroundColor(.secondary)
                 
-                Text("Expected Posts: \(repository.postCount)")
+                Text("Expected Posts: \(repository.postCount.formatted(.number))", comment: "Diagnostic label showing expected post count in empty timeline state.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                 
-                Text("Parsing Status: \(repository.parsingStatus.displayName)")
+                Text("Parsing Status: \(repository.parsingStatus.displayName)", comment: "Diagnostic label showing repository parsing status.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                 
                 if repository.parsingConfidenceScore > 0 {
-                    Text("Parsing Confidence: \(String(format: "%.1f%%", repository.parsingConfidenceScore * 100))")
+                    Text(
+                        "Parsing Confidence: \(repository.parsingConfidenceScore.formatted(.percent.precision(.fractionLength(1))))",
+                        comment: "Diagnostic label showing repository parsing confidence percentage."
+                    )
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -264,7 +267,7 @@ final class TimelineViewModel {
     func loadPosts() {
         guard let modelContext = modelContext else {
             logger.error("loadPosts called but modelContext is nil")
-            errorMessage = "ModelContext not available"
+            errorMessage = String(localized: "ModelContext not available", comment: "Internal error when SwiftData model context is missing.")
             return
         }
         
@@ -283,7 +286,7 @@ final class TimelineViewModel {
                 logger.debug("Found repository: \(repo.userHandle) with \(repo.postCount) posts")
             } else {
                 logger.error("Repository not found for ID: \(self.repositoryID.uuidString)")
-                errorMessage = "Repository not found"
+                errorMessage = String(localized: "Repository not found", comment: "Error shown when repository record cannot be found.")
                 isLoading = false
                 return
             }
@@ -333,7 +336,10 @@ final class TimelineViewModel {
             
         } catch {
             logger.error("Failed to load posts: \(error.localizedDescription)")
-            errorMessage = "Failed to load timeline: \(error.localizedDescription)"
+            errorMessage = String(
+                localized: "Failed to load timeline: \(error.localizedDescription)",
+                comment: "Error shown when loading timeline posts fails."
+            )
         }
         
         isLoading = false
@@ -375,7 +381,10 @@ private struct ExperimentalTimelineHeader: View {
                         .fontWeight(.semibold)
                         .foregroundColor(.orange)
                     
-                    Text("Timeline reconstructed from \(repository.userHandle)'s parsed repository data. Accuracy not guaranteed.")
+                    Text(
+                        "Timeline reconstructed from \(repository.userHandle)'s parsed repository data. Accuracy not guaranteed.",
+                        comment: "Disclaimer header on repository timeline view. Placeholder is the repository owner's handle."
+                    )
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -385,9 +394,9 @@ private struct ExperimentalTimelineHeader: View {
             
             // Statistics row
             HStack(spacing: 16) {
-                StatisticBadge(label: "Posts", value: "\(repository.postCount)")
+                StatisticBadge(label: "Posts", value: repository.postCount.formatted(.number))
                 StatisticBadge(label: "Success Rate", value: repository.successRate)
-                StatisticBadge(label: "Confidence", value: String(format: "%.0f%%", repository.parsingConfidenceScore * 100))
+                StatisticBadge(label: "Confidence", value: repository.parsingConfidenceScore.formatted(.percent.precision(.fractionLength(0))))
                 Spacer()
             }
         }
@@ -398,15 +407,9 @@ private struct ExperimentalTimelineHeader: View {
 private struct TimelineDateHeader: View {
     let date: Date
     
-    private var formattedDate: String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .full
-        return formatter.string(from: date)
-    }
-    
     var body: some View {
         HStack {
-            Text(formattedDate)
+            Text(date, format: Date.FormatStyle(date: .complete, time: .omitted))
                 .font(.subheadline)
                 .fontWeight(.semibold)
                 .foregroundColor(.primary)
@@ -431,7 +434,7 @@ private struct TimelinePostRow: View {
                     HStack(spacing: 8) {
                         PostTypeIcon(post: post)
                         
-                        Text(timeString)
+                        Text(post.createdAt, format: Date.FormatStyle(date: .omitted, time: .shortened))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -456,26 +459,42 @@ private struct TimelinePostRow: View {
                 
                 // Post metadata
                 HStack {
-                    if let replyKey = post.replyToRecordKey {
-                        Label("Reply", systemImage: "arrowshape.turn.up.left")
+                    if post.replyToRecordKey != nil {
+                        Label {
+                            Text("Reply", comment: "Badge indicating a timeline post is a reply.")
+                        } icon: {
+                            Image(systemName: "arrowshape.turn.up.left")
+                        }
                             .font(.caption2)
                             .foregroundColor(.blue)
                     }
                     
-                    if let quoteKey = post.quotedRecordKey {
-                        Label("Quote", systemImage: "quote.bubble")
+                    if post.quotedRecordKey != nil {
+                        Label {
+                            Text("Quote", comment: "Badge indicating a timeline post quotes another post.")
+                        } icon: {
+                            Image(systemName: "quote.bubble")
+                        }
                             .font(.caption2)
                             .foregroundColor(.green)
                     }
                     
                     if post.mediaAttachmentCount > 0 {
-                        Label("\(post.mediaAttachmentCount)", systemImage: "photo")
+                        Label {
+                            Text(post.mediaAttachmentCount, format: .number)
+                        } icon: {
+                            Image(systemName: "photo")
+                        }
                             .font(.caption2)
                             .foregroundColor(.purple)
                     }
                     
                     if post.hasExternalLinks {
-                        Label("Link", systemImage: "link")
+                        Label {
+                            Text("Link", comment: "Badge indicating a timeline post contains an external link.")
+                        } icon: {
+                            Image(systemName: "link")
+                        }
                             .font(.caption2)
                             .foregroundColor(.orange)
                     }
@@ -486,12 +505,6 @@ private struct TimelinePostRow: View {
             .padding(.vertical, 4)
         }
         .buttonStyle(PlainButtonStyle())
-    }
-    
-    private var timeString: String {
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: post.createdAt)
     }
 }
 
@@ -529,7 +542,7 @@ private struct ConfidenceBadge: View {
     }
     
     var body: some View {
-        Text(String(format: "%.0f%%", confidence * 100))
+        Text(confidence, format: .percent.precision(.fractionLength(0)))
             .font(.caption2)
             .fontWeight(.medium)
             .padding(.horizontal, 6)
@@ -541,12 +554,12 @@ private struct ConfidenceBadge: View {
 }
 
 private struct StatisticBadge: View {
-    let label: String
+    let label: LocalizedStringResource
     let value: String
     
     var body: some View {
         VStack(alignment: .center, spacing: 2) {
-            Text(value)
+            Text(verbatim: value)
                 .font(.caption)
                 .fontWeight(.semibold)
             Text(label)
@@ -625,7 +638,10 @@ private struct PostDetailView: View {
                                 .font(.headline)
                                 .foregroundColor(.red)
                             
-                            Text(post.parseErrorMessage ?? "Unknown parsing error")
+                            Text(
+                                post.parseErrorMessage
+                                    ?? String(localized: "Unknown parsing error", comment: "Fallback message when a post record failed to parse without a specific error message.")
+                            )
                                 .font(.body)
                                 .foregroundColor(.red)
                                 .padding()
@@ -670,18 +686,38 @@ private struct MetadataGrid: View {
         ], spacing: 12) {
             MetadataItem(label: "Record Key", value: post.recordKey)
             MetadataItem(label: "Post Type", value: post.postType)
-            MetadataItem(label: "Confidence", value: String(format: "%.1f%%", post.parseConfidence * 100))
-            MetadataItem(label: "Media Count", value: "\(post.mediaAttachmentCount)")
-            MetadataItem(label: "Has Links", value: post.hasExternalLinks ? "Yes" : "No")
-            MetadataItem(label: "Has Mentions", value: post.hasMentions ? "Yes" : "No")
-            MetadataItem(label: "Has Hashtags", value: post.hasHashtags ? "Yes" : "No")
-            MetadataItem(label: "Parse Status", value: post.parseSuccessful ? "Success" : "Failed")
+            MetadataItem(label: "Confidence", value: post.parseConfidence.formatted(.percent.precision(.fractionLength(1))))
+            MetadataItem(label: "Media Count", value: post.mediaAttachmentCount.formatted(.number))
+            MetadataItem(
+                label: "Has Links",
+                value: post.hasExternalLinks
+                    ? String(localized: "Yes", comment: "Affirmative boolean value in metadata grid.")
+                    : String(localized: "No", comment: "Negative boolean value in metadata grid.")
+            )
+            MetadataItem(
+                label: "Has Mentions",
+                value: post.hasMentions
+                    ? String(localized: "Yes", comment: "Affirmative boolean value in metadata grid.")
+                    : String(localized: "No", comment: "Negative boolean value in metadata grid.")
+            )
+            MetadataItem(
+                label: "Has Hashtags",
+                value: post.hasHashtags
+                    ? String(localized: "Yes", comment: "Affirmative boolean value in metadata grid.")
+                    : String(localized: "No", comment: "Negative boolean value in metadata grid.")
+            )
+            MetadataItem(
+                label: "Parse Status",
+                value: post.parseSuccessful
+                    ? String(localized: "Success", comment: "Record parse status when parsing succeeded.")
+                    : String(localized: "Failed", comment: "Record parse status when parsing failed.")
+            )
         }
     }
 }
 
 private struct MetadataItem: View {
-    let label: String
+    let label: LocalizedStringResource
     let value: String
     
     var body: some View {
@@ -689,7 +725,7 @@ private struct MetadataItem: View {
             Text(label)
                 .font(.caption)
                 .foregroundColor(.secondary)
-            Text(value)
+            Text(verbatim: value)
                 .font(.body)
                 .fontWeight(.medium)
         }
@@ -706,10 +742,10 @@ private struct TechnicalDetailsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("CID:")
+                Text("CID:", comment: "Label for Content Identifier (CID) of an AT Protocol record.")
                     .fontWeight(.medium)
                 Spacer()
-                Text(post.recordCID)
+                Text(verbatim: post.recordCID)
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
@@ -720,7 +756,7 @@ private struct TechnicalDetailsView: View {
                     Text("Reply To:")
                         .fontWeight(.medium)
                     Spacer()
-                    Text(replyKey)
+                    Text(verbatim: replyKey)
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
@@ -729,10 +765,10 @@ private struct TechnicalDetailsView: View {
             
             if let quoteKey = post.quotedRecordKey {
                 HStack {
-                    Text("Quote:")
+                    Text("Quote:", comment: "Label for the record key of a quoted post.")
                         .fontWeight(.medium)
                     Spacer()
-                    Text(quoteKey)
+                    Text(verbatim: quoteKey)
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
@@ -768,10 +804,10 @@ private struct RawDataView: View {
                     
                     // Raw data
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("CBOR Data (\(post.rawCBORData.count) bytes)")
+                        Text("CBOR Data (\(post.rawCBORData.count) bytes)", comment: "Section header showing raw CBOR payload size in bytes.")
                             .font(.headline)
                         
-                        Text(post.rawCBORData.map { String(format: "%02x", $0) }.joined(separator: " "))
+                        Text(verbatim: post.rawCBORData.map { String(format: "%02x", $0) }.joined(separator: " "))
                             .font(.system(.caption, design: .monospaced))
                             .padding()
                             .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
@@ -784,7 +820,7 @@ private struct RawDataView: View {
                             Text("Facets (Rich Text)")
                                 .font(.headline)
                             
-                            Text(post.facets)
+                            Text(verbatim: post.facets)
                                 .font(.system(.caption, design: .monospaced))
                                 .padding()
                                 .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
@@ -797,7 +833,7 @@ private struct RawDataView: View {
                             Text("Embeds")
                                 .font(.headline)
                             
-                            Text(post.embeds)
+                            Text(verbatim: post.embeds)
                                 .font(.system(.caption, design: .monospaced))
                                 .padding()
                                 .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
@@ -837,11 +873,11 @@ enum TimelineSortOrder: String, CaseIterable {
     var displayName: String {
         switch self {
         case .dateAscending:
-            return "Oldest First"
+            return String(localized: "Oldest First", comment: "Sort order option from oldest to newest.")
         case .dateDescending:
-            return "Newest First"
+            return String(localized: "Newest First", comment: "Sort order option from newest to oldest.")
         case .confidence:
-            return "Parse Confidence"
+            return String(localized: "Parse Confidence", comment: "Sort order option by record parsing confidence score.")
         }
     }
     
@@ -867,15 +903,15 @@ enum PostTypeFilter: String, CaseIterable {
     var displayName: String {
         switch self {
         case .all:
-            return "All Posts"
+            return String(localized: "All Posts", comment: "Timeline filter option showing all post types.")
         case .originalPosts:
-            return "Original Posts"
+            return String(localized: "Original Posts", comment: "Timeline filter option showing only top-level original posts.")
         case .replies:
-            return "Replies"
+            return String(localized: "Replies", comment: "Timeline filter option showing only reply posts.")
         case .quotes:
-            return "Quote Posts"
+            return String(localized: "Quote Posts", comment: "Timeline filter option showing only quote posts.")
         case .withMedia:
-            return "With Media"
+            return String(localized: "With Media", comment: "Timeline filter option showing only posts containing media attachments.")
         }
     }
 }

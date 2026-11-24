@@ -16,19 +16,22 @@ enum BlueskyAgentError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .foundationModelsUnavailable:
-            return "Foundation Models are not available on this platform."
+            return String(localized: "Foundation Models are not available on this platform.", comment: "Error when Apple Intelligence Foundation Models framework is unavailable.")
         case .modelUnavailable:
-            return "The on-device language model is unavailable or not ready."
+            return String(localized: "The on-device language model is unavailable or not ready.", comment: "Error when the on-device AI language model is not ready.")
         case .missingClient:
-            return "An authenticated Bluesky client is required before issuing agent requests."
+            return String(localized: "An authenticated Bluesky client is required before issuing agent requests.", comment: "Error when Ask Catbird agent is invoked while signed out.")
         case .notAThread:
-            return "Thread summarization requires a post with visible thread context."
+            return String(localized: "Thread summarization requires a post with visible thread context.", comment: "Error when summarizing a post without thread context.")
         case .invalidThreadURI:
-            return "Choose a Bluesky post or supply a valid Bluesky post link."
+            return String(localized: "Choose a Bluesky post or supply a valid Bluesky post link.", comment: "Error when a post URI or link is invalid.")
         case .emptyResult(let context):
-            return "No data was returned for \(context)."
+            return String(localized: "No data was returned for \(context).", comment: "Error when Ask Catbird receives no data — variable is query context.")
         case .contextLimitExceeded(let limit, let required):
-            return "The prompt and context require \(required) tokens, which exceeds the limit of \(limit)."
+            return String(
+                localized: "The prompt and context require \(required) tokens, which exceeds the limit of \(limit).",
+                comment: "Error when prompt exceeds on-device token window — %1$lld is required tokens, %2$lld is token limit."
+            )
         case .underlying(let error):
             return error.localizedDescription
         }

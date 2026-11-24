@@ -78,11 +78,13 @@ struct FeedPostRow: View, Identifiable {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Show") {
+                    Button {
                         withoutRevealAnimation {
                             isIntentRevealed = true
                         }
                         effectiveInvalidateHeight?()
+                    } label: {
+                        Text("Show", comment: "Button to reveal a post hidden by an on-device intent rule")
                     }
                         .buttonStyle(.bordered)
                 }
@@ -100,11 +102,13 @@ struct FeedPostRow: View, Identifiable {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Show") {
+                    Button {
                         withoutRevealAnimation {
                             isSmartFilterRevealed = true
                         }
                         effectiveInvalidateHeight?()
+                    } label: {
+                        Text("Show", comment: "Button to reveal a post collapsed by a Smart Filter rule")
                     }
                         .buttonStyle(.bordered)
                 }
@@ -159,7 +163,7 @@ struct FeedPostRow: View, Identifiable {
                             // Show confirmation toast
                             appState.toastManager.show(
                                 ToastItem(
-                                    message: "Feedback sent",
+                                    message: String(localized: "Feedback sent", comment: "Toast confirming feed Show More/Less preference feedback was sent"),
                                     icon: "checkmark.circle.fill"
                                 )
                             )
@@ -182,7 +186,7 @@ struct FeedPostRow: View, Identifiable {
                         // Show confirmation toast
                         appState.toastManager.show(
                             ToastItem(
-                                message: "Feedback sent",
+                                message: String(localized: "Feedback sent", comment: "Toast confirming feed Show More/Less preference feedback was sent"),
                                 icon: "checkmark.circle.fill"
                             )
                         )

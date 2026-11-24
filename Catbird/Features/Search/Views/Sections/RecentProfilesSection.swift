@@ -77,7 +77,9 @@ struct SearchHistoryHeader: View {
                 .foregroundStyle(.secondary)
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 12)
-            Button("Clear", action: onClear)
+            Button(action: onClear) {
+                Text("Clear", comment: "Button to clear recent search history items")
+            }
                 .appFont(AppTextRole.subheadline)
                 .buttonStyle(.borderless)
                 .accessibilityLabel(clearLabel)

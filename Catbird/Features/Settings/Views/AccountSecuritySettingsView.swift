@@ -52,7 +52,7 @@ struct AccountSecuritySettingsView: View {
                                     .foregroundStyle(isActive ? .green : .secondary)
                                     .clipShape(Capsule())
                             }
-                            Text("Device ID: \(localDeviceId.prefix(8))…")
+                            Text(verbatim: "Device ID: \(localDeviceId.prefix(8))…")
                                 .font(.caption2.monospaced())
                                 .foregroundStyle(.secondary)
                         }

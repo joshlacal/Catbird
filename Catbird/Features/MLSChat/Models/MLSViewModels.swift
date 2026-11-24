@@ -147,7 +147,10 @@ public enum ApplicationEntryError: Error, LocalizedError, Sendable {
   public var errorDescription: String? {
     switch self {
     case .unexpectedBodyVariant(let entryId, let conversationId):
-      return "Application entry \(entryId) in conversation \(conversationId) contains an unexpected or malformed body variant and cannot be processed safely."
+      return String(
+        localized: "Application entry \(entryId) in conversation \(conversationId) contains an unexpected or malformed body variant and cannot be processed safely.",
+        comment: "Technical error when an encrypted message entry has an unsupported body variant. %1$@ is the entry ID, %2$@ is the conversation ID."
+      )
     }
   }
 }

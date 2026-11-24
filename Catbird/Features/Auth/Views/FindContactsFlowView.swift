@@ -64,7 +64,7 @@ public struct FindContactsFlowView: View {
                 contentForCurrentStep
                     .animation(.easeInOut(duration: 0.25), value: step)
             }
-            .navigationTitle(navigationTitleText)
+            .navigationTitle(Text(navigationTitleText))
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -91,14 +91,20 @@ public struct FindContactsFlowView: View {
         }
     }
     
-    private var navigationTitleText: String {
+    private var navigationTitleText: LocalizedStringResource {
         switch step {
-        case .intro: return "Find Friends"
-        case .phoneEntry, .phoneCodeEntry: return "Verify Phone"
-        case .importing: return "Finding Friends"
-        case .results: return "Contacts on Bluesky"
-        case .permissionDenied: return "Contacts Permission"
-        case .error: return "Find Friends"
+        case .intro:
+            return LocalizedStringResource("Find Friends", comment: "Navigation title for the contact matching intro screen.")
+        case .phoneEntry, .phoneCodeEntry:
+            return LocalizedStringResource("Verify Phone", comment: "Navigation title for the phone verification screen.")
+        case .importing:
+            return LocalizedStringResource("Finding Friends", comment: "Navigation title shown while importing and matching contacts.")
+        case .results:
+            return LocalizedStringResource("Contacts on Bluesky", comment: "Navigation title for the matched contacts results screen.")
+        case .permissionDenied:
+            return LocalizedStringResource("Contacts Permission", comment: "Navigation title when Contacts permission is denied.")
+        case .error:
+            return LocalizedStringResource("Find Friends", comment: "Navigation title when contact matching encounters an error.")
         }
     }
     
@@ -218,7 +224,7 @@ public struct FindContactsFlowView: View {
         }
     }
     
-    private func privacyBullet(icon: String, title: String, detail: String) -> some View {
+    private func privacyBullet(icon: String, title: LocalizedStringResource, detail: LocalizedStringResource) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
                 .font(.system(size: 14))
@@ -260,12 +266,13 @@ public struct FindContactsFlowView: View {
             }
             
             VStack(alignment: .leading, spacing: 8) {
-                Text("Phone Number")
+                Text("Phone Number", comment: "Field label for entering a phone number during contact verification.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
                 
-                TextField("+1 (555) 000-0000", text: $phoneNumber)
+                TextField(text: $phoneNumber, prompt: Text(verbatim: "+1 (555) 000-0000")) {
+                    Text("Phone Number", comment: "Accessibility label for entering a phone number during contact verification.")
+                }
                     .font(.title3)
                     #if os(iOS)
                     .keyboardType(.phonePad)
@@ -332,7 +339,9 @@ public struct FindContactsFlowView: View {
             }
             
             VStack(alignment: .leading, spacing: 8) {
-                TextField("000000", text: $verificationCode)
+                TextField(text: $verificationCode, prompt: Text(verbatim: "000000")) {
+                    Text("Confirmation Code", comment: "Accessibility label for the 6-digit SMS confirmation code field.")
+                }
                     .font(.system(size: 32, weight: .bold, design: .monospaced))
                     .multilineTextAlignment(.center)
                     #if os(iOS)
@@ -354,7 +363,7 @@ public struct FindContactsFlowView: View {
             
             // Resend code button
             if resendCountdown > 0 {
-                Text("Resend code in \(resendCountdown)s")
+                Text("Resend code in \(resendCountdown)s", comment: "Countdown label showing seconds remaining before SMS verification code can be resent.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
@@ -428,7 +437,7 @@ public struct FindContactsFlowView: View {
                 if !matches.isEmpty {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("\(matches.count) Friend\(matches.count == 1 ? "" : "s") Found")
+                            Text("\(matches.count) Friends Found", comment: "Header showing how many contacts matched on Bluesky.")
                                 .font(.title3)
                                 .fontWeight(.bold)
                             Text("Follow your friends to see their posts.")
@@ -448,7 +457,7 @@ public struct FindContactsFlowView: View {
                                         ProgressView()
                                             .scaleEffect(0.8)
                                     }
-                                    Text("Follow All (\(unFollowedCount))")
+                                    Text("Follow All (\(unFollowedCount))", comment: "Button to follow all unmatched contacts at once. Placeholder is the count of contacts to follow.")
                                         .font(.subheadline)
                                         .fontWeight(.semibold)
                                 }
@@ -563,13 +572,13 @@ public struct FindContactsFlowView: View {
                     .fontWeight(.semibold)
                     .lineLimit(1)
                 
-                Text("@\(match.profile.handle.description)")
+                Text(verbatim: "@\(match.profile.handle.description)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 
                 if let localName = match.localContact?.displayName {
-                    Text("In contacts: \(localName)")
+                    Text("In contacts: \(localName)", comment: "Label showing the contact's name from the user's device address book.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -582,7 +591,11 @@ public struct FindContactsFlowView: View {
             Button {
                 toggleFollow(for: index)
             } label: {
-                Text(match.isFollowing ? "Following" : "Follow")
+                Text(
+                    match.isFollowing
+                        ? LocalizedStringResource("Following", comment: "Button state showing the user is already following this contact.")
+                        : LocalizedStringResource("Follow", comment: "Button action to follow a matched contact.")
+                )
                     .font(.caption)
                     .fontWeight(.semibold)
                     .padding(.horizontal, 14)
@@ -601,6 +614,7 @@ public struct FindContactsFlowView: View {
                     .foregroundStyle(.secondary)
                     .padding(8)
             }
+            .accessibilityLabel(Text("Dismiss", comment: "Button to dismiss a suggested contact match."))
         }
         .padding(12)
         .background(Color(platformColor: .platformSecondarySystemGroupedBackground))
@@ -779,14 +793,23 @@ public struct FindContactsFlowView: View {
                 step = .permissionDenied
             } catch {
                 logger.error("Contacts access failed: \(error.localizedDescription)")
-                step = .error(Self.message(for: error, action: "read your contacts"))
+                step = .error(
+                    Self.message(
+                        for: error,
+                        action: "read your contacts",
+                        fallback: String(localized: "Couldn’t read your contacts. Try again.", comment: "Error when reading device contacts fails.")
+                    )
+                )
             }
         }
     }
     
     private func handleSendVerificationCode() {
         guard let client = appState.atProtoClient else {
-            errorMessage = "Sign in to Bluesky to find your contacts."
+            errorMessage = String(
+                localized: "Sign in to Bluesky to find your contacts.",
+                comment: "Error shown when attempting contact matching while signed out."
+            )
             return
         }
         
@@ -801,7 +824,11 @@ public struct FindContactsFlowView: View {
                 startResendTimer()
             } catch {
                 isSendingCode = false
-                errorMessage = Self.message(for: error, action: "send a verification code")
+                errorMessage = Self.message(
+                    for: error,
+                    action: "send a verification code",
+                    fallback: String(localized: "Couldn’t send a verification code. Try again.", comment: "Error when sending SMS verification code fails.")
+                )
             }
         }
     }
@@ -820,7 +847,10 @@ public struct FindContactsFlowView: View {
     
     private func handleVerifyCodeAndImport() {
         guard let client = appState.atProtoClient else {
-            errorMessage = "Sign in to Bluesky to find your contacts."
+            errorMessage = String(
+                localized: "Sign in to Bluesky to find your contacts.",
+                comment: "Error shown when attempting phone verification while signed out."
+            )
             return
         }
         
@@ -834,14 +864,23 @@ public struct FindContactsFlowView: View {
                 await performImport()
             } catch {
                 isVerifyingCode = false
-                errorMessage = Self.message(for: error, action: "verify your phone number")
+                errorMessage = Self.message(
+                    for: error,
+                    action: "verify your phone number",
+                    fallback: String(localized: "Couldn’t verify your phone number. Try again.", comment: "Error when phone verification fails.")
+                )
             }
         }
     }
     
     private func performImport() async {
         guard let client = appState.atProtoClient, let token = service.verificationToken else {
-            step = .error("Verification token missing. Please try again.")
+            step = .error(
+                String(
+                    localized: "Verification token missing. Please try again.",
+                    comment: "Error shown when phone verification token is missing before contact import."
+                )
+            )
             return
         }
         
@@ -866,7 +905,13 @@ public struct FindContactsFlowView: View {
             step = .results
         } catch {
             logger.error("Contact import failed: \(error.localizedDescription)")
-            step = .error(Self.message(for: error, action: "check your contacts"))
+            step = .error(
+                Self.message(
+                    for: error,
+                    action: "check your contacts",
+                    fallback: String(localized: "Couldn’t check your contacts. Try again.", comment: "Error when matching contacts on Bluesky fails.")
+                )
+            )
         }
     }
     
@@ -888,7 +933,10 @@ public struct FindContactsFlowView: View {
                 if !success {
                     logger.warning("Follow/unfollow returned false for \(match.profile.did.didString())")
                     matches[index].isFollowing = !newStatus
-                    errorMessage = "Couldn’t update your follow for \(match.profile.displayName ?? match.profile.handle.description). Try again."
+                    errorMessage = String(
+                        localized: "Couldn’t update your follow for \(match.profile.displayName ?? match.profile.handle.description). Try again.",
+                        comment: "Error when following or unfollowing a matched contact fails. Placeholder is the user's name or handle."
+                    )
                 }
             } catch {
                 logger.error("Failed to update follow status: \(error.localizedDescription)")
@@ -914,7 +962,10 @@ public struct FindContactsFlowView: View {
         guard !indicesToFollow.isEmpty else { return }
         
         guard let client = appState.atProtoClient else {
-            errorMessage = "Couldn’t follow contacts. Please try again."
+            errorMessage = String(
+                localized: "Couldn’t follow contacts. Please try again.",
+                comment: "Error when bulk-following contacts cannot start because the client is unavailable."
+            )
             return
         }
         
@@ -964,7 +1015,10 @@ public struct FindContactsFlowView: View {
             
             isFollowingAll = false
             if failureCount > 0 {
-                errorMessage = "Couldn’t follow \(failureCount) contact\(failureCount == 1 ? "" : "s"). Try again."
+                errorMessage = String(
+                    localized: "Couldn’t follow \(failureCount) contacts. Try again.",
+                    comment: "Error when bulk-following matched contacts partially fails."
+                )
             }
             
             appState.graphManager.invalidateCache(for: .relationshipChanged, cacheTypes: .following)
@@ -988,10 +1042,10 @@ public struct FindContactsFlowView: View {
     }
     
     /// Contact-matching errors already carry friendly copy; anything else gets the shared wording.
-    private static func message(for error: Error, action: String) -> String {
+    private static func message(for error: Error, action: String, fallback: String) -> String {
         if let contactError = error as? ContactMatchingError, let description = contactError.errorDescription {
             return description
         }
-        return UserFacingError.message(for: error, action: action) ?? "Couldn’t \(action). Try again."
+        return UserFacingError.message(for: error, action: action) ?? fallback
     }
 }

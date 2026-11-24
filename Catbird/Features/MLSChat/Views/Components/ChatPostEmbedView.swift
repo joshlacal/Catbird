@@ -107,7 +107,7 @@ struct ChatPostEmbedView: View {
         // Author row
         authorRow(
           avatarURL: postEmbed.authorAvatar,
-          displayName: postEmbed.authorDisplayName ?? postEmbed.authorHandle ?? "Unknown",
+          displayName: postEmbed.authorDisplayName ?? postEmbed.authorHandle ?? String(localized: "Unknown"),
           handle: postEmbed.authorHandle ?? postEmbed.authorDid
         )
 
@@ -169,7 +169,7 @@ struct ChatPostEmbedView: View {
           .foregroundStyle(.primary)
           .lineLimit(1)
 
-        Text("@\(handle)")
+        Text(verbatim: "@\(handle)")
           .designCaption()
           .foregroundStyle(.secondary)
           .lineLimit(1)
@@ -300,7 +300,7 @@ struct ChatPostEmbedView: View {
         .font(.system(size: 12))
         .foregroundColor(.secondary)
 
-      Text("\(count)")
+      Text(count, format: .number)
         .designCaption()
         .foregroundColor(.secondary)
     }
@@ -359,7 +359,7 @@ struct ChatPostEmbedView: View {
           .lineLimit(3)
       }
 
-      Text(postEmbed.uri)
+      Text(verbatim: postEmbed.uri)
         .designCaption()
         .foregroundColor(.secondary)
         .lineLimit(1)
@@ -380,13 +380,13 @@ struct ChatPostEmbedView: View {
 
     do {
       guard let uri = try? ATProtocolURI(uriString: postEmbed.uri) else {
-        loadError = "Invalid post URI"
+        loadError = String(localized: "Invalid post URI", comment: "Error when an embedded post URI is invalid")
         isLoading = false
         return
       }
 
       guard let client = appState.atProtoClient else {
-        loadError = "AT Protocol client not available"
+        loadError = String(localized: "AT Protocol client not available", comment: "Error when loading an embedded post without a network client")
         isLoading = false
         return
       }
@@ -396,7 +396,7 @@ struct ChatPostEmbedView: View {
       )
 
       guard responseCode == 200, let posts = response?.posts, let post = posts.first else {
-        loadError = "Post not found"
+        loadError = String(localized: "Post not found", comment: "Error when an embedded post cannot be found")
         isLoading = false
         return
       }

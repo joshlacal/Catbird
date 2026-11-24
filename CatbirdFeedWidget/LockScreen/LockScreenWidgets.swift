@@ -53,7 +53,10 @@ struct FeedRectangularProvider: TimelineProvider {
         authorName: "Jane",
         authorHandle: "@jane.bsky.social",
         authorAvatarURL: nil,
-        text: "Just shipped a major update!",
+        text: String(
+          localized: "Just shipped a major update!",
+          comment: "Sample post text shown in the lock-screen widget gallery preview."
+        ),
         timestamp: Date(),
         likeCount: 0,
         repostCount: 0,
@@ -64,10 +67,16 @@ struct FeedRectangularProvider: TimelineProvider {
       ),
       WidgetPost(
         id: "p2",
-        authorName: "Dev",
+        authorName: String(
+          localized: "Dev",
+          comment: "Sample author name shown in the lock-screen widget gallery preview."
+        ),
         authorHandle: "@dev.bsky.social",
         authorAvatarURL: nil,
-        text: "New framework looks promising.",
+        text: String(
+          localized: "New framework looks promising.",
+          comment: "Sample post text shown in the lock-screen widget gallery preview."
+        ),
         timestamp: Date(),
         likeCount: 0,
         repostCount: 0,
@@ -90,8 +99,18 @@ struct FeedRectangularWidget: Widget {
       FeedRectangularView(entry: entry)
         .containerBackground(.clear, for: .widget)
     }
-    .configurationDisplayName("Latest Posts")
-    .description("See the latest posts from your Following feed.")
+    .configurationDisplayName(
+      LocalizedStringResource(
+        "Latest Posts",
+        comment: "Widget gallery display name for the lock-screen Latest Posts widget."
+      )
+    )
+    .description(
+      LocalizedStringResource(
+        "See the latest posts from your Following feed.",
+        comment: "Widget gallery description for the lock-screen Latest Posts widget."
+      )
+    )
     .supportedFamilies([.accessoryRectangular])
   }
 }
@@ -99,14 +118,30 @@ struct FeedRectangularWidget: Widget {
 struct FeedRectangularView: View {
   let entry: FeedRectangularEntry
 
+  private var emptyStatePrompt: LocalizedStringResource {
+    if entry.isSignedIn {
+      return LocalizedStringResource(
+        "Open Catbird to load posts",
+        comment: "Empty-state prompt in the lock-screen widget when signed in with no cached posts."
+      )
+    }
+    return LocalizedStringResource(
+      "Open Catbird to sign in",
+      comment: "Empty-state prompt in the lock-screen widget when no Bluesky account is signed in."
+    )
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: WidgetSpacing.xs) {
-      Text("Latest Posts")
-        .font(.system(size: 10, weight: .semibold))
-        .foregroundStyle(.secondary)
+      Text(
+        "Latest Posts",
+        comment: "Header label inside the lock-screen Latest Posts widget."
+      )
+      .font(.system(size: 10, weight: .semibold))
+      .foregroundStyle(.secondary)
 
       if entry.posts.isEmpty {
-        Text(entry.isSignedIn ? "Open Catbird to load posts" : "Open Catbird to sign in")
+        Text(emptyStatePrompt)
           .font(.system(size: 10))
           .foregroundStyle(.tertiary)
       } else {
@@ -116,9 +151,12 @@ struct FeedRectangularView: View {
               .fill(Color.gray.opacity(0.4))
               .frame(width: WidgetAvatarSize.xs, height: WidgetAvatarSize.xs)
 
-            Text("\(post.authorName): \(post.text)")
-              .font(.system(size: 10))
-              .lineLimit(1)
+            Text(
+              "\(post.authorName): \(post.text)",
+              comment: "Compact lock-screen post row: first placeholder is the author's name, second is the post text."
+            )
+            .font(.system(size: 10))
+            .lineLimit(1)
           }
         }
       }

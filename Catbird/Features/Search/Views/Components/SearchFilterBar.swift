@@ -24,11 +24,12 @@ public struct SearchFilterBar: View {
 
   public init(
     filterState: SearchFilterState,
+    locale: Locale = .current,
     onFiltersTap: @escaping () -> Void,
     onResetFilters: (() -> Void)? = nil
   ) {
     self.activeFilterCount = filterState.activeFilterCount
-    self.summaryItems = filterState.summaryItems
+    self.summaryItems = filterState.summaryItems(locale: locale)
     self.onFiltersTap = onFiltersTap
     self.onResetFilters = onResetFilters
   }
@@ -59,14 +60,14 @@ public struct SearchFilterBar: View {
 
         if activeFilterCount > 0, let onResetFilters {
           Button(action: onResetFilters) {
-            Text("Clear")
+            Text("Clear", comment: "Button to clear all active search filters")
               .appFont(AppTextRole.caption.weight(.medium))
               .foregroundStyle(.secondary)
               .padding(.horizontal, 10)
               .padding(.vertical, 6)
           }
           .buttonStyle(.plain)
-          .accessibilityLabel("Clear filters")
+          .accessibilityLabel(Text("Clear filters", comment: "Accessibility label for button to reset search filters"))
         }
       }
       .padding(.horizontal, 16)
@@ -85,10 +86,10 @@ public struct SearchFilterBar: View {
       HStack(spacing: 5) {
         Image(systemName: activeFilterCount > 0 ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
           .appFont(AppTextRole.subheadline)
-        Text("Filters")
+        Text("Filters", comment: "Button chip to open post search filters")
           .appFont(AppTextRole.subheadline.weight(.medium))
         if activeFilterCount > 0 {
-          Text("\(activeFilterCount)")
+          Text(activeFilterCount, format: .number)
             .appFont(AppTextRole.caption2)
             .fontWeight(.semibold)
             .foregroundStyle(.white)
@@ -118,6 +119,10 @@ public struct SearchFilterBar: View {
     }
     .buttonStyle(.plain)
     .accessibilityIdentifier("searchFiltersButton")
-    .accessibilityLabel(activeFilterCount > 0 ? "Filters, \(activeFilterCount) active" : "Filters")
+    .accessibilityLabel(
+      activeFilterCount > 0
+        ? Text("Filters, \(activeFilterCount) active", comment: "Accessibility label for search filters button showing number of active filters")
+        : Text("Filters", comment: "Accessibility label for search filters button")
+    )
   }
 }

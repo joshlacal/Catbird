@@ -225,11 +225,11 @@ enum LogLevel: String, CaseIterable, Hashable {
   
   var displayName: String {
     switch self {
-    case .debug: return "Debug"
-    case .info: return "Info"
-    case .notice: return "Notice"
-    case .error: return "Error"
-    case .fault: return "Fault"
+    case .debug: return String(localized: "Debug", comment: "System log severity level label.")
+    case .info: return String(localized: "Info", comment: "System log severity level label.")
+    case .notice: return String(localized: "Notice", comment: "System log severity level label.")
+    case .error: return String(localized: "Error", comment: "System log severity level label.")
+    case .fault: return String(localized: "Fault", comment: "System log severity level label.")
     }
   }
   
@@ -264,11 +264,11 @@ enum LogTimeRange: String, CaseIterable {
   
   var displayName: String {
     switch self {
-    case .last5Minutes: return "Last 5 minutes"
-    case .last15Minutes: return "Last 15 minutes"
-    case .lastHour: return "Last hour"
-    case .last6Hours: return "Last 6 hours"
-    case .last24Hours: return "Last 24 hours"
+    case .last5Minutes: return String(localized: "Last 5 minutes", comment: "System log filter time range option.")
+    case .last15Minutes: return String(localized: "Last 15 minutes", comment: "System log filter time range option.")
+    case .lastHour: return String(localized: "Last hour", comment: "System log filter time range option.")
+    case .last6Hours: return String(localized: "Last 6 hours", comment: "System log filter time range option.")
+    case .last24Hours: return String(localized: "Last 24 hours", comment: "System log filter time range option.")
     }
   }
   

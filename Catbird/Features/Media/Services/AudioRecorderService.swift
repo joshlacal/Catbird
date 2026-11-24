@@ -279,16 +279,12 @@ final class AudioRecorderService: NSObject {
   // MARK: - Utility Methods
   
   func getRecordingDurationString() -> String {
-    let minutes = Int(recordingDuration) / 60
-    let seconds = Int(recordingDuration) % 60
-    return String(format: "%d:%02d", minutes, seconds)
+    Duration.seconds(Int(max(0, recordingDuration))).formatted(.time(pattern: .minuteSecond))
   }
   
   func getRemainingTimeString() -> String {
-    let remaining = maxDuration - recordingDuration
-    let minutes = Int(remaining) / 60
-    let seconds = Int(remaining) % 60
-    return String(format: "%d:%02d", minutes, seconds)
+    let remaining = max(0, maxDuration - recordingDuration)
+    return Duration.seconds(Int(remaining)).formatted(.time(pattern: .minuteSecond))
   }
 }
 
@@ -332,13 +328,13 @@ enum AudioRecordingError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .permissionDenied:
-      return "Microphone permission is required to record audio"
+      return String(localized: "Microphone permission is required to record audio", comment: "Error when microphone access is denied before recording audio")
     case .recordingFailed:
-      return "Failed to start audio recording"
+      return String(localized: "Failed to start audio recording", comment: "Error when audio recorder fails to begin recording")
     case .recordingInProgress:
-      return "Audio recording is still starting"
+      return String(localized: "Audio recording is still starting", comment: "Error when a second audio recording is requested while one is already starting")
     case .audioSessionError:
-      return "Failed to configure audio session"
+      return String(localized: "Failed to configure audio session", comment: "Error when audio session setup fails for recording")
     }
   }
 }

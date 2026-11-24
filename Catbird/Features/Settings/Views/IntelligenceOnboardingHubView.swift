@@ -105,8 +105,8 @@ struct IntelligenceOnboardingHubView: View {
           SettingsNavigationRow(
             title: "Originals-Only Accounts",
             summary: originalsOnlyCount == 0
-              ? "No accounts currently muted for reposts"
-              : "\(originalsOnlyCount) \(originalsOnlyCount == 1 ? "account has" : "accounts have") reposts hidden",
+              ? String(localized: "No accounts currently muted for reposts", comment: "Summary when zero accounts are muted for reposts.")
+              : String(localized: "\(originalsOnlyCount) accounts have reposts hidden", comment: "Summary showing how many accounts have reposts hidden in Originals-Only mode."),
             systemImage: "arrow.2.squarepath",
             family: .feeds
           )
@@ -197,7 +197,7 @@ struct IntelligenceOnboardingHubView: View {
       Button("Reset for Next Launch") {
         appState.onboardingManager.resetAllOnboarding(for: appState.userDID)
         appState.toastManager.show(ToastItem(
-          message: "Onboarding and tips will appear again the next time you open Catbird.",
+          message: String(localized: "Onboarding and tips will appear again the next time you open Catbird.", comment: "Toast shown after resetting onboarding and tips."),
           icon: "sparkles"
         ))
       }

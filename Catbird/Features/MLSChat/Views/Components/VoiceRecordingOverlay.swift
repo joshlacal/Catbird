@@ -15,6 +15,7 @@ struct VoiceRecordingOverlay: View {
           .font(.title2)
           .foregroundStyle(.secondary)
       }
+      .accessibilityLabel("Cancel recording")
 
       // Recording indicator + duration
       HStack(spacing: 8) {
@@ -40,6 +41,7 @@ struct VoiceRecordingOverlay: View {
           .font(.title2)
           .foregroundStyle(Color.accentColor)
       }
+      .accessibilityLabel("Send voice message")
     }
     .padding(.horizontal, 16)
     .padding(.vertical, 12)
@@ -57,9 +59,7 @@ struct VoiceRecordingOverlay: View {
   }
 
   private var formattedDuration: String {
-    let minutes = Int(duration) / 60
-    let seconds = Int(duration) % 60
-    return String(format: "%d:%02d", minutes, seconds)
+    Duration.seconds(max(0, Int(duration))).formatted(.time(pattern: .minuteSecond))
   }
 }
 

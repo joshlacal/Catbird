@@ -28,7 +28,7 @@ struct ReplyHeaderView: View {
                     .layoutPriority(1)
 
                 // Handle with conditional visibility and truncation
-                Text("@\(handle)")
+                Text(verbatim: "@\(handle)")
                                     .appFont(AppTextRole.body)
                     .foregroundColor(.gray)
                     .lineLimit(1)
@@ -39,7 +39,7 @@ struct ReplyHeaderView: View {
 
             // Separator and Time
             HStack(spacing: spacing) {
-                Text("·")
+                Text(verbatim: "·")
                     .foregroundStyle(.gray)
                 Text(timeAgo)
                                     .appFont(AppTextRole.body)

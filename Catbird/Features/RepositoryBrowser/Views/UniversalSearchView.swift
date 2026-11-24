@@ -142,9 +142,9 @@ struct RepositoryUniversalSearchView: View {
                         .font(.headline)
                     
                     HStack(spacing: 16) {
-                        QuickStatView(label: "Posts", value: "\(repository.postCount)", icon: "text.bubble")
-                        QuickStatView(label: "Connections", value: "\(repository.connectionCount)", icon: "person.2")
-                        QuickStatView(label: "Media", value: "\(repository.mediaCount)", icon: "photo")
+                        QuickStatView(label: "Posts", value: repository.postCount.formatted(.number), icon: "text.bubble")
+                        QuickStatView(label: "Connections", value: repository.connectionCount.formatted(.number), icon: "person.2")
+                        QuickStatView(label: "Media", value: repository.mediaCount.formatted(.number), icon: "photo")
                     }
                 }
             }
@@ -163,7 +163,7 @@ struct RepositoryUniversalSearchView: View {
                 .font(.headline)
                 .foregroundColor(.secondary)
             
-            Text("Scanning \(repository.totalRecordCount) records")
+            Text("Scanning \(repository.totalRecordCount) records", comment: "Progress subtitle while searching repository records. Placeholder is the total record count.")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
@@ -384,7 +384,10 @@ final class UniversalSearchViewModel {
                 type: .connection,
                 title: connection.targetUserDID,
                 subtitle: connection.connectionType.capitalized,
-                content: "Connection to \(connection.targetUserDID)",
+                content: String(
+                    localized: "Connection to \(connection.targetUserDID)",
+                    comment: "Search result content describing a social connection to a target DID."
+                ),
                 date: connection.createdAt,
                 confidence: connection.parseConfidence,
                 parseSuccessful: connection.parseSuccessful,
@@ -408,8 +411,8 @@ final class UniversalSearchViewModel {
                 id: media.id,
                 type: .media,
                 title: media.altText ?? media.mediaType,
-                subtitle: media.mimeType ?? "Unknown type",
-                content: media.altText ?? "Media attachment",
+                subtitle: media.mimeType ?? String(localized: "Unknown type", comment: "Fallback media MIME type in repository search results."),
+                content: media.altText ?? String(localized: "Media attachment", comment: "Fallback content description for a media search result without alt text."),
                 date: media.discoveredAt,
                 confidence: media.parseConfidence,
                 parseSuccessful: media.parseSuccessful,
@@ -431,9 +434,9 @@ final class UniversalSearchViewModel {
             SearchResult(
                 id: profile.id,
                 type: .profile,
-                title: profile.displayName ?? "Profile",
-                subtitle: "Profile information",
-                content: profile.profileDescription ?? "User profile",
+                title: profile.displayName ?? String(localized: "Profile", comment: "Fallback title for a profile search result without a display name."),
+                subtitle: String(localized: "Profile information", comment: "Subtitle for a profile record in repository search results."),
+                content: profile.profileDescription ?? String(localized: "User profile", comment: "Fallback content description for a profile search result without a bio."),
                 date: profile.updatedAt,
                 confidence: profile.parseConfidence,
                 parseSuccessful: profile.parseSuccessful,
@@ -714,7 +717,10 @@ private struct ExperimentalSearchHeader: View {
                         .fontWeight(.semibold)
                         .foregroundColor(.orange)
                     
-                    Text("Search across all parsed data from \(repository.userHandle)'s repository. Results may be incomplete.")
+                    Text(
+                        "Search across all parsed data from \(repository.userHandle)'s repository. Results may be incomplete.",
+                        comment: "Disclaimer header on universal repository search view. Placeholder is the repository owner's handle."
+                    )
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -728,7 +734,7 @@ private struct ExperimentalSearchHeader: View {
 
 private struct SearchTipRow: View {
     let icon: String
-    let tip: String
+    let tip: LocalizedStringResource
     let example: String
     
     var body: some View {
@@ -742,7 +748,7 @@ private struct SearchTipRow: View {
                     .font(.body)
                     .fontWeight(.medium)
                 
-                Text("e.g. \"\(example)\"")
+                Text("e.g. \"\(example)\"", comment: "Example search query shown beneath a search tip. Placeholder is a literal query example.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -753,7 +759,7 @@ private struct SearchTipRow: View {
 }
 
 private struct QuickStatView: View {
-    let label: String
+    let label: LocalizedStringResource
     let value: String
     let icon: String
     
@@ -763,7 +769,7 @@ private struct QuickStatView: View {
                 .font(.title2)
                 .foregroundColor(.blue)
             
-            Text(value)
+            Text(verbatim: value)
                 .font(.headline)
                 .fontWeight(.bold)
             
@@ -783,7 +789,7 @@ private struct SearchSummaryView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Found \(viewModel.searchResults.count) results")
+            Text("Found \(viewModel.searchResults.count) results", comment: "Summary header showing total number of repository search results.")
                 .font(.headline)
                 .fontWeight(.semibold)
             
@@ -807,7 +813,7 @@ private struct SearchTypeTag: View {
         HStack(spacing: 4) {
             Image(systemName: type.systemImage)
                 .font(.caption2)
-            Text("\(count)")
+            Text(count, format: .number)
                 .font(.caption)
                 .fontWeight(.medium)
         }
@@ -827,7 +833,10 @@ private struct SearchResultTypeHeader: View {
         HStack {
             Image(systemName: type.systemImage)
                 .foregroundColor(type.color)
-            Text("\(type.displayName) (\(count))")
+            Text(
+                "\(type.displayName) (\(count.formatted(.number)))",
+                comment: "Section header for a category of repository search results. First placeholder is the category name, second is the formatted count."
+            )
                 .fontWeight(.semibold)
         }
     }
@@ -846,13 +855,13 @@ private struct RepoSearchResultRow: View {
                         .frame(width: 20)
                     
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(result.title)
+                        Text(verbatim: result.title)
                             .font(.body)
                             .fontWeight(.medium)
                             .foregroundColor(.primary)
                             .lineLimit(2)
                         
-                        Text(result.subtitle)
+                        Text(verbatim: result.subtitle)
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -870,7 +879,7 @@ private struct RepoSearchResultRow: View {
                     }
                 }
                 
-                Text(result.content)
+                Text(verbatim: result.content)
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(3)
@@ -917,7 +926,10 @@ private struct AdvancedSearchView: View {
                     }
                     
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Confidence Threshold: \(Int(viewModel.confidenceThreshold * 100))%")
+                        Text(
+                            "Confidence Threshold: \(viewModel.confidenceThreshold.formatted(.percent.precision(.fractionLength(0))))",
+                            comment: "Slider label for minimum parse confidence filter in advanced repository search. Placeholder is a formatted percentage."
+                        )
                             .font(.caption)
                         
                         Slider(value: Binding(
@@ -1045,8 +1057,13 @@ private struct SearchResultMetadataGrid: View {
         ], spacing: 12) {
             MetadataItem(label: "Type", value: result.type.displayName)
             MetadataItem(label: "Record Key", value: result.recordKey)
-            MetadataItem(label: "Confidence", value: String(format: "%.1f%%", result.confidence * 100))
-            MetadataItem(label: "Parse Status", value: result.parseSuccessful ? "Success" : "Failed")
+            MetadataItem(label: "Confidence", value: result.confidence.formatted(.percent.precision(.fractionLength(1))))
+            MetadataItem(
+                label: "Parse Status",
+                value: result.parseSuccessful
+                    ? String(localized: "Success", comment: "Record parse status when parsing succeeded.")
+                    : String(localized: "Failed", comment: "Record parse status when parsing failed.")
+            )
         }
     }
 }
@@ -1083,15 +1100,15 @@ enum SearchResultType: String, CaseIterable {
     var displayName: String {
         switch self {
         case .all:
-            return "All Types"
+            return String(localized: "All Types", comment: "Repository search filter option showing all record types.")
         case .post:
-            return "Posts"
+            return String(localized: "Posts", comment: "Repository search filter option showing post records.")
         case .connection:
-            return "Connections"
+            return String(localized: "Connections", comment: "Repository search filter option showing social connection records.")
         case .media:
-            return "Media"
+            return String(localized: "Media", comment: "Repository search filter option showing media records.")
         case .profile:
-            return "Profiles"
+            return String(localized: "Profiles", comment: "Repository search filter option showing profile records.")
         }
     }
     
@@ -1141,15 +1158,15 @@ enum SearchSortOrder: String, CaseIterable {
     var displayName: String {
         switch self {
         case .relevance:
-            return "Relevance"
+            return String(localized: "Relevance", comment: "Repository search sort option ordering by match relevance.")
         case .dateAscending:
-            return "Oldest First"
+            return String(localized: "Oldest First", comment: "Sort order option from oldest to newest.")
         case .dateDescending:
-            return "Newest First"
+            return String(localized: "Newest First", comment: "Sort order option from newest to oldest.")
         case .confidence:
-            return "Parse Confidence"
+            return String(localized: "Parse Confidence", comment: "Sort order option by record parsing confidence score.")
         case .type:
-            return "Result Type"
+            return String(localized: "Result Type", comment: "Repository search sort option grouping by record type.")
         }
     }
     
@@ -1184,7 +1201,7 @@ private struct ConfidenceBadge: View {
     }
     
     var body: some View {
-        Text(String(format: "%.0f%%", confidence * 100))
+        Text(confidence, format: .percent.precision(.fractionLength(0)))
             .font(.caption2)
             .fontWeight(.medium)
             .padding(.horizontal, 6)
@@ -1196,7 +1213,7 @@ private struct ConfidenceBadge: View {
 }
 
 private struct MetadataItem: View {
-    let label: String
+    let label: LocalizedStringResource
     let value: String
     
     var body: some View {
@@ -1204,7 +1221,7 @@ private struct MetadataItem: View {
             Text(label)
                 .font(.caption)
                 .foregroundColor(.secondary)
-            Text(value)
+            Text(verbatim: value)
                 .font(.body)
                 .fontWeight(.medium)
         }

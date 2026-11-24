@@ -8,9 +8,9 @@ public enum ExternalMediaConsent: String, Codable, Sendable, CaseIterable {
     
     public var title: String {
         switch self {
-        case .undecided: return "Ask Before Playing"
-        case .allow: return "Always Allow"
-        case .hide: return "Always Block"
+        case .undecided: return String(localized: "Ask Before Playing", comment: "External media embed consent option.")
+        case .allow: return String(localized: "Always Allow", comment: "External media embed consent option.")
+        case .hide: return String(localized: "Always Block", comment: "External media embed consent option.")
         }
     }
 }

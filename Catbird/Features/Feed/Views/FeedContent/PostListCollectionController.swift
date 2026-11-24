@@ -627,7 +627,10 @@ extension PostListCollectionController {
     guard let onRemoveBookmark,
           case .row(let id)? = dataSource.itemIdentifier(for: indexPath),
           case .bookmark(let box)? = entriesByID[id] else { return nil }
-    let action = UIContextualAction(style: .destructive, title: "Remove Bookmark") { _, _, completion in
+    let action = UIContextualAction(
+      style: .destructive,
+      title: String(localized: "Remove Bookmark", comment: "Swipe action button to remove a saved bookmark")
+    ) { _, _, completion in
       Task { @MainActor in
         completion(await onRemoveBookmark(box.value))
       }

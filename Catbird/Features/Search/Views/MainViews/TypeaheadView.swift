@@ -63,7 +63,10 @@ struct TypeaheadView: View {
                 viewModel.commitSearch(client: client)
             } label: {
                 SearchSuggestionRow(systemImage: "magnifyingglass", tint: .accentColor) {
-                    Text("Search for “\(searchText.trimmingCharacters(in: .whitespacesAndNewlines))”")
+                    Text(
+                        "Search for “\(searchText.trimmingCharacters(in: .whitespacesAndNewlines))”",
+                        comment: "Typeahead action row to submit a search query — variable is the user's typed text"
+                    )
                         .foregroundStyle(Color.accentColor)
                 }
                 .mainContentFrame()

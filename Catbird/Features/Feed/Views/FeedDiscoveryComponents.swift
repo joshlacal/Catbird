@@ -79,7 +79,10 @@ struct FeedDiscoveryIdentity: View {
         Text(feed.displayName)
           .appFont(AppTextRole.headline)
           .fixedSize(horizontal: false, vertical: true)
-        Text("by @\(feed.creator.handle.description)")
+        Text(
+          "by @\(feed.creator.handle.description)",
+          comment: "Feed creator attribution — variable is the creator's handle"
+        )
           .appFont(AppTextRole.subheadline)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)

@@ -13,7 +13,7 @@ struct StreamplaceVideoListView: View {
     Group {
       if let service {
         if service.isLoading && service.videos.isEmpty {
-          ProgressView("Loading videos...")
+          ProgressView("Loading videos…")
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if service.videos.isEmpty {
           emptyState

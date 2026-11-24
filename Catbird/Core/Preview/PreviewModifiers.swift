@@ -133,7 +133,7 @@ private struct PreviewLoadingView: View {
     VStack(spacing: 16) {
       ProgressView()
         .controlSize(.large)
-      Text("Authenticating preview…")
+      Text(verbatim: "Authenticating preview…")
         .font(.subheadline)
         .foregroundStyle(.secondary)
     }
@@ -149,9 +149,9 @@ private struct PreviewUnconfiguredView: View {
       Image(systemName: "key.slash")
         .font(.system(size: 40))
         .foregroundStyle(.tertiary)
-      Text("Preview Not Configured")
+      Text(verbatim: "Preview Not Configured")
         .font(.headline)
-      Text("Add credentials to PreviewSecrets.xcconfig\nSee PreviewSecrets.xcconfig.template for setup")
+      Text(verbatim: "Add credentials to PreviewSecrets.xcconfig\nSee PreviewSecrets.xcconfig.template for setup")
         .font(.caption)
         .multilineTextAlignment(.center)
         .foregroundStyle(.secondary)

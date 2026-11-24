@@ -37,12 +37,16 @@ struct TimelinePreviewBeatView: View {
         Spacer()
 
         if viewModel.previewEstimatedDailyPosts > 0 {
-          Label("~\(viewModel.previewEstimatedDailyPosts) posts/day", systemImage: "waveform.path.ecg")
-            .font(.caption.weight(.semibold).monospacedDigit())
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(Color.secondary.opacity(0.12), in: Capsule())
+          Label {
+            Text("~\(viewModel.previewEstimatedDailyPosts) posts/day", comment: "Estimated daily post volume badge.")
+          } icon: {
+            Image(systemName: "waveform.path.ecg")
+          }
+          .font(.caption.weight(.semibold).monospacedDigit())
+          .foregroundStyle(.secondary)
+          .padding(.horizontal, 10)
+          .padding(.vertical, 5)
+          .background(Color.secondary.opacity(0.12), in: Capsule())
         }
       }
 
@@ -58,17 +62,17 @@ struct TimelinePreviewBeatView: View {
   private var inlineRhythmStrip: some View {
     HStack(spacing: 8) {
       PreviewPacePill(
-        title: "Calm",
+        title: LocalizedStringResource("Calm", comment: "Pace option label for a relaxed daily feed rhythm."),
         isSelected: viewModel.pace == .value_calm,
         action: { Task { await viewModel.updatePace(.value_calm) } }
       )
       PreviewPacePill(
-        title: "Balanced",
+        title: LocalizedStringResource("Balanced", comment: "Pace option label for a balanced daily feed rhythm."),
         isSelected: viewModel.pace == .value_balanced,
         action: { Task { await viewModel.updatePace(.value_balanced) } }
       )
       PreviewPacePill(
-        title: "Lively",
+        title: LocalizedStringResource("Lively", comment: "Pace option label for an active daily feed rhythm."),
         isSelected: viewModel.pace == .value_lively,
         action: { Task { await viewModel.updatePace(.value_lively) } }
       )
@@ -76,12 +80,16 @@ struct TimelinePreviewBeatView: View {
       Spacer()
 
       if !viewModel.pinnedDIDs.isEmpty {
-        Label("\(viewModel.pinnedDIDs.count) pinned", systemImage: "pin.fill")
-          .font(.caption.weight(.semibold).monospacedDigit())
-          .foregroundStyle(Color.accentColor)
-          .padding(.horizontal, 10)
-          .padding(.vertical, 6)
-          .background(Color.accentColor.opacity(0.14), in: Capsule())
+        Label {
+          Text("\(viewModel.pinnedDIDs.count) pinned", comment: "Badge showing how many authors the user pinned during timeline preview.")
+        } icon: {
+          Image(systemName: "pin.fill")
+        }
+        .font(.caption.weight(.semibold).monospacedDigit())
+        .foregroundStyle(Color.accentColor)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.accentColor.opacity(0.14), in: Capsule())
       }
     }
   }
@@ -157,7 +165,7 @@ struct TimelinePreviewBeatView: View {
             .opacity(0.88)
         }
         Spacer()
-        Image(systemName: "arrow.right.circle.fill")
+        Image(systemName: "arrow.forward.circle.fill")
           .font(.title3)
       }
       .foregroundStyle(.white)
@@ -179,7 +187,7 @@ struct TimelinePreviewBeatView: View {
 }
 
 private struct PreviewPacePill: View {
-  let title: String
+  let title: LocalizedStringResource
   let isSelected: Bool
   let action: () -> Void
 

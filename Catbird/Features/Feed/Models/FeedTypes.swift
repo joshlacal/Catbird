@@ -62,24 +62,30 @@ enum FetchType: Hashable, Sendable, CustomStringConvertible {
   var displayName: String {
     switch self {
     case .timeline:
-      return "Timeline"
+      return String(localized: "Timeline", comment: "Display name for the home chronological timeline feed")
     case .list(let uri):
       // Try cached mapping first
       if let cachedName = FetchType.lookupCachedGeneratorName(for: uri) {
         return cachedName
       }
       // Never surface the record key; it's an opaque identifier
-      return "List"
+      return String(localized: "List", comment: "Fallback display name for a user list feed")
     case .feed(let uri):
       if let cachedName = FetchType.lookupCachedGeneratorName(for: uri) {
         return cachedName
       }
-      return "Feed"
+      return String(localized: "Feed", comment: "Fallback display name for a custom feed")
     case .author(let did):
       // Display handle if available, otherwise DID
-      return "Posts by \(did)"
+      return String(
+        localized: "Posts by \(did)",
+        comment: "Author feed fallback title — variable is the author's handle or DID"
+      )
     case .likes(let did):
-      return "Likes by \(did)"
+      return String(
+        localized: "Likes by \(did)",
+        comment: "Author likes feed fallback title — variable is the author's handle or DID"
+      )
     }
   }
 

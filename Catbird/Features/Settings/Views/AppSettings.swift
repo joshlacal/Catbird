@@ -173,12 +173,15 @@ import AppKit
         guard let accountDID,
               let pending = pendingDrafts[accountDID] ?? settingsModel ?? savedSettings,
               let savedSettings = pendingBaselines[accountDID] ?? savedSettings else {
-            return "Pending changes will be available after your saved settings load."
+            return String(localized: "Pending changes will be available after your saved settings load.", comment: "Placeholder when pending settings changes cannot be formatted yet.")
         }
+        let onText = String(localized: "On", comment: "Enabled toggle value in pending settings summary.")
+        let offText = String(localized: "Off", comment: "Disabled toggle value in pending settings summary.")
         var changes: [String] = []
         func bool(_ title: String, _ path: KeyPath<AppSettingsModel, Bool>) {
             if pending[keyPath: path] != savedSettings[keyPath: path] {
-                changes.append("\(title): \(pending[keyPath: path] ? "On" : "Off")")
+                let stateLabel = pending[keyPath: path] ? onText : offText
+                changes.append(String(localized: "\(title): \(stateLabel)", comment: "Pending setting summary line — first variable is setting name, second is On/Off value."))
             }
         }
         func string(
@@ -189,69 +192,123 @@ import AppKit
             if value != savedSettings[keyPath: path] {
                 let shownValue = shown(value)
                 let display = names[shownValue] ?? shownValue
-                changes.append("\(title): \(display)")
+                changes.append(String(localized: "\(title): \(display)", comment: "Pending setting summary line — first variable is setting name, second is chosen value."))
             }
         }
-        string("Theme", \.theme, ["system": "Follow System", "light": "Light", "dark": "Dark"])
-        string("Dark Mode Style", \.darkThemeMode, ["dim": "Dim", "black": "True Black", "pureBlack": "Pure Black"])
-        string("Accent Color", \.accentColor, ["default": "Default", "twilight": "Twilight", "lavender": "Lavender", "sunrise": "Sunrise", "aurora": "Aurora", "dusk": "Dusk", "midnight": "Midnight"])
-        string("Font Style", \.fontStyle, ["system": "System", "serif": "Serif", "rounded": "Rounded", "monospaced": "Monospaced"])
-        string("Font Size", \.fontSize, ["small": "Small", "default": "Default", "large": "Large", "extraLarge": "Extra Large"])
-        string("Line Spacing", \.lineSpacing, ["tight": "Tight", "normal": "Normal", "relaxed": "Relaxed"]) {
+        string(String(localized: "Theme"), \.theme, [
+            "system": String(localized: "Follow System"),
+            "light": String(localized: "Light"),
+            "dark": String(localized: "Dark")
+        ])
+        string(String(localized: "Dark Mode Style"), \.darkThemeMode, [
+            "dim": String(localized: "Dim"),
+            "black": String(localized: "True Black"),
+            "pureBlack": String(localized: "Pure Black")
+        ])
+        string(String(localized: "Accent Color"), \.accentColor, [
+            "default": String(localized: "Default"),
+            "twilight": String(localized: "Twilight"),
+            "lavender": String(localized: "Lavender"),
+            "sunrise": String(localized: "Sunrise"),
+            "aurora": String(localized: "Aurora"),
+            "dusk": String(localized: "Dusk"),
+            "midnight": String(localized: "Midnight")
+        ])
+        string(String(localized: "Font Style"), \.fontStyle, [
+            "system": String(localized: "System"),
+            "serif": String(localized: "Serif"),
+            "rounded": String(localized: "Rounded"),
+            "monospaced": String(localized: "Monospaced")
+        ])
+        string(String(localized: "Font Size"), \.fontSize, [
+            "small": String(localized: "Small"),
+            "default": String(localized: "Default"),
+            "large": String(localized: "Large"),
+            "extraLarge": String(localized: "Extra Large")
+        ])
+        string(String(localized: "Line Spacing"), \.lineSpacing, [
+            "tight": String(localized: "Tight"),
+            "normal": String(localized: "Normal"),
+            "relaxed": String(localized: "Relaxed")
+        ]) {
             FontManager.displayedLineSpacing($0, supportsLineHeight: supportsLineHeight)
         }
-        string("Letter Spacing", \.letterSpacing, ["tight": "Tight", "normal": "Normal", "loose": "Loose"])
-        bool("Use System Text Size", \.dynamicTypeEnabled)
-        string("Maximum Text Size", \.maxDynamicTypeSize, ["system": "Full System Range", "xxLarge": "Extra Extra Large", "xxxLarge": "Extra Extra Extra Large", "accessibility1": "Accessibility Medium", "accessibility2": "Accessibility Large", "accessibility3": "Accessibility Extra Large", "accessibility4": "Accessibility Extra Extra Large", "accessibility5": "Accessibility Extra Extra Extra Large"])
-        bool("Require Alt Text", \.requireAltText)
-        bool("Larger Alt Text Badges", \.largerAltTextBadges)
-        bool("Disable Haptics", \.disableHaptics)
-        bool("Reduce Motion", \.reduceMotion)
-        bool("Prefer Crossfade Transitions", \.prefersCrossfade)
-        bool("Increase Contrast", \.increaseContrast)
-        bool("Bold Text", \.boldText)
+        string(String(localized: "Letter Spacing"), \.letterSpacing, [
+            "tight": String(localized: "Tight"),
+            "normal": String(localized: "Normal"),
+            "loose": String(localized: "Loose")
+        ])
+        bool(String(localized: "Use System Text Size"), \.dynamicTypeEnabled)
+        string(String(localized: "Maximum Text Size"), \.maxDynamicTypeSize, [
+            "system": String(localized: "Full System Range"),
+            "xxLarge": String(localized: "Extra Extra Large"),
+            "xxxLarge": String(localized: "Extra Extra Extra Large"),
+            "accessibility1": String(localized: "Accessibility Medium"),
+            "accessibility2": String(localized: "Accessibility Large"),
+            "accessibility3": String(localized: "Accessibility Extra Large"),
+            "accessibility4": String(localized: "Accessibility Extra Extra Large"),
+            "accessibility5": String(localized: "Accessibility Extra Extra Extra Large")
+        ])
+        bool(String(localized: "Require Alt Text"), \.requireAltText)
+        bool(String(localized: "Larger Alt Text Badges"), \.largerAltTextBadges)
+        bool(String(localized: "Disable Haptics"), \.disableHaptics)
+        bool(String(localized: "Reduce Motion"), \.reduceMotion)
+        bool(String(localized: "Prefer Crossfade Transitions"), \.prefersCrossfade)
+        bool(String(localized: "Increase Contrast"), \.increaseContrast)
+        bool(String(localized: "Bold Text"), \.boldText)
         if pending.displayScale != savedSettings.displayScale {
-            changes.append("Display Scale: \(Int(pending.displayScale * 100))%")
+            let formattedScale = pending.displayScale.formatted(.percent.precision(.fractionLength(0)))
+            changes.append(String(localized: "Display Scale: \(formattedScale)", comment: "Pending display scale setting summary — variable is formatted percentage."))
         }
-        bool("Show Reading Time Estimates", \.showReadingTimeEstimates)
-        bool("Highlight Links", \.highlightLinks)
-        string("Link Style", \.linkStyle, ["color": "Color", "underline": "Underline", "both": "Color and Underline"])
-        bool("Confirm Before Actions", \.confirmBeforeActions)
+        bool(String(localized: "Show Reading Time Estimates"), \.showReadingTimeEstimates)
+        bool(String(localized: "Highlight Links"), \.highlightLinks)
+        string(String(localized: "Link Style"), \.linkStyle, [
+            "color": String(localized: "Color"),
+            "underline": String(localized: "Underline"),
+            "both": String(localized: "Color and Underline")
+        ])
+        bool(String(localized: "Confirm Before Actions"), \.confirmBeforeActions)
         if pending.longPressDuration != savedSettings.longPressDuration {
-            changes.append("Long Press Duration: \(pending.longPressDuration) seconds")
+            changes.append(String(localized: "Long Press Duration: \(pending.longPressDuration) seconds", comment: "Pending long-press duration summary — variable is seconds."))
         }
-        bool("Shake to Undo", \.shakeToUndo)
-        bool("Credit Repost Discovery", \.enableViaAttribution)
-        bool("Sensitive Content Scanning", \.sensitiveContentScanningEnabled)
-        bool("Autoplay Videos", \.autoplayVideos)
-        bool("Open Links in Catbird", \.useInAppBrowser)
-        bool("Show Trending Topics", \.showTrendingTopics)
-        bool("Show Trending Videos", \.showTrendingVideos)
-        string("Thread Sort Order", \.threadSortOrder, ["hot": "Top", "top": "Top", "oldest": "Oldest First", "newest": "Newest First", "random": "Random"])
-        bool("Prioritize Users I Follow", \.prioritizeFollowedUsers)
-        bool("Threaded Replies", \.threadedReplies)
-        bool("Show Hidden Posts", \.showHiddenPosts)
-        bool("Show Saved Feed Samples", \.showSavedFeedSamples)
+        bool(String(localized: "Shake to Undo"), \.shakeToUndo)
+        bool(String(localized: "Credit Repost Discovery"), \.enableViaAttribution)
+        bool(String(localized: "Sensitive Content Scanning"), \.sensitiveContentScanningEnabled)
+        bool(String(localized: "Autoplay Videos"), \.autoplayVideos)
+        bool(String(localized: "Open Links in Catbird"), \.useInAppBrowser)
+        bool(String(localized: "Show Trending Topics"), \.showTrendingTopics)
+        bool(String(localized: "Show Trending Videos"), \.showTrendingVideos)
+        string(String(localized: "Thread Sort Order"), \.threadSortOrder, [
+            "hot": String(localized: "Top"),
+            "top": String(localized: "Top"),
+            "oldest": String(localized: "Oldest First"),
+            "newest": String(localized: "Newest First"),
+            "random": String(localized: "Random")
+        ])
+        bool(String(localized: "Prioritize Users I Follow"), \.prioritizeFollowedUsers)
+        bool(String(localized: "Threaded Replies"), \.threadedReplies)
+        bool(String(localized: "Show Hidden Posts"), \.showHiddenPosts)
+        bool(String(localized: "Show Saved Feed Samples"), \.showSavedFeedSamples)
         for provider in ExternalMediaProvider.allCases where pending.consent(for: provider) != savedSettings.consent(for: provider) {
-            changes.append("\(provider.displayName): \(pending.consent(for: provider).title)")
+            changes.append(String(localized: "\(provider.displayName): \(pending.consent(for: provider).title)", comment: "Pending external media consent summary — first variable is provider name, second is consent level."))
         }
-        bool("Use External Players", \.useWebViewEmbeds)
+        bool(String(localized: "Use External Players"), \.useWebViewEmbeds)
         let languageName: (String) -> String = { code in
-            code == "system" ? "System Default" : Locale.current.localizedString(forIdentifier: code) ?? code
+            code == "system" ? String(localized: "System Default") : Locale.current.localizedString(forIdentifier: code) ?? code
         }
-        string("App Language", \.appLanguage, [pending.appLanguage: languageName(pending.appLanguage)])
-        string("Primary Language", \.primaryLanguage, [pending.primaryLanguage: languageName(pending.primaryLanguage)])
+        string(String(localized: "App Language"), \.appLanguage, [pending.appLanguage: languageName(pending.appLanguage)])
+        string(String(localized: "Primary Language"), \.primaryLanguage, [pending.primaryLanguage: languageName(pending.primaryLanguage)])
         if pending.contentLanguages != savedSettings.contentLanguages {
-            changes.append("Content Languages: \(pending.contentLanguages.map(languageName).joined(separator: ", "))")
+            changes.append(String(localized: "Content Languages: \(pending.contentLanguages.map(languageName).formatted())", comment: "Pending content languages summary — variable is localized list of languages."))
         }
-        bool("Hide Other Languages", \.hideNonPreferredLanguages)
-        bool("Show Language Indicators", \.showLanguageIndicators)
-        bool("Logged-out Visibility", \.loggedOutVisibility)
+        bool(String(localized: "Hide Other Languages"), \.hideNonPreferredLanguages)
+        bool(String(localized: "Show Language Indicators"), \.showLanguageIndicators)
+        bool(String(localized: "Logged-out Visibility"), \.loggedOutVisibility)
         if pending.mlsMessageRetentionDays != savedSettings.mlsMessageRetentionDays {
-            changes.append("Message Retention: \(pending.mlsMessageRetentionDays) days")
+            changes.append(String(localized: "Message Retention: \(pending.mlsMessageRetentionDays) days", comment: "Pending MLS message retention summary — variable is number of days."))
         }
         changes.append(contentsOf: (pendingEffects[accountDID] ?? [:]).sorted { $0.key < $1.key }.compactMap { $0.value.description })
-        return changes.isEmpty ? "Your selected settings are waiting to be saved." : changes.joined(separator: "\n")
+        return changes.isEmpty ? String(localized: "Your selected settings are waiting to be saved.", comment: "Fallback description when settings have pending changes.") : changes.joined(separator: "\n")
     }
 
     struct PendingChangesSummary: Equatable {
@@ -269,11 +326,11 @@ import AppKit
         var errorDescription: String? {
             switch self {
             case .accountChanged:
-                return "The original account could not be verified for its settings changes."
+                return String(localized: "The original account could not be verified for its settings changes.", comment: "Error when switching accounts while settings belong to another account.")
             case .saveFailed:
-                return "Your local settings could not be saved. Retry saving or discard the pending changes before switching accounts."
+                return String(localized: "Your local settings could not be saved. Retry saving or discard the pending changes before switching accounts.", comment: "Error when saving local settings fails during account switch.")
             case .unfinishedChanges:
-                return "Some settings changes still need to finish before you switch accounts. Return to Settings on the current account and try again."
+                return String(localized: "Some settings changes still need to finish before you switch accounts. Return to Settings on the current account and try again.", comment: "Error when async settings changes are still in flight during account switch.")
             }
         }
     }

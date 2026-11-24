@@ -21,13 +21,15 @@ enum WidgetColorOption: String, AppEnum {
   case purple
   case orange
   
-  static var typeDisplayRepresentation: TypeDisplayRepresentation = "Widget Color"
+  static var typeDisplayRepresentation: TypeDisplayRepresentation = TypeDisplayRepresentation(
+    name: LocalizedStringResource("Widget Color", comment: "Type name for the notification widget accent color option.")
+  )
   static var caseDisplayRepresentations: [WidgetColorOption: DisplayRepresentation] = [
-    .blue: "Blue",
-    .red: "Red",
-    .green: "Green",
-    .purple: "Purple",
-    .orange: "Orange"
+    .blue: DisplayRepresentation(title: LocalizedStringResource("Blue", comment: "Blue widget accent color option.")),
+    .red: DisplayRepresentation(title: LocalizedStringResource("Red", comment: "Red widget accent color option.")),
+    .green: DisplayRepresentation(title: LocalizedStringResource("Green", comment: "Green widget accent color option.")),
+    .purple: DisplayRepresentation(title: LocalizedStringResource("Purple", comment: "Purple widget accent color option.")),
+    .orange: DisplayRepresentation(title: LocalizedStringResource("Orange", comment: "Orange widget accent color option."))
   ]
   
   var color: Color {
@@ -43,9 +45,12 @@ enum WidgetColorOption: String, AppEnum {
 
 // Widget configuration intent
 struct NotificationWidgetIntent: WidgetConfigurationIntent {
-  static var title: LocalizedStringResource = "Notification Settings"
+  static var title: LocalizedStringResource = LocalizedStringResource(
+    "Notification Settings",
+    comment: "Title of the configuration intent for the notifications widget."
+  )
   
-  @Parameter(title: "Accent Color", default: .blue)
+  @Parameter(title: LocalizedStringResource("Accent Color", comment: "Parameter title for selecting the widget accent color."), default: .blue)
   var accentColor: WidgetColorOption
 }
 
@@ -136,9 +141,15 @@ struct NotificationWidgetEntryView: View {
       } else if family == .accessoryCircular {
         circularWidgetView
       } else if family == .accessoryInline {
-        Text(entry.isSignedIn ? "Catbird: \(entry.count) unread" : "Catbird: Not signed in")
-          .font(.headline)
-          .widgetAccentable()
+        Group {
+          if entry.isSignedIn {
+            Text("Catbird: \(entry.count) unread", comment: "Lock Screen inline widget text showing unread notification count.")
+          } else {
+            Text("Catbird: Not signed in", comment: "Lock Screen inline widget text when no account is signed in.")
+          }
+        }
+        .font(.headline)
+        .widgetAccentable()
       } else if family == .accessoryRectangular {
         rectangularWidgetView
       } else {
@@ -169,7 +180,7 @@ struct NotificationWidgetEntryView: View {
       // Count area with extra large number
       VStack(alignment: .center, spacing: 2) {
           
-          Text("Bluesky")
+          Text(verbatim: "Bluesky")
               .font(.system(.headline, design: .rounded, weight: .heavy).lowercaseSmallCaps())
               .foregroundStyle(.tertiary)
               .textScale(.secondary)
@@ -178,14 +189,14 @@ struct NotificationWidgetEntryView: View {
             .minimumScaleFactor(0.8)
 
         if entry.isSignedIn {
-          Text("\(entry.count)")
+          Text(entry.count, format: .number)
                 .font(.system(size: 75, weight: .bold, design: .rounded))
             .minimumScaleFactor(0.5)
             .lineLimit(1)
             .widgetAccentable()
             .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 1)
 
-            Text(entry.count == 1 ? "unread notification" : "unread notifications")
+            Text("unread notifications", comment: "Caption below the large unread notification count in the small Home Screen widget.")
                 .font(.system(.caption, design: .rounded))
                 .lineLimit(nil)
                 .multilineTextAlignment(.center)
@@ -199,7 +210,7 @@ struct NotificationWidgetEntryView: View {
       
       // Timestamp area
       if let lastUpdated = entry.lastUpdated, entry.isSignedIn {
-        Text("Updated \(lastUpdated.formatted(.relative(presentation: .named)))")
+        Text("Updated \(lastUpdated.formatted(.relative(presentation: .named)))", comment: "Relative timestamp in the notification widget — variable is a relative time phrase such as '2 minutes ago'.")
           .font(.system(.caption2, design: .rounded))
           .textScale(.secondary)
           .foregroundStyle(.tertiary)
@@ -221,7 +232,7 @@ struct NotificationWidgetEntryView: View {
       // Left section with icon and title
       VStack(alignment: .leading, spacing: 4) {
 
-        Text("Bluesky Notifications")
+        Text("Bluesky Notifications", comment: "Header title in the medium Home Screen notifications widget.")
               .font(.system(.headline, design: .rounded, weight: .heavy).lowercaseSmallCaps())
           .foregroundStyle(.secondary)
           .widgetAccentable()
@@ -230,7 +241,7 @@ struct NotificationWidgetEntryView: View {
         Spacer()
         
         if let lastUpdated = entry.lastUpdated, entry.isSignedIn {
-          Text("Updated \(lastUpdated.formatted(.relative(presentation: .named)))")
+          Text("Updated \(lastUpdated.formatted(.relative(presentation: .named)))", comment: "Relative timestamp in the notification widget — variable is a relative time phrase such as '2 minutes ago'.")
             .font(.system(.caption2, design: .rounded))
             .foregroundStyle(.tertiary)
             .lineLimit(1)
@@ -241,14 +252,14 @@ struct NotificationWidgetEntryView: View {
       // Right section with large count
       VStack(alignment: .trailing) {
         if entry.isSignedIn {
-          Text("\(entry.count)")
+          Text(entry.count, format: .number)
             .font(.system(size: 75, weight: .bold, design: .rounded))
             .minimumScaleFactor(0.6)
             .lineLimit(1)
             .widgetAccentable()
             .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 1)
 
-          Text(entry.count == 1 ? "unread notification" : "unread notifications")
+          Text("unread notifications", comment: "Caption below the large unread notification count in the medium Home Screen widget.")
             .font(.system(.caption, design: .rounded))
             .foregroundStyle(.secondary)
             .widgetAccentable()
@@ -279,7 +290,7 @@ struct NotificationWidgetEntryView: View {
       
       // Count with large font
       if entry.isSignedIn {
-        Text("\(entry.count)")
+        Text(entry.count, format: .number)
           .font(.system(size: 24, weight: .bold, design: .rounded))
           .lineLimit(1)
           .minimumScaleFactor(0.6)
@@ -291,8 +302,10 @@ struct NotificationWidgetEntryView: View {
   }
 
   private var countAccessibilityLabel: String {
-    guard entry.isSignedIn else { return "Not signed in to Catbird" }
-    return entry.count == 1 ? "1 unread notification" : "\(entry.count) unread notifications"
+    guard entry.isSignedIn else {
+      return String(localized: "Not signed in to Catbird", comment: "Accessibility label for the notification widget when no account is signed in.")
+    }
+    return String(localized: "\(entry.count) unread notifications", comment: "Accessibility label for the notification widget showing unread notification count.")
   }
 
   // Rectangular widget for Lock Screen
@@ -304,21 +317,13 @@ struct NotificationWidgetEntryView: View {
         .widgetAccentable()
       
       if entry.isSignedIn {
-        // Count with large, prominent text
-        Text("\(entry.count) unread")
-          .font(.system(.body, design: .rounded))
-          .fontWeight(.bold)
-          .widgetAccentable()
-          .lineLimit(1)
-          .minimumScaleFactor(0.8)
-
-        Text(entry.count == 1 ? "notification" : "notifications")
+        Text("**\(entry.count)** unread notifications", comment: "Lock Screen rectangular widget label showing unread notification count.")
           .font(.system(.body, design: .rounded))
           .widgetAccentable()
           .lineLimit(1)
           .minimumScaleFactor(0.8)
       } else {
-        Text("Open Catbird to sign in")
+        Text("Open Catbird to sign in", comment: "Prompt shown in the notification widget when no account is signed in.")
           .font(.system(.body, design: .rounded))
           .widgetAccentable()
           .lineLimit(2)
@@ -329,7 +334,7 @@ struct NotificationWidgetEntryView: View {
 
   // Shown in place of the count when no account is signed in
   private var signedOutMessage: some View {
-    Text("Open Catbird to sign in")
+    Text("Open Catbird to sign in", comment: "Prompt shown in the notification widget when no account is signed in.")
       .font(.system(.subheadline, design: .rounded, weight: .semibold))
       .multilineTextAlignment(.center)
       .foregroundStyle(.secondary)
@@ -349,8 +354,8 @@ struct CatbirdNotificationWidget: Widget {
     ) { entry in
       NotificationWidgetEntryView(entry: entry)
     }
-    .configurationDisplayName("Notifications")
-    .description("Shows your unread Bluesky notifications.")
+    .configurationDisplayName(Text("Notifications", comment: "Widget gallery display name for the notifications widget."))
+    .description(Text("Shows your unread Bluesky notifications.", comment: "Widget gallery description for the notifications widget."))
     .supportedFamilies([
       .systemSmall,
       .systemMedium,

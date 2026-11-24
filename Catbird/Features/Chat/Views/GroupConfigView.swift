@@ -17,26 +17,28 @@ struct GroupConfigView: View {
 
   private var defaultGroupName: String {
     switch kind {
-    case .bluesky: return "Group Chat"
-    case .mls: return "Secure Group"
+    case .bluesky:
+      return String(localized: "Group Chat", comment: "Default preview title for a new Bluesky group chat")
+    case .mls:
+      return String(localized: "Secure Group", comment: "Default preview title for a new end-to-end encrypted group chat")
     }
   }
 
-  private var namePlaceholder: String {
+  private var namePlaceholder: LocalizedStringKey {
     switch kind {
     case .bluesky: return "Group Name"
     case .mls: return "Group Name (optional)"
     }
   }
 
-  private var nameFooter: String {
+  private var nameFooter: LocalizedStringKey {
     switch kind {
     case .bluesky: return "Choose a name for this Bluesky group chat."
     case .mls: return "Give your secure group a name, or leave blank for a default."
     }
   }
 
-  private var participantsFooter: String {
+  private var participantsFooter: LocalizedStringKey {
     switch kind {
     case .bluesky: return "Everyone listed will be added when this group chat is created. Group chats on Bluesky aren’t end-to-end encrypted."
     case .mls: return "Everyone listed receives a separate group invitation when the group is created."
@@ -76,7 +78,7 @@ struct GroupConfigView: View {
           }
         }
       } header: {
-        Text("Participants (\(participants.count))")
+        Text("Participants (\(participants.count))", comment: "Section header showing count of selected group participants (%lld = participant count)")
           .designCaption()
       } footer: {
         Text(participantsFooter)
@@ -132,13 +134,17 @@ struct GroupConfigView: View {
   }
 
   private var previewSubtitle: String {
-    let memberText = "\(participants.count) member\(participants.count == 1 ? "" : "s")"
-
     switch kind {
     case .bluesky:
-      return memberText
+      return String(
+        localized: "\(participants.count) members",
+        comment: "Subtitle showing number of members in a group conversation"
+      )
     case .mls:
-      return "\(memberText) - E2E Encrypted"
+      return String(
+        localized: "\(participants.count) members - E2E Encrypted",
+        comment: "Subtitle showing number of members in an end-to-end encrypted group (%lld = member count)"
+      )
     }
   }
 
@@ -154,7 +160,7 @@ struct GroupConfigView: View {
   }
 
   @ViewBuilder
-  private func detailRow(icon: String, title: String, detail: String, iconColor: Color) -> some View {
+  private func detailRow(icon: String, title: LocalizedStringKey, detail: LocalizedStringKey, iconColor: Color) -> some View {
     HStack(spacing: DesignTokens.Spacing.sm) {
       Image(systemName: icon)
         .font(.system(size: DesignTokens.Size.iconMD))

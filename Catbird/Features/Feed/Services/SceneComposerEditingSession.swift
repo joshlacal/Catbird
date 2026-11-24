@@ -35,15 +35,24 @@ enum ComposerEditingError: LocalizedError {
 
   var errorDescription: String? {
     switch self {
-    case .invalidated: return "This composer session has ended. Reopen the draft to continue."
-    case .cancelled: return "This draft operation was cancelled."
-    case .staleClaim, .staleRevision: return "The draft changed before this operation completed. Your newer draft has been kept."
-    case .savedDraftChanged: return "The saved draft changed elsewhere. The newer saved draft and your current editor have both been kept."
-    case .wrongAccount: return "This draft belongs to a different account."
-    case .alreadyClaimed: return "This draft is already open in another window. Close that editor before opening it here."
-    case .draftUnavailable: return "This saved draft is no longer available."
-    case .persistenceUnavailable: return "Draft storage is not ready. Your current draft has been kept."
-    case .legacyRecoveryUnavailable: return "There is no readable previous draft to recover."
+    case .invalidated:
+      return String(localized: "This composer session has ended. Reopen the draft to continue.", comment: "Error when a composer window session is no longer valid")
+    case .cancelled:
+      return String(localized: "This draft operation was cancelled.", comment: "Error when saving or claiming a draft is cancelled")
+    case .staleClaim, .staleRevision:
+      return String(localized: "The draft changed before this operation completed. Your newer draft has been kept.", comment: "Error when a draft revision changed concurrently")
+    case .savedDraftChanged:
+      return String(localized: "The saved draft changed elsewhere. The newer saved draft and your current editor have both been kept.", comment: "Error when a saved draft was modified in another window or device")
+    case .wrongAccount:
+      return String(localized: "This draft belongs to a different account.", comment: "Error when opening a draft owned by a different user account")
+    case .alreadyClaimed:
+      return String(localized: "This draft is already open in another window. Close that editor before opening it here.", comment: "Error when a draft is already claimed by another composer window")
+    case .draftUnavailable:
+      return String(localized: "This saved draft is no longer available.", comment: "Error when a saved draft was deleted or cannot be loaded")
+    case .persistenceUnavailable:
+      return String(localized: "Draft storage is not ready. Your current draft has been kept.", comment: "Error when local draft persistence is not initialized")
+    case .legacyRecoveryUnavailable:
+      return String(localized: "There is no readable previous draft to recover.", comment: "Error when legacy draft recovery finds no valid draft")
     }
   }
 }
@@ -111,7 +120,9 @@ final class SceneComposerEditingSession {
     for (key, value) in defaults.dictionaryRepresentation()
     where key.hasPrefix(persistenceKeyPrefix) || key == legacyRecoveryKey {
       guard let data = value as? Data else {
-        throw DraftImageFileJanitor.ReferenceStoreError.unreadable("A composer recovery envelope")
+        throw DraftImageFileJanitor.ReferenceStoreError.unreadable(
+          String(localized: "A composer recovery envelope", comment: "Name of a composer recovery record in storage error messages")
+        )
       }
       stored.append(data)
     }
@@ -628,11 +639,17 @@ final class SceneComposerEditingSession {
           baseline = currentSaved
         } else {
           manager.releaseSavedDraft(id: id, claim: claim)
-          recoveryIssue = "The saved draft changed in another window. Your recovered content is a separate draft."
+          recoveryIssue = String(
+            localized: "The saved draft changed in another window. Your recovered content is a separate draft.",
+            comment: "Notice when a recovered draft diverges from a saved draft modified in another window"
+          )
         }
       } catch {
         manager.releaseSavedDraft(id: id, claim: claim)
-        recoveryIssue = "The original saved draft cannot be edited here. Your recovered content is a separate draft."
+        recoveryIssue = String(
+          localized: "The original saved draft cannot be edited here. Your recovered content is a separate draft.",
+          comment: "Notice when a recovered draft cannot reattach to its original saved draft"
+        )
       }
     }
     install(

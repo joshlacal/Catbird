@@ -65,7 +65,7 @@ struct NavigationHandler {
         #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
         #endif
-        .navigationTitle("Post")
+        .navigationTitle(Text("Post", comment: "Navigation bar title when viewing a single post thread."))
         .id(uri.uriString())
 
     case .hashtag(let tag):
@@ -88,7 +88,7 @@ struct NavigationHandler {
       )
       .ignoresSafeArea()
       .id("timeline")
-      .navigationTitle("Timeline")
+      .navigationTitle(Text("Timeline", comment: "Navigation bar title for the Following timeline."))
       #if os(iOS)
       .toolbarTitleDisplayMode(.large)
       #endif
@@ -114,7 +114,11 @@ struct NavigationHandler {
     case .postLikes(let postUri):
       let isLabeler = postUri.contains("app.bsky.labeler.service")
       LikesView(postUri: postUri, path: path)
-        .navigationTitle(isLabeler ? "Liked By" : "Likes")
+        .navigationTitle(
+          isLabeler
+            ? Text("Liked By", comment: "Navigation bar title listing users who liked a moderation service.")
+            : Text("Likes", comment: "Navigation bar title listing users who liked a post.")
+        )
         #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
         #endif
@@ -122,7 +126,7 @@ struct NavigationHandler {
 
     case .postReposts(let postUri):
       RepostsView(postUri: postUri, path: path)
-        .navigationTitle("Reposts")
+        .navigationTitle(Text("Reposts", comment: "Navigation bar title listing users who reposted a post."))
         #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
         #endif
@@ -130,7 +134,7 @@ struct NavigationHandler {
 
     case .postQuotes(let postUri):
       QuotesView(postUri: postUri, path: path)
-        .navigationTitle("Quotes")
+        .navigationTitle(Text("Quotes", comment: "Navigation bar title listing quote posts of a post."))
         #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
         #endif
@@ -138,7 +142,7 @@ struct NavigationHandler {
 
     case .bookmarks:
       BookmarksView(path: path)
-        .navigationTitle("Bookmarks")
+        .navigationTitle(Text("Bookmarks", comment: "Navigation bar title for saved bookmarks."))
         #if os(iOS)
         .toolbarTitleDisplayMode(.large)
         #endif
@@ -146,7 +150,7 @@ struct NavigationHandler {
 
     case .activitySubscriptions:
       ActivitySubscriptionsView()
-        .navigationTitle("Activity Alerts")
+        .navigationTitle(Text("Activity Alerts", comment: "Navigation bar title for account activity alert subscriptions."))
         #if os(iOS)
         .toolbarTitleDisplayMode(.large)
         #endif
@@ -176,7 +180,7 @@ struct NavigationHandler {
 
     case .notificationActivity(let uris):
       NotificationsActivityListView(postURIs: uris, path: path)
-        .navigationTitle("Activity")
+        .navigationTitle(Text("Activity", comment: "Navigation bar title for subscribed account activity posts."))
         #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
         #endif
@@ -218,7 +222,7 @@ struct NavigationHandler {
 
     case .createList:
       CreateListView()
-        .navigationTitle("Create List")
+        .navigationTitle(Text("Create List", comment: "Navigation bar title for creating a new user list."))
         #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
         #endif
@@ -226,7 +230,7 @@ struct NavigationHandler {
 
     case .editList(let listURI):
       EditListView(listURI: listURI.uriString())
-        .navigationTitle("Edit List")
+        .navigationTitle(Text("Edit List", comment: "Navigation bar title for editing an existing user list."))
         #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
         #endif
@@ -234,7 +238,7 @@ struct NavigationHandler {
 
     case .listManager:
       ListsManagerView()
-        .navigationTitle("My Lists")
+        .navigationTitle(Text("My Lists", comment: "Navigation bar title for managing the user's lists."))
         #if os(iOS)
         .toolbarTitleDisplayMode(.large)
         #endif
@@ -242,7 +246,7 @@ struct NavigationHandler {
 
     case .listDiscovery:
       ListDiscoveryView()
-        .navigationTitle("Discover Lists")
+        .navigationTitle(Text("Discover Lists", comment: "Navigation bar title for browsing community lists."))
         #if os(iOS)
         .toolbarTitleDisplayMode(.large)
         #endif
@@ -250,7 +254,7 @@ struct NavigationHandler {
 
     case .listFeed(let listURI):
       ListDetailView(listURIString: listURI.uriString(), path: path)
-        .navigationTitle("List")
+        .navigationTitle(Text("List", comment: "Navigation bar title when viewing a user list feed."))
         #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
         #endif
@@ -272,63 +276,63 @@ struct NavigationHandler {
   static func titleForDestination(_ destination: NavigationDestination) -> String {
     switch destination {
     case .profile:
-      return "Profile"
+      return String(localized: "Profile", comment: "Navigation destination title for a user profile.")
     case .post:
-      return "Post"
+      return String(localized: "Post", comment: "Navigation destination title for a single post.")
     case .hashtag(let tag):
       return "#\(tag)"
     case .topic(let topic):
       return topic
     case .timeline:
-      return "Timeline"
+      return String(localized: "Timeline", comment: "Navigation destination title for the home timeline.")
     case .feed:
-      return "Feed"
+      return String(localized: "Feed", comment: "Navigation destination title for a custom feed.")
     case .list:
-      return "List"
+      return String(localized: "List", comment: "Navigation destination title for a user list.")
     case .starterPack, .starterPackShort:
-      return "Starter Pack"
+      return String(localized: "Starter Pack", comment: "Navigation destination title for a starter pack.")
     case .postLikes:
-      return "Likes"
+      return String(localized: "Likes", comment: "Navigation destination title for post likes.")
     case .postReposts:
-      return "Reposts"
+      return String(localized: "Reposts", comment: "Navigation destination title for post reposts.")
     case .postQuotes:
-      return "Quotes"
+      return String(localized: "Quotes", comment: "Navigation destination title for post quotes.")
     case .bookmarks:
-      return "Bookmarks"
+      return String(localized: "Bookmarks", comment: "Navigation destination title for bookmarks.")
     case .activitySubscriptions:
-      return "Activity Alerts"
+      return String(localized: "Activity Alerts", comment: "Navigation destination title for activity alerts.")
     case .circlePost(_, let circle):
       return circle.name
     case .circlesFeed:
-      return "Circles"
+      return String(localized: "Circles", comment: "Navigation destination title for Circles feed.")
     case .circleDetail(let circle):
       return circle.name
     case .notificationActivity:
-      return "Activity"
+      return String(localized: "Activity", comment: "Navigation destination title for notification activity.")
     case .videoFeed, .videoFeedStartingAt, .videoFeedZoom:
-      return "Videos"
+      return String(localized: "Videos", comment: "Navigation destination title for video feed.")
     case .settings(let route):
       return route.target.screen.title
     #if os(iOS)
     case .conversation:
-      return "Conversation"
+      return String(localized: "Conversation", comment: "Navigation destination title for a chat conversation.")
     case .mlsConversation:
-      return "Secure Conversation"
+      return String(localized: "Secure Conversation", comment: "Navigation destination title for an encrypted MLS conversation.")
     case .chatTab:
-      return "Messages"
+      return String(localized: "Messages", comment: "Navigation destination title for Messages.")
     #endif
     case .createList:
-      return "Create List"
+      return String(localized: "Create List", comment: "Navigation destination title for creating a list.")
     case .editList:
-      return "Edit List"
+      return String(localized: "Edit List", comment: "Navigation destination title for editing a list.")
     case .listManager:
-      return "My Lists"
+      return String(localized: "My Lists", comment: "Navigation destination title for My Lists.")
     case .listDiscovery:
-      return "Discover Lists"
+      return String(localized: "Discover Lists", comment: "Navigation destination title for Discover Lists.")
     case .listFeed:
-      return "List Feed"
+      return String(localized: "List Feed", comment: "Navigation destination title for a list feed.")
     case .listMembers:
-      return "List Members"
+      return String(localized: "List Members", comment: "Navigation destination title for list members.")
     }
   }
 
@@ -429,17 +433,25 @@ public struct StarterPackShortResolverView: View {
         StarterPackView(uri: resolvedURI, path: $path)
       } else if let errorMessage {
         ContentUnavailableView {
-          Label("Couldn’t Open Starter Pack", systemImage: "exclamationmark.triangle")
+          Label {
+            Text("Couldn’t Open Starter Pack", comment: "Error title when a short starter pack link cannot be resolved.")
+          } icon: {
+            Image(systemName: "exclamationmark.triangle")
+          }
         } description: {
           Text(errorMessage)
         } actions: {
-          Button("Try Again") {
+          Button {
             Task { await resolveCode() }
+          } label: {
+            Text("Try Again", comment: "Button retrying opening a starter pack link.")
           }
         }
       } else {
-        ProgressView("Opening starter pack…")
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ProgressView {
+          Text("Opening starter pack…", comment: "Progress message while resolving a starter pack link.")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
     .task {
@@ -454,10 +466,15 @@ public struct StarterPackShortResolverView: View {
     errorMessage = nil
     
     guard let url = URL(string: "https://go.bsky.app/\(code)") else {
-      errorMessage = "This starter pack link isn’t valid."
+      errorMessage = String(localized: "This starter pack link isn’t valid.", comment: "Error message when a short starter pack URL is malformed.")
       isLoading = false
       return
     }
+
+    let notFoundMessage = String(
+      localized: "This starter pack couldn’t be found. The link may have expired.",
+      comment: "Error message when a short starter pack link cannot be resolved."
+    )
 
     var request = URLRequest(url: url)
     request.httpMethod = "GET"
@@ -467,7 +484,7 @@ public struct StarterPackShortResolverView: View {
       let (data, response) = try await URLSession.shared.data(for: request)
       guard isCurrentScene(operationScene) else { return }
       guard let httpResponse = response as? HTTPURLResponse, (200...399).contains(httpResponse.statusCode) else {
-        errorMessage = "This starter pack couldn’t be found. The link may have expired."
+        errorMessage = notFoundMessage
         isLoading = false
         return
       }
@@ -483,11 +500,11 @@ public struct StarterPackShortResolverView: View {
             if case .starterPack(let uri)? = destination {
               self.resolvedURI = uri
             } else {
-              errorMessage = "This starter pack couldn’t be found. The link may have expired."
+              errorMessage = notFoundMessage
             }
           }
         } else {
-          errorMessage = "This starter pack couldn’t be found. The link may have expired."
+          errorMessage = notFoundMessage
         }
       } else if let location = httpResponse.value(forHTTPHeaderField: "Location") {
         if location.starts(with: "at://"), let uri = try? ATProtocolURI(uriString: location) {
@@ -498,15 +515,18 @@ public struct StarterPackShortResolverView: View {
           if case .starterPack(let uri)? = destination {
             self.resolvedURI = uri
           } else {
-            errorMessage = "This starter pack couldn’t be found. The link may have expired."
+            errorMessage = notFoundMessage
           }
         }
       } else {
-        errorMessage = "This starter pack couldn’t be found. The link may have expired."
+        errorMessage = notFoundMessage
       }
     } catch {
       guard isCurrentScene(operationScene) else { return }
-      errorMessage = UserFacingError.message(for: error, action: "open this starter pack")
+      errorMessage = UserFacingError.message(
+        for: error,
+        action: String(localized: "open this starter pack", comment: "Action phrase for opening a starter pack.")
+      )
     }
     isLoading = false
   }

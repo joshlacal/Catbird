@@ -4,6 +4,7 @@ import Petrel
 struct LanguagePickerSheet: View {
   @Binding var selectedLanguages: [LanguageCodeContainer]
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.locale) private var locale
 
   @State private var searchText: String = ""
 
@@ -16,16 +17,24 @@ struct LanguagePickerSheet: View {
     var id: String { code }
   }
 
-  /// Every language the system knows, sorted by its name in the user’s language.
-  private static let languages: [LanguageOption] = Set(
-    Locale.availableIdentifiers.compactMap { Locale(identifier: $0).language.languageCode?.identifier }
+  /// Unique ISO language codes known to the system.
+  private static let languageCodes: [String] = Array(
+    Set(
+      Locale.availableIdentifiers.compactMap { Locale(identifier: $0).language.languageCode?.identifier }
+    )
   )
-  .map { LanguageOption(code: $0, name: Locale.current.localizedString(forLanguageCode: $0) ?? $0) }
-  .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+
+  /// Every language the system knows, sorted by its name in the active locale.
+  private var languages: [LanguageOption] {
+    Self.languageCodes
+      .map { LanguageOption(code: $0, name: locale.localizedString(forLanguageCode: $0) ?? $0) }
+      .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+  }
 
   private var filtered: [LanguageOption] {
-    guard !searchText.isEmpty else { return Self.languages }
-    return Self.languages.filter { language in
+    let allLanguages = languages
+    guard !searchText.isEmpty else { return allLanguages }
+    return allLanguages.filter { language in
       language.name.localizedCaseInsensitiveContains(searchText)
         || language.code.localizedCaseInsensitiveContains(searchText)
     }
@@ -60,7 +69,7 @@ struct LanguagePickerSheet: View {
             .accessibilityAddTraits(selected ? .isSelected : [])
           }
         } footer: {
-          Text("You can choose up to \(Self.maxLanguages) languages.")
+          Text("You can choose up to \(Self.maxLanguages) languages.", comment: "Footer in post language picker explaining maximum selectable languages")
         }
 
         if !selectedLanguages.isEmpty {

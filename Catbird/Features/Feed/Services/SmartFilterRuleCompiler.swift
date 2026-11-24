@@ -7,9 +7,15 @@ enum SmartFilterCompilerError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .emptyRule:
-            return "Enter what you want Catbird to filter."
+            return String(
+                localized: "Enter what you want Catbird to filter.",
+                comment: "Validation error when the user submits an empty Smart Filter rule"
+            )
         case .unsupportedIntent:
-            return "Catbird cannot represent that rule reliably yet. Try replies, reposts, quote posts, a topic, or an expressed tone."
+            return String(
+                localized: "Catbird cannot represent that rule reliably yet. Try replies, reposts, quote posts, a topic, or an expressed tone.",
+                comment: "Validation error when a Smart Filter prompt cannot be compiled into supported filter predicates"
+            )
         }
     }
 }
@@ -86,11 +92,67 @@ enum SmartFilterRuleCompiler {
     }
 
     static func confirmationSummary(for rule: FeedFilterRule, actorName: String) -> String {
-        let action = rule.effectiveAction == .hide ? "Hide" : "Collapse"
-        let kinds = rule.postKinds.map(\.rawValue).sorted().joined(separator: ", ")
-        let role = rule.actorRoles == [.repostActor] ? "reposted by" : "written by"
-        let semantic = rule.semanticGroups.isEmpty ? "" : " when the semantic conditions match"
-        return "In Home: \(action) \(kinds) posts \(role) \(actorName)\(semantic)."
+        let localizedKinds = rule.postKinds
+            .sorted { $0.rawValue < $1.rawValue }
+            .map { kind -> String in
+                switch kind {
+                case .original:
+                    return String(localized: "original", comment: "Post kind label in Smart Filter summary: original posts")
+                case .reply:
+                    return String(localized: "reply", comment: "Post kind label in Smart Filter summary: reply posts")
+                case .quote:
+                    return String(localized: "quote", comment: "Post kind label in Smart Filter summary: quote posts")
+                case .repost:
+                    return String(localized: "repost", comment: "Post kind label in Smart Filter summary: reposts")
+                }
+            }
+            .formatted()
+        let isHide = rule.effectiveAction == .hide
+        let isRepost = rule.actorRoles == [.repostActor]
+        let hasSemantic = !rule.semanticGroups.isEmpty
+
+        switch (isHide, isRepost, hasSemantic) {
+        case (true, true, true):
+            return String(
+                localized: "In Home: Hide \(localizedKinds) posts reposted by \(actorName) when the semantic conditions match.",
+                comment: "Smart Filter confirmation summary — first variable is formatted post kinds, second is the actor's name."
+            )
+        case (true, true, false):
+            return String(
+                localized: "In Home: Hide \(localizedKinds) posts reposted by \(actorName).",
+                comment: "Smart Filter confirmation summary — first variable is formatted post kinds, second is the actor's name."
+            )
+        case (true, false, true):
+            return String(
+                localized: "In Home: Hide \(localizedKinds) posts written by \(actorName) when the semantic conditions match.",
+                comment: "Smart Filter confirmation summary — first variable is formatted post kinds, second is the actor's name."
+            )
+        case (true, false, false):
+            return String(
+                localized: "In Home: Hide \(localizedKinds) posts written by \(actorName).",
+                comment: "Smart Filter confirmation summary — first variable is formatted post kinds, second is the actor's name."
+            )
+        case (false, true, true):
+            return String(
+                localized: "In Home: Collapse \(localizedKinds) posts reposted by \(actorName) when the semantic conditions match.",
+                comment: "Smart Filter confirmation summary — first variable is formatted post kinds, second is the actor's name."
+            )
+        case (false, true, false):
+            return String(
+                localized: "In Home: Collapse \(localizedKinds) posts reposted by \(actorName).",
+                comment: "Smart Filter confirmation summary — first variable is formatted post kinds, second is the actor's name."
+            )
+        case (false, false, true):
+            return String(
+                localized: "In Home: Collapse \(localizedKinds) posts written by \(actorName) when the semantic conditions match.",
+                comment: "Smart Filter confirmation summary — first variable is formatted post kinds, second is the actor's name."
+            )
+        case (false, false, false):
+            return String(
+                localized: "In Home: Collapse \(localizedKinds) posts written by \(actorName).",
+                comment: "Smart Filter confirmation summary — first variable is formatted post kinds, second is the actor's name."
+            )
+        }
     }
 
     private static func topicPhrase(in text: String) -> String? {

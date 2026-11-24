@@ -12,11 +12,36 @@ import AppIntents
 
 @available(iOS 17.0, *)
 struct ComposeWidgetIntent: WidgetConfigurationIntent {
-  static var title: LocalizedStringResource { "Compose Widget" }
-  static var description: IntentDescription { "Quick compose a new post." }
+  static var title: LocalizedStringResource {
+    LocalizedStringResource(
+      "Compose Widget",
+      comment: "Title for the Quick Compose widget configuration intent."
+    )
+  }
+  static var description: IntentDescription {
+    IntentDescription(
+      LocalizedStringResource(
+        "Quick compose a new post.",
+        comment: "Description for the Quick Compose widget configuration intent."
+      )
+    )
+  }
 
-  @Parameter(title: "Account", description: "Which account to compose from")
+  @Parameter(
+    title: LocalizedStringResource(
+      "Account",
+      comment: "Widget configuration parameter for selecting which Bluesky account composes the post."
+    ),
+    description: LocalizedStringResource(
+      "Which account to compose from",
+      comment: "Description for the Account parameter of the Quick Compose widget."
+    )
+  )
   var account: AccountEntity?
+
+  static var parameterSummary: some ParameterSummary {
+    Summary("Compose from \(\.$account)")
+  }
 }
 
 // MARK: - Compose Entry
@@ -81,11 +106,24 @@ struct ComposeWidgetProvider: AppIntentTimelineProvider {
 struct ComposeWidgetView: View {
   let entry: ComposeWidgetEntry
 
+  private var promptText: LocalizedStringResource {
+    if entry.accountDID == nil {
+      return LocalizedStringResource(
+        "Open Catbird to sign in",
+        comment: "Prompt in the Quick Compose widget when no Bluesky account is signed in."
+      )
+    }
+    return LocalizedStringResource(
+      "What’s on your mind?",
+      comment: "Compose prompt in the Quick Compose home-screen widget."
+    )
+  }
+
   var body: some View {
     VStack(spacing: WidgetSpacing.md) {
       WidgetAvatar(name: entry.displayName ?? entry.handle, size: WidgetAvatarSize.xxl)
 
-      Text(entry.accountDID == nil ? "Open Catbird to sign in" : "What’s on your mind?")
+      Text(promptText)
         .font(.system(size: 12, weight: .medium))
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
@@ -121,8 +159,18 @@ struct ComposeWidget: Widget {
     ) { entry in
       ComposeWidgetView(entry: entry)
     }
-    .configurationDisplayName("Quick Compose")
-    .description("Quickly compose a new post on Bluesky.")
+    .configurationDisplayName(
+      LocalizedStringResource(
+        "Quick Compose",
+        comment: "Widget gallery display name for the Quick Compose widget."
+      )
+    )
+    .description(
+      LocalizedStringResource(
+        "Quickly compose a new post on Bluesky.",
+        comment: "Widget gallery description for the Quick Compose widget."
+      )
+    )
     .supportedFamilies([.systemSmall])
   }
 }

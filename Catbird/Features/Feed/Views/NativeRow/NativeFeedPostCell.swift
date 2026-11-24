@@ -68,7 +68,7 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
     optionsGlyph.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .body)
     optionsGlyph.tintColor = .secondaryLabel
     optionsGlyph.isAccessibilityElement = false
-    optionsButton.accessibilityLabel = "Post Options"
+    optionsButton.accessibilityLabel = String(localized: "Post Options", comment: "VoiceOver label for the post options menu button")
     // The header spans the content view and positions its labels by the layout's frames;
     // it must not take touches meant for the avatar, text links or the row.
     headerView.isUserInteractionEnabled = false
@@ -77,7 +77,9 @@ final class NativeFeedPostCell: UICollectionViewListCell, UIGestureRecognizerDel
     contentView.addGestureRecognizer(rowTap)
     // Offered on the elements VoiceOver focuses (the text and the author's name) as well as on
     // the content view, which is a container and not itself an element.
-    let openPostAction = UIAccessibilityCustomAction(name: "Open post") { [weak self] _ in
+    let openPostAction = UIAccessibilityCustomAction(
+      name: String(localized: "Open post", comment: "VoiceOver custom action to open a post's thread")
+    ) { [weak self] _ in
       self?.performOpenPost() ?? false
     }
     contentView.accessibilityCustomActions = [openPostAction]

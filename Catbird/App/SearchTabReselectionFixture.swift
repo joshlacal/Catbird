@@ -45,7 +45,9 @@ struct SearchTabReselectionFixture: View {
               if selectedTab == 1 && !ProcessInfo.processInfo.arguments.contains(Self.hashtagArgument) {
                 // Exercises the production binding consumer independently of
                 // iOS 26's compact tab-to-search-field transformation.
-                Button("Reselect Search") { lastTappedTab = 1 }
+                Button { lastTappedTab = 1 } label: {
+                  Text(verbatim: "Reselect Search")
+                }
                   .font(.caption)
                   .buttonStyle(.bordered)
                   .accessibilityIdentifier("search-tabs.reselect")
@@ -59,9 +61,11 @@ struct SearchTabReselectionFixture: View {
         .modelContainer(storage)
         .environment(\.fontManager, account.fontManager)
       } else if let failure {
-        Text(failure).accessibilityIdentifier("search-tabs.failure")
+        Text(verbatim: failure).accessibilityIdentifier("search-tabs.failure")
       } else {
-        ProgressView("Preparing local search: \(preparationStage)")
+        ProgressView {
+          Text(verbatim: "Preparing local search: \(preparationStage)")
+        }
           .accessibilityIdentifier("search-tabs.preparing")
       }
     }

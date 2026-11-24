@@ -224,13 +224,13 @@ enum TileResourceError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .invalidURL:
-      return "Invalid blob URL"
+      return String(localized: "Invalid blob URL", comment: "Error when web tile blob URL is malformed")
     case .fetchFailed(let code):
-      return "Failed to fetch blob (HTTP \(code))"
+      return String(localized: "Failed to fetch blob (HTTP \(code))", comment: "Error with HTTP status code when fetching a web tile blob fails")
     case .cidMismatch:
-      return "Content integrity check failed"
+      return String(localized: "Content integrity check failed", comment: "Error when downloaded web tile resource does not match its expected CID")
     case .resourceNotFound(let path):
-      return "Resource not found: \(path)"
+      return String(localized: "Resource not found: \(path)", comment: "Error when requested web tile resource path is missing")
     }
   }
 }

@@ -261,8 +261,7 @@ struct UnifiedProfileContentView: View {
           .frame(maxWidth: .infinity, alignment: .center)
       } else if viewModel.boxedPosts.isEmpty && viewModel.pinnedPost == nil {
         ProfileEmptyStateView(
-          title: "No Posts",
-          message: "This account hasn’t posted yet.",
+          kind: .posts,
           isCurrentUser: viewModel.isCurrentUser
         )
         .padding(.top, 40)
@@ -296,8 +295,7 @@ struct UnifiedProfileContentView: View {
         .frame(maxWidth: .infinity, alignment: .center)
       } else if viewModel.boxedReplies.isEmpty {
         ProfileEmptyStateView(
-          title: "No Replies",
-          message: "This account hasn’t replied to anyone yet.",
+          kind: .replies,
           isCurrentUser: viewModel.isCurrentUser
         )
         .padding(.top, 40)
@@ -331,8 +329,7 @@ struct UnifiedProfileContentView: View {
         .frame(maxWidth: .infinity, alignment: .center)
       } else if viewModel.boxedPostsWithMedia.isEmpty {
         ProfileEmptyStateView(
-          title: "No Media Posts",
-          message: "This account hasn’t shared photos or videos yet.",
+          kind: .media,
           isCurrentUser: viewModel.isCurrentUser
         )
         .padding(.top, 40)
@@ -453,14 +450,18 @@ private struct ProfileBlockRelationshipView: View {
           .fontWeight(.medium)
         HStack(spacing: 16) {
           if relationship.canUnblockDirectly {
-            Button("Unblock") {
+            Button {
               requestUnblock()
+            } label: {
+              Text("Unblock", comment: "Action button on the profile block banner to unblock this account.")
             }
             .appFont(AppTextRole.callout)
           }
           if let listRef = relationship.listRef {
-            Button("View List") {
+            Button {
               navigationPath.append(NavigationDestination.list(listRef.uri))
+            } label: {
+              Text("View List", comment: "Action button on the profile block banner to view the moderation list blocking this account.")
             }
             .appFont(AppTextRole.callout)
           }
@@ -586,8 +587,7 @@ private struct ProfileCurrentTabView: View {
       ProfileFeedTabView(
         viewModel: viewModel,
         posts: viewModel.boxedReplies,
-        emptyTitle: "No Replies",
-        emptyMessage: "This account hasn’t replied to anyone yet.",
+        emptyKind: .replies,
         hasAttemptedLoad: hasAttemptedLoadReplies,
         hasMore: viewModel.hasMoreReplies,
         loadAction: viewModel.loadMoreReplies,
@@ -598,8 +598,7 @@ private struct ProfileCurrentTabView: View {
       ProfileFeedTabView(
         viewModel: viewModel,
         posts: viewModel.boxedPostsWithMedia,
-        emptyTitle: "No Media Posts",
-        emptyMessage: "This account hasn’t shared photos or videos yet.",
+        emptyKind: .media,
         hasAttemptedLoad: hasAttemptedLoadMedia,
         hasMore: viewModel.hasMoreMedia,
         loadAction: viewModel.loadMoreMediaPosts,
@@ -634,8 +633,7 @@ private struct ProfilePostsTabView: View {
           .frame(maxWidth: .infinity, alignment: .center)
       } else if viewModel.boxedPosts.isEmpty && viewModel.pinnedPost == nil {
         ProfileEmptyStateView(
-          title: "No Posts",
-          message: "This account hasn’t posted yet.",
+          kind: .posts,
           isCurrentUser: viewModel.isCurrentUser
         )
         .padding(.top, 40)
@@ -674,8 +672,7 @@ private struct ProfilePostsTabView: View {
 private struct ProfileFeedTabView: View {
   let viewModel: ProfileViewModel
   let posts: [EquatableBox<AppBskyFeedDefs.FeedViewPost>]
-  let emptyTitle: String
-  let emptyMessage: String
+  let emptyKind: ProfileEmptyStateKind
   let hasAttemptedLoad: Bool
   let hasMore: Bool
   let loadAction: @MainActor () async -> Void
@@ -710,8 +707,7 @@ private struct ProfileFeedTabView: View {
         .frame(maxWidth: .infinity, alignment: .center)
       } else if posts.isEmpty {
         ProfileEmptyStateView(
-          title: emptyTitle,
-          message: emptyMessage,
+          kind: emptyKind,
           isCurrentUser: viewModel.isCurrentUser
         )
         .padding(.top, 40)
@@ -778,27 +774,68 @@ struct ProfileBoxedPostsList: View {
   }
 }
 
+enum ProfileEmptyStateKind {
+  case posts
+  case replies
+  case media
+
+  var icon: String {
+    switch self {
+    case .posts: "text.bubble"
+    case .replies: "arrowshape.turn.up.left"
+    case .media: "photo.on.rectangle"
+    }
+  }
+
+  var title: LocalizedStringResource {
+    switch self {
+    case .posts:
+      LocalizedStringResource("No Posts", comment: "Empty state heading on a profile's Posts tab.")
+    case .replies:
+      LocalizedStringResource("No Replies", comment: "Empty state heading on a profile's Replies tab.")
+    case .media:
+      LocalizedStringResource("No Media Posts", comment: "Empty state heading on a profile's Media tab.")
+    }
+  }
+
+  func message(isCurrentUser: Bool) -> LocalizedStringResource {
+    switch (self, isCurrentUser) {
+    case (.posts, true):
+      LocalizedStringResource("Share your thoughts! Your posts will appear here.", comment: "Empty state prompt on the signed-in user's own Posts tab.")
+    case (.posts, false):
+      LocalizedStringResource("This account hasn’t posted yet.", comment: "Empty state message on another user's Posts tab.")
+    case (.replies, true):
+      LocalizedStringResource("Join conversations by replying to posts.", comment: "Empty state prompt on the signed-in user's own Replies tab.")
+    case (.replies, false):
+      LocalizedStringResource("This account hasn’t replied to anyone yet.", comment: "Empty state message on another user's Replies tab.")
+    case (.media, true):
+      LocalizedStringResource("Share photos and videos to see them here.", comment: "Empty state prompt on the signed-in user's own Media tab.")
+    case (.media, false):
+      LocalizedStringResource("This account hasn’t shared photos or videos yet.", comment: "Empty state message on another user's Media tab.")
+    }
+  }
+}
+
 struct ProfileEmptyStateView: View {
-  let title: String
-  let message: String
+  let kind: ProfileEmptyStateKind
   let isCurrentUser: Bool
 
   var body: some View {
     VStack(spacing: 20) {
       Spacer()
 
-      Image(systemName: icon)
+      Image(systemName: kind.icon)
         .appFont(size: 56)
         .foregroundStyle(.secondary.opacity(0.6))
         .symbolEffect(.pulse)
 
       VStack(spacing: 8) {
-        Text(title)
+        Text(kind.title)
           .appFont(AppTextRole.title2)
           .fontWeight(.semibold)
           .foregroundStyle(.primary)
 
-        Text(displayMessage)
+        Text(kind.message(isCurrentUser: isCurrentUser))
           .appFont(AppTextRole.body)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
@@ -809,28 +846,5 @@ struct ProfileEmptyStateView: View {
     }
     .frame(maxWidth: .infinity, minHeight: 280)
     .background(Color.clear)
-  }
-
-  private var icon: String {
-    switch title.lowercased() {
-    case "no posts": "text.bubble"
-    case "no replies": "arrowshape.turn.up.left"
-    case "no media posts": "photo.on.rectangle"
-    case "no likes": "heart"
-    case "no lists": "list.bullet.rectangle"
-    case "no feeds": "rectangle.grid.1x2"
-    default: "square.stack.3d.up.slash"
-    }
-  }
-
-  private var displayMessage: String {
-    guard isCurrentUser else { return message }
-    return switch title.lowercased() {
-    case "no posts": "Share your thoughts! Your posts will appear here."
-    case "no replies": "Join conversations by replying to posts."
-    case "no media posts": "Share photos and videos to see them here."
-    case "no likes": "Like posts to save them for later."
-    default: message
-    }
   }
 }

@@ -76,14 +76,20 @@ struct OnboardingIntelligenceUIFixture: View {
         .modelContainer(container)
         .preferredColorScheme(arguments.contains("--intel-dark") ? .dark : .light)
       } else if let failure {
-        ContentUnavailableView(
-          "Onboarding Intelligence Fixture Failed",
-          systemImage: "exclamationmark.triangle",
-          description: Text(failure)
-        )
+        ContentUnavailableView {
+          Label {
+            Text(verbatim: "Onboarding Intelligence Fixture Failed")
+          } icon: {
+            Image(systemName: "exclamationmark.triangle")
+          }
+        } description: {
+          Text(verbatim: failure)
+        }
         .accessibilityIdentifier("intel.fixture.failure")
       } else {
-        ProgressView("Preparing Scene Intelligence Showcase…")
+        ProgressView {
+          Text(verbatim: "Preparing Scene Intelligence Showcase…")
+        }
       }
     }
     .task { await prepare() }

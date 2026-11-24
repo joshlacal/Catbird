@@ -138,11 +138,11 @@ struct LoginView: View {
                             .padding(.bottom, adaptiveSpacing(geometry, factor: 0.2))
                             
                             VStack(spacing: 3) {
-                                Text("Catbird")
+                                Text(verbatim: "Catbird")
                                     .font(catbirdTitleFont(geometry: geometry))
                                     .foregroundStyle(.primary)
                                 
-                                Text("for Bluesky")
+                                Text("for Bluesky", comment: "Subtitle below the Catbird brand title on the sign-in screen.")
                                     .font(catbirdSubtitleFont(geometry: geometry))
                                     // Vibrant .secondary turns muddy over the sky.
                                     .foregroundStyle(.primary.opacity(0.7))
@@ -159,7 +159,13 @@ struct LoginView: View {
                             HStack(spacing: 8) {
                                 Image(systemName: "sparkles")
                                     .foregroundStyle(Color.accentColor)
-                                Text("Joining \(pendingContext.name ?? "Starter Pack")")
+                                Group {
+                                    if let packName = pendingContext.name, !packName.isEmpty {
+                                        Text("Joining \(packName)", comment: "Banner on sign-in screen when joining via a named starter pack. Placeholder is the starter pack name.")
+                                    } else {
+                                        Text("Joining Starter Pack", comment: "Banner on sign-in screen when joining via an unnamed starter pack.")
+                                    }
+                                }
                                     .appFont(AppTextRole.subheadline)
                                     .fontWeight(.medium)
                                     .foregroundStyle(.primary)
@@ -194,9 +200,9 @@ struct LoginView: View {
                                 }
                             } label: {
                                 HStack {
-                                    Image(systemName: showAppViewAdvancedOptions ? "chevron.down" : "chevron.right")
+                                    Image(systemName: showAppViewAdvancedOptions ? "chevron.down" : "chevron.forward")
                                         .imageScale(.small)
-                                    Text("Advanced Service Configuration")
+                                    Text(verbatim: "Advanced Service Configuration")
                                         .appFont(AppTextRole.footnote)
                                 }
                                 .foregroundStyle(.secondary)
@@ -269,9 +275,17 @@ struct LoginView: View {
                                 .accessibilityLabel("Dismiss Error")
                             }
 
-                            Text(appStateManager.authentication.expiredAccountInfo != nil ?
-                                 "Your session for \(appStateManager.authentication.expiredAccountInfo?.loginHandle ?? "this account") has expired." :
-                                 errorMessage)
+                            Group {
+                                if let expiredAccount = appStateManager.authentication.expiredAccountInfo {
+                                    if let loginHandle = expiredAccount.loginHandle, !loginHandle.isEmpty {
+                                        Text("Your session for \(loginHandle) has expired.", comment: "Message shown when a saved account's session expired. Placeholder is the account handle.")
+                                    } else {
+                                        Text("Your session for this account has expired.", comment: "Message shown when a saved account's session expired and no handle is available.")
+                                    }
+                                } else {
+                                    Text(errorMessage)
+                                }
+                            }
                                 .appFont(AppTextRole.callout)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.leading)
@@ -354,7 +368,7 @@ struct LoginView: View {
         .sheet(isPresented: isShowingAgreement) {
             CommunityStandardsAgreementView(
                 onAgree: {
-                    acceptedAgreementVersion = CommunityStandards.agreementVersion
+                    CommunityStandards.recordAcceptanceBeforeSignIn()
                     let mode = authModeAwaitingAgreement
                     authModeAwaitingAgreement = nil
                     if let mode {
@@ -544,7 +558,7 @@ struct LoginView: View {
                 text: $handle,
                 prompt: "username.bsky.social",
                 icon: "at",
-                label: "Handle",
+                label: String(localized: "Handle", comment: "Text field label for the user's Bluesky handle on the sign-in screen."),
                 validationError: validationError,
                 isDisabled: isLoggingIn,
                 keyboardType: .emailAddress,
@@ -559,6 +573,7 @@ struct LoginView: View {
                 text: $handle,
                 prompt: "username.bsky.social",
                 icon: "at",
+                label: String(localized: "Handle", comment: "Text field label for the user's Bluesky handle on the sign-in screen."),
                 validationError: validationError,
                 isDisabled: isLoggingIn,
                 submitLabel: .go,
@@ -595,7 +610,7 @@ struct LoginView: View {
                 guard authMode == .selection, !isLoggingIn else { return }
                 enterAuthModeAfterAgreement(.login)
             } label: {
-                Text("Sign In")
+                Text("Sign In", comment: "Primary button to begin signing in to an existing Bluesky account.")
                     .appFont(AppTextRole.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
@@ -759,9 +774,9 @@ struct LoginView: View {
 #if os(iOS)
                 ValidatingTextField(
                     text: $pdsURL,
-                    prompt: "Provider address, like https://bsky.social",
+                    prompt: String(localized: "Provider address, like https://bsky.social", comment: "Placeholder in custom PDS server address text field."),
                     icon: "link",
-                    label: "Server Address",
+                    label: String(localized: "Server Address", comment: "Accessibility label for custom PDS server address text field."),
                     validationError: validationError,
                     isDisabled: isLoggingIn,
                     keyboardType: .URL,
@@ -774,8 +789,9 @@ struct LoginView: View {
 #elseif os(macOS)
                 ValidatingTextField(
                     text: $pdsURL,
-                    prompt: "Provider address, like https://bsky.social",
+                    prompt: String(localized: "Provider address, like https://bsky.social", comment: "Placeholder in custom PDS server address text field."),
                     icon: "link",
+                    label: String(localized: "Server Address", comment: "Accessibility label for custom PDS server address text field."),
                     validationError: validationError,
                     isDisabled: isLoggingIn,
                     submitLabel: .go,
@@ -794,14 +810,14 @@ struct LoginView: View {
     
     private func appViewAdvancedFields(geometry: GeometryProxy) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Configure custom service endpoints")
+            Text(verbatim: "Configure custom service endpoints")
                 .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: min(geometry.size.width * 0.9, 400), alignment: .leading)
             
             // AppView DID field
             VStack(alignment: .leading, spacing: 4) {
-                Text("Bluesky AppView DID")
+                Text(verbatim: "Bluesky AppView DID")
                     .appFont(AppTextRole.caption2)
                     .foregroundStyle(.secondary)
                 
@@ -839,7 +855,7 @@ struct LoginView: View {
             
             // Chat DID field
             VStack(alignment: .leading, spacing: 4) {
-                Text("Bluesky Chat DID")
+                Text(verbatim: "Bluesky Chat DID")
                     .appFont(AppTextRole.caption2)
                     .foregroundStyle(.secondary)
                 
@@ -882,7 +898,7 @@ struct LoginView: View {
                     customChatDID = "did:web:api.bsky.chat#bsky_chat"
                 }
             } label: {
-                Text("Reset to Defaults")
+                Text(verbatim: "Reset to Defaults")
                     .appFont(AppTextRole.caption)
                     .foregroundStyle(.blue)
             }
@@ -922,7 +938,7 @@ struct LoginView: View {
                     
                     // Show technical details in debug mode if available
                     if showDebugInfo, let technicalDescription = loginTechnicalDescription() {
-                        Text(technicalDescription)
+                        Text(verbatim: technicalDescription)
                             .appFont(AppTextRole.caption)
                             .foregroundStyle(.tertiary)
                             .padding(.top, 2)
@@ -1067,11 +1083,11 @@ struct LoginView: View {
     private func authModeActionText() -> String {
         switch authMode {
         case .login:
-            return "Signing in…"
+            return String(localized: "Signing in…", comment: "Status label shown while signing in to an account.")
         case .signup:
-            return "Creating account…"
+            return String(localized: "Creating account…", comment: "Status label shown while creating a new account.")
         case .advanced:
-            return "Connecting to your provider…"
+            return String(localized: "Connecting to your provider…", comment: "Status label shown while connecting to a custom PDS provider.")
         case .selection:
             return "" // Should never be used
         }
@@ -1088,13 +1104,13 @@ struct LoginView: View {
         case .idle:
             return ""
         case .startingAuth:
-            return "Starting sign-in"
+            return String(localized: "Starting sign-in", comment: "Progress step when preparing sign-in.")
         case .authenticating:
-            return "Opening a secure sign-in page"
+            return String(localized: "Opening a secure sign-in page", comment: "Progress step when opening OAuth browser page.")
         case .processingCallback:
-            return "Finishing sign-in"
+            return String(localized: "Finishing sign-in", comment: "Progress step when completing OAuth callback.")
         case .completing:
-            return "Almost done"
+            return String(localized: "Almost done", comment: "Progress step when sign-in is nearly complete.")
         }
     }
 
@@ -1106,11 +1122,11 @@ struct LoginView: View {
     private func authModeActionButtonText() -> String {
         switch authMode {
         case .login:
-            return "Sign In"
+            return String(localized: "Sign In", comment: "Action button to submit handle and sign in.")
         case .signup:
-            return "Create Account on Bluesky"
+            return String(localized: "Create Account on Bluesky", comment: "Action button to create a new account on the default Bluesky server.")
         case .advanced:
-            return "Create Account"
+            return String(localized: "Create Account", comment: "Action button to create a new account on a custom provider.")
         case .selection:
             return "" // Should never be used
         }
@@ -1168,7 +1184,10 @@ struct LoginView: View {
         guard !isLoggingIn else { return }
         // Validate PDS URL
         guard let url = URL(string: pdsURL), isValidURL(pdsURL) else {
-            validationError = "Enter a full web address, like https://example.com."
+            validationError = String(
+                localized: "Enter a full web address, like https://example.com.",
+                comment: "Validation error when custom PDS URL is malformed."
+            )
             showInvalidAnimation = true
             // Reset animation flag after a delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
@@ -1187,7 +1206,10 @@ struct LoginView: View {
         // Simple validation - must contain a dot or @ symbol
         guard trimmedHandle.contains(".") || trimmedHandle.contains("@") else {
             logger.warning("Invalid handle format: \(trimmedHandle)")
-            validationError = "Enter your full handle, like name.bsky.social."
+            validationError = String(
+                localized: "Enter your full handle, like name.bsky.social.",
+                comment: "Validation error when handle does not include a domain."
+            )
             showInvalidAnimation = true
             // Reset animation flag after a delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
@@ -1353,7 +1375,10 @@ struct LoginView: View {
 
                 guard let authURL else {
                     logger.error("Failed to get auth URL for expired account re-authentication")
-                    error = "Couldn’t start signing in. Try again."
+                    error = String(
+                        localized: "Couldn’t start signing in. Try again.",
+                        comment: "Error shown when re-authentication URL cannot be created."
+                    )
                     isLoggingIn = false
                     hasStartedReAuthentication = false
                     return

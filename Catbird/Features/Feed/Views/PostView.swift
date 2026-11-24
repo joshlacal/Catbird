@@ -721,7 +721,10 @@ private struct PostContentLayout: View {
       }
       if appState.appSettings.showReadingTimeEstimates,
          let minutes = PostReadingTime.minutes(for: feedPost.text) {
-        Text("\(minutes) min read")
+        Text(
+          "\(minutes) min read",
+          comment: "Estimated reading time badge on a post — variable is the number of minutes"
+        )
           .appCaption2()
           .foregroundStyle(.secondary)
       }
@@ -750,7 +753,10 @@ private struct PostContentLayout: View {
             Image(systemName: "person.2.circle.fill")
               .font(.caption2)
               .foregroundStyle(Color.accentColor)
-            Text("Circle · \(circle.name)")
+            Text(
+              "Circle · \(circle.name)",
+              comment: "Badge indicating which private Circle a post was shared to — variable is the Circle name"
+            )
               .appCaption()
               .fontWeight(.medium)
               .foregroundStyle(Color.accentColor)
@@ -758,7 +764,12 @@ private struct PostContentLayout: View {
           .padding(.horizontal, PostView.baseUnit)
           .padding(.top, 2)
           .accessibilityElement(children: .combine)
-          .accessibilityLabel("Circle: \(circle.name)")
+          .accessibilityLabel(
+            Text(
+              "Circle: \(circle.name)",
+              comment: "Accessibility label for a private Circle badge — variable is the Circle name"
+            )
+          )
         }
 
         if let replyTarget {
@@ -836,7 +847,10 @@ private struct PostContentLayout: View {
     postOptionsGlyph
       .accessibilityHidden(true)
       .overlay {
-        PostOptionsMenuButton(accessibilityLabel: "Post Options", accessibilityIdentifier: nil) {
+        PostOptionsMenuButton(
+          accessibilityLabel: String(localized: "Post Options", comment: "Accessibility label for the post options menu button"),
+          accessibilityIdentifier: nil
+        ) {
           PostOptionsMenuBuilder.elements(post: displayed.value, context: optionsMenuContext)
         }
       }
@@ -1068,33 +1082,42 @@ private struct PostContentLayout: View {
   // Reply indicator text
   @ViewBuilder
   private func replyIndicatorView(replyTarget: PostReplyTarget? = nil) -> some View {
+    let secondaryColor = Color.adaptiveText(
+      appState: appState,
+      themeManager: appState.themeManager,
+      style: .secondary,
+      currentScheme: colorScheme
+    )
     HStack(alignment: .center, spacing: PostView.baseUnit) {
       Image(systemName: "arrow.up.forward.circle")
-        .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
+        .foregroundStyle(secondaryColor)
         .appBody()
 
-      HStack(spacing: 0) {
-        Text("In reply to ")
-          .appBody()
-          .offset(y: -1)
-          .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: colorScheme))
-
-        if isToYou {
-          Text("you")
-            .appBody()
-            .offset(y: -1)
-            .foregroundStyle(Color("AccentTextColor"))
-        } else if let replyTarget {
-          Text(verbatim: "@\(replyTarget.handle)")
-            .appBody()
-            .offset(y: -1)
-            .foregroundStyle(Color("AccentTextColor"))
-            .onTapGesture {
-              guard !isReadOnlyPreview else { return }
-              path.append(NavigationDestination.profile(replyTarget.did))
-            }
-            .accessibilityAddTraits(.isButton)
+      if isToYou {
+        let youText = Text("you", comment: "Pronoun in 'In reply to you' indicator")
+          .foregroundColor(Color("AccentTextColor"))
+        Text(
+          "In reply to \(youText)",
+          comment: "Reply indicator when a post replies to the signed-in user — variable is the highlighted word 'you'"
+        )
+        .appBody()
+        .offset(y: -1)
+        .foregroundStyle(secondaryColor)
+      } else if let replyTarget {
+        let handleText = Text(verbatim: "@\(replyTarget.handle)")
+          .foregroundColor(Color("AccentTextColor"))
+        Text(
+          "In reply to \(handleText)",
+          comment: "Reply indicator showing who a post replies to — variable is the @handle"
+        )
+        .appBody()
+        .offset(y: -1)
+        .foregroundStyle(secondaryColor)
+        .onTapGesture {
+          guard !isReadOnlyPreview else { return }
+          path.append(NavigationDestination.profile(replyTarget.did))
         }
+        .accessibilityAddTraits(.isButton)
       }
     }
     .padding(.leading, PostView.baseUnit)
@@ -1285,7 +1308,7 @@ struct ThreadSummarySheet: View {
       Text(authorDisplayName)
         .font(.headline)
 
-      Text("@\(state.currentPostBox.value.author.handle.description)")
+      Text(verbatim: "@\(state.currentPostBox.value.author.handle.description)")
         .font(.subheadline)
         .foregroundStyle(.secondary)
     }
@@ -1400,7 +1423,12 @@ struct AuthorAvatarColumn: View {
     .padding(.top, Self.baseUnit)
     .background(parentPostIndicator)
     .modifier(AuthorAvatarAccessibility(
-      label: isReadOnlyPreview ? authorName : "\(authorName), view profile",
+      label: isReadOnlyPreview
+        ? authorName
+        : String(
+          localized: "\(authorName), view profile",
+          comment: "Accessibility label for a post author's avatar button — variable is the author's display name or handle"
+        ),
       isEnabled: !isPlaceholderAuthor && !isReadOnlyPreview,
       action: openProfile))
     // Do not add a ProfileEntity context inside a PostEntity-annotated post.

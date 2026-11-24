@@ -152,7 +152,7 @@ struct PostComposerAudioRecordingView: View {
               .font(.headline)
               .foregroundColor(.primary)
             
-            Text("@\(profile.handle.description)")
+            Text(verbatim: "@\(profile.handle.description)")
               .font(.subheadline)
               .foregroundColor(.secondary)
           }
@@ -177,14 +177,14 @@ struct PostComposerAudioRecordingView: View {
               .foregroundColor(.accentColor)
               .monospacedDigit()
             
-            Text("\(audioRecorder.getRemainingTimeString()) remaining")
+            Text("\(audioRecorder.getRemainingTimeString()) remaining", comment: "Remaining audio recording time; placeholder is formatted mm:ss")
               .font(.caption)
               .foregroundColor(.secondary)
               .monospacedDigit()
           }
           .animation(.easeInOut(duration: 0.2), value: audioRecorder.recordingDuration)
         } else if recordingPhase == .finished {
-          Text("Duration: \(audioRecorder.getRecordingDurationString())")
+          Text("Duration: \(audioRecorder.getRecordingDurationString())", comment: "Recorded audio duration; placeholder is formatted mm:ss")
             .font(.subheadline)
             .fontWeight(.medium)
             .foregroundColor(.primary)
@@ -270,7 +270,7 @@ struct PostComposerAudioRecordingView: View {
             .progressViewStyle(LinearProgressViewStyle(tint: Color.accentColor))
               .frame(width: 200)
             
-            Text("\(formatTime(audioPlaybackService.progress)) / \(audioRecorder.getRecordingDurationString())")
+            Text(verbatim: "\(formatTime(audioPlaybackService.progress)) / \(audioRecorder.getRecordingDurationString())")
               .font(.caption)
               .fontWeight(.medium)
               .foregroundColor(.secondary)
@@ -324,7 +324,7 @@ struct PostComposerAudioRecordingView: View {
   
   // MARK: - Computed Properties
   
-  private var recordingStatusText: String {
+  private var recordingStatusText: LocalizedStringResource {
     if recordingStart.isPending { return "Starting Recording…" }
     switch recordingPhase {
     case .ready:
@@ -358,7 +358,7 @@ struct PostComposerAudioRecordingView: View {
     }
   }
   
-  private var accessibilityLabel: String {
+  private var accessibilityLabel: LocalizedStringResource {
     if recordingStart.isPending { return "Starting recording" }
     switch recordingPhase {
     case .ready:
@@ -370,7 +370,7 @@ struct PostComposerAudioRecordingView: View {
     }
   }
   
-  private var accessibilityHint: String {
+  private var accessibilityHint: LocalizedStringResource {
     switch recordingPhase {
     case .ready:
       return "Tap to start recording audio"
@@ -449,9 +449,8 @@ struct PostComposerAudioRecordingView: View {
   }
   
   private func formatTime(_ timeInterval: TimeInterval) -> String {
-    let minutes = Int(timeInterval) / 60
-    let seconds = Int(timeInterval) % 60
-    return String(format: "%d:%02d", minutes, seconds)
+    let safeSeconds = timeInterval.isFinite ? max(0, Int(timeInterval)) : 0
+    return Duration.seconds(safeSeconds).formatted(.time(pattern: .minuteSecond))
   }
   
   private func openAppSettings() {
@@ -640,7 +639,7 @@ enum AudioPlaybackError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .playbackFailed:
-      return "Failed to start audio playback"
+      return String(localized: "Failed to start audio playback", comment: "Error message when audio preview playback fails to start")
     }
   }
 }

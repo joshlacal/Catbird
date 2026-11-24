@@ -45,10 +45,12 @@ struct VerificationInfoSheet: View {
     verifications.filter { $0.isValid }
   }
 
-  private var navigationTitle: String {
+  private var navigationTitle: LocalizedStringResource {
     switch kind {
-    case .regular: return "Verified Account"
-    case .trustedVerifier: return "Trusted Verifier"
+    case .regular:
+      return LocalizedStringResource("Verified Account", comment: "Navigation title for the verified account info sheet.")
+    case .trustedVerifier:
+      return LocalizedStringResource("Trusted Verifier", comment: "Navigation title for the trusted verifier info sheet.")
     }
   }
 
@@ -68,10 +70,12 @@ struct VerificationInfoSheet: View {
     }
   }
 
-  private var headerTitle: String {
+  private var headerTitle: LocalizedStringResource {
     switch kind {
-    case .regular: return "Verified account"
-    case .trustedVerifier: return "Trusted verifier"
+    case .regular:
+      return LocalizedStringResource("Verified account", comment: "Header title describing a verified account.")
+    case .trustedVerifier:
+      return LocalizedStringResource("Trusted verifier", comment: "Header title describing a trusted verifier account.")
     }
   }
 
@@ -86,26 +90,39 @@ struct VerificationInfoSheet: View {
     }
   }
 
-  private var explanationHeadline: String {
+  private var explanationHeadline: LocalizedStringResource {
     switch kind {
-    case .regular: return "What the checkmark means"
-    case .trustedVerifier: return "What the scalloped checkmark means"
+    case .regular:
+      return LocalizedStringResource("What the checkmark means", comment: "Section heading explaining the regular verification badge.")
+    case .trustedVerifier:
+      return LocalizedStringResource("What the scalloped checkmark means", comment: "Section heading explaining the trusted verifier badge.")
     }
   }
 
-  private var explanationBody: String {
+  private var explanationBody: LocalizedStringResource {
     switch kind {
     case .regular:
-      return "A blue checkmark indicates that this account has been verified by one or more trusted sources on Bluesky."
+      return LocalizedStringResource(
+        "A blue checkmark indicates that this account has been verified by one or more trusted sources on Bluesky.",
+        comment: "Explanation body for a verified account badge."
+      )
     case .trustedVerifier:
-      return "A scalloped blue checkmark indicates that this account is a trusted verifier — selected by Bluesky to verify other accounts. Verifications issued by trusted verifiers appear as a blue checkmark on the verified account."
+      return LocalizedStringResource(
+        "A scalloped blue checkmark indicates that this account is a trusted verifier — selected by Bluesky to verify other accounts. Verifications issued by trusted verifiers appear as a blue checkmark on the verified account.",
+        comment: "Explanation body for a trusted verifier badge."
+      )
     }
   }
 
   private var sourcesBlock: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text(validVerifications.count == 1 ? "Verified by" : "Verified by \(validVerifications.count) sources")
-        .appFont(AppTextRole.headline)
+      if validVerifications.dropFirst().isEmpty {
+        Text("Verified by", comment: "Section heading above a single verification source.")
+          .appFont(AppTextRole.headline)
+      } else {
+        Text("Verified by \(validVerifications.count) sources", comment: "Section heading above multiple verification sources — %1$lld is the number of sources.")
+          .appFont(AppTextRole.headline)
+      }
       VStack(alignment: .leading, spacing: 8) {
         ForEach(validVerifications, id: \.uri) { entry in
           verificationRow(entry)
@@ -122,7 +139,7 @@ struct VerificationInfoSheet: View {
         .foregroundStyle(.blue)
         .appFont(AppTextRole.body)
       VStack(alignment: .leading, spacing: 2) {
-        Text(handle.map { "@\($0)" } ?? truncated(did))
+        Text(verbatim: handle.map { "@\($0)" } ?? truncated(did))
           .appFont(AppTextRole.subheadline)
           .lineLimit(1)
           .truncationMode(.middle)

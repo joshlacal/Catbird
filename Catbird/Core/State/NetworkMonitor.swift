@@ -26,11 +26,11 @@ final class NetworkMonitor {
 
     var displayName: String {
       switch self {
-      case .wifi: return "Wi-Fi"
-      case .cellular: return "Cellular"
-      case .ethernet: return "Ethernet"
-      case .unknown: return "Unknown"
-      case .none: return "No Connection"
+      case .wifi: return String(localized: "Wi-Fi", comment: "Network connection type display name.")
+      case .cellular: return String(localized: "Cellular", comment: "Network connection type display name.")
+      case .ethernet: return String(localized: "Ethernet", comment: "Network connection type display name.")
+      case .unknown: return String(localized: "Unknown", comment: "Network connection type display name.")
+      case .none: return String(localized: "No Connection", comment: "Network connection type display name when offline.")
       }
     }
 

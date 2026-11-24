@@ -182,8 +182,9 @@ final class FeedsStartPageViewModel {
     }
     
     // Add system feeds
-    feedGeneratorDisplayNames["timeline"] = "Timeline"
-    feedGeneratorDisplayNames["following"] = "Timeline"
+    let timelineName = String(localized: "Timeline", comment: "Display name for the home chronological timeline feed")
+    feedGeneratorDisplayNames["timeline"] = timelineName
+    feedGeneratorDisplayNames["following"] = timelineName
     
     // Update widget with current preferences
     FeedWidgetDataProvider.shared.updateSharedFeedPreferences(
@@ -238,11 +239,17 @@ final class FeedsStartPageViewModel {
           await loadFeedsIfNeeded(forceRefresh: true)
           return
         default:
-          errorMessage = "Couldn’t load your feeds. Check your connection and try again."
+          errorMessage = String(
+            localized: "Couldn’t load your feeds. Check your connection and try again.",
+            comment: "Error message shown when loading user feeds fails"
+          )
           logger.error("Error loading feeds: \(prefError.localizedDescription)")
         }
       } else {
-        errorMessage = "Couldn’t load your feeds. Check your connection and try again."
+        errorMessage = String(
+          localized: "Couldn’t load your feeds. Check your connection and try again.",
+          comment: "Error message shown when loading user feeds fails"
+        )
         logger.error("Error loading feeds: \(error.localizedDescription)")
       }
     }
@@ -428,16 +435,16 @@ final class FeedsStartPageViewModel {
   }
 
   func extractTitle(from uri: ATProtocolURI) -> String {
-    return uri.recordKey ?? "Unknown Feed"
+    return uri.recordKey ?? String(localized: "Unknown Feed", comment: "Fallback title when a feed URI has no record key")
   }
 
   /// The name to show for a pinned or saved feed or list. Never a record key:
   /// until details load (or when they can't), this is a generic "Feed" or "List".
   func displayName(for uri: ATProtocolURI) -> String {
     if uri.uriString().contains("/app.bsky.graph.list/") {
-      return listDetails[uri]?.name ?? "List"
+      return listDetails[uri]?.name ?? String(localized: "List", comment: "Fallback display name for a user list feed")
     }
-    return feedGenerators[uri]?.displayName ?? "Feed"
+    return feedGenerators[uri]?.displayName ?? String(localized: "Feed", comment: "Fallback display name for a custom feed")
   }
 
   // MARK: - Feed Management Functions
@@ -511,7 +518,7 @@ final class FeedsStartPageViewModel {
       // Notify state invalidation bus that feeds have changed
       await appState.stateInvalidationBus.notify(.feedListChanged)
     } catch {
-      errorMessage = "Couldn’t update this pin. Try again."
+      errorMessage = String(localized: "Couldn’t update this pin. Try again.", comment: "Error message when pinning or unpinning a feed fails")
       logger.error("Error toggling pin status: \(error.localizedDescription)")
     }
   }
@@ -547,7 +554,7 @@ final class FeedsStartPageViewModel {
       // Notify state invalidation bus that feeds have changed
       await appState.stateInvalidationBus.notify(.feedListChanged)
     } catch {
-      errorMessage = "Couldn’t remove this feed. Try again."
+      errorMessage = String(localized: "Couldn’t remove this feed. Try again.", comment: "Error message when removing a saved feed fails")
       logger.error("Error removing feed: \(error.localizedDescription)")
     }
   }
@@ -599,7 +606,7 @@ final class FeedsStartPageViewModel {
       await updateCaches()
       await appState.stateInvalidationBus.notify(.feedListChanged)
     } catch {
-      errorMessage = "Couldn’t save the new order. Try again."
+      errorMessage = String(localized: "Couldn’t save the new order. Try again.", comment: "Error message when saving reordered feeds fails")
       logger.error("Failed to apply native feed reorder: \(error.localizedDescription)")
     }
   }
@@ -651,7 +658,7 @@ final class FeedsStartPageViewModel {
       // Notify state invalidation bus that feeds have changed
       await appState.stateInvalidationBus.notify(.feedListChanged)
     } catch {
-      errorMessage = "Couldn’t save the new order. Try again."
+      errorMessage = String(localized: "Couldn’t save the new order. Try again.", comment: "Error message when saving reordered feeds fails")
       logger.error("Error reordering pinned feed: \(error.localizedDescription)")
     }
   }
@@ -701,7 +708,7 @@ final class FeedsStartPageViewModel {
       // Notify state invalidation bus that feeds have changed
       await appState.stateInvalidationBus.notify(.feedListChanged)
     } catch {
-      errorMessage = "Couldn’t save the new order. Try again."
+      errorMessage = String(localized: "Couldn’t save the new order. Try again.", comment: "Error message when saving reordered feeds fails")
       logger.error("Error reordering saved feed: \(error.localizedDescription)")
     }
   }
@@ -710,7 +717,7 @@ final class FeedsStartPageViewModel {
   func addFeed(_ feedURI: String, pinned: Bool = false) async {
     // Validate the URI first
     guard (try? ATProtocolURI(uriString: feedURI)) != nil else {
-      errorMessage = "This feed link isn’t valid."
+      errorMessage = String(localized: "This feed link isn’t valid.", comment: "Error message when a custom feed URI is malformed")
       logger.error("Attempted to add invalid feed URI: \(feedURI)")
       return
     }
@@ -737,7 +744,7 @@ final class FeedsStartPageViewModel {
       await appState.stateInvalidationBus.notify(.feedListChanged)
 
     } catch {
-      errorMessage = "Couldn’t add this feed. Try again."
+      errorMessage = String(localized: "Couldn’t add this feed. Try again.", comment: "Error message when adding a feed fails")
       logger.error("Error adding feed '\(feedURI)': \(error.localizedDescription)")
     }
   }
@@ -806,7 +813,7 @@ final class FeedsStartPageViewModel {
       await appState.stateInvalidationBus.notify(.feedListChanged)
 
     } catch {
-      errorMessage = "Couldn’t change your default feed. Try again."
+      errorMessage = String(localized: "Couldn’t change your default feed. Try again.", comment: "Error message when setting the default feed fails")
       logger.error("❌ Failed to set default feed: \(error.localizedDescription)")
     }
   }

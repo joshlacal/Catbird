@@ -27,8 +27,14 @@ enum AccountReauthentication {
       switch self {
       case .signedInToDifferentAccount:
         return .alert(
-          title: "Couldn’t Sign In",
-          message: "Sign-in finished for a different account. Try again."
+          title: String(
+            localized: "Couldn’t Sign In",
+            comment: "Alert title when re-authentication completes for the wrong account."
+          ),
+          message: String(
+            localized: "Sign-in finished for a different account. Try again.",
+            comment: "Alert message when re-authentication completes for a different account than requested."
+          )
         )
       case .failed(let message):
         return .toast(message: message)
@@ -51,7 +57,12 @@ enum AccountReauthentication {
     guard let handle = authentication.loginHandle(forAccount: did) else {
       logger.error("Re-authentication has no saved handle for the account")
       appStateManager.discardExpiredAccountIfInactive(did)
-      return .failed("Catbird couldn’t find this account’s handle. Remove the account and add it again.")
+      return .failed(
+        String(
+          localized: "Catbird couldn’t find this account’s handle. Remove the account and add it again.",
+          comment: "Error shown when a saved account has no handle stored for re-authentication."
+        )
+      )
     }
     do {
       let authURL = try await authentication.login(handle: handle)
@@ -93,7 +104,12 @@ enum AccountReauthentication {
       logger.error("Re-authentication timed out")
       await authentication.cancelGatewayOAuthFlow()
       await settleAbandonedSignIn(for: request.did, appStateManager: appStateManager)
-      return .failed("Signing in took too long. Try again.")
+      return .failed(
+        String(
+          localized: "Signing in took too long. Try again.",
+          comment: "Error shown when browser sign-in times out."
+        )
+      )
     } catch {
       logger.error("Re-authentication failed: \(error.localizedDescription)")
       await settleAbandonedSignIn(for: request.did, appStateManager: appStateManager)

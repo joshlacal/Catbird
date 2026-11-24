@@ -12,10 +12,23 @@ import Petrel
 
 @available(iOS 18.0, *)
 struct OpenPostIntent: OpenIntent {
-  static var title: LocalizedStringResource = "Open Post"
-  static var description = IntentDescription("Open a Bluesky post in Catbird.")
+  static var title: LocalizedStringResource = LocalizedStringResource(
+    "Open Post",
+    comment: "App Intent title for opening a Bluesky post in Catbird."
+  )
+  static var description = IntentDescription(
+    LocalizedStringResource(
+      "Open a Bluesky post in Catbird.",
+      comment: "App Intent description for Open Post."
+    )
+  )
 
-  @Parameter(title: "Post")
+  @Parameter(
+    title: LocalizedStringResource(
+      "Post",
+      comment: "Target post parameter for Open Post."
+    )
+  )
   var target: PostEntity
 
   init() {}
@@ -36,10 +49,23 @@ struct OpenPostIntent: OpenIntent {
 
 @available(iOS 18.0, *)
 struct OpenProfileIntent: OpenIntent {
-  static var title: LocalizedStringResource = "Open Profile"
-  static var description = IntentDescription("Open a Bluesky profile in Catbird.")
+  static var title: LocalizedStringResource = LocalizedStringResource(
+    "Open Profile",
+    comment: "App Intent title for opening a Bluesky profile in Catbird."
+  )
+  static var description = IntentDescription(
+    LocalizedStringResource(
+      "Open a Bluesky profile in Catbird.",
+      comment: "App Intent description for Open Profile."
+    )
+  )
 
-  @Parameter(title: "Profile")
+  @Parameter(
+    title: LocalizedStringResource(
+      "Profile",
+      comment: "Target profile parameter for Open Profile."
+    )
+  )
   var target: ProfileEntity
 
   init() {}

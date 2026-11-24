@@ -73,7 +73,11 @@ struct FeedDiscoveryStorefrontView: View {
   private var categoryFilterStrip: some View {
     ScrollView(.horizontal) {
       HStack(spacing: 8) {
-        categoryPill(title: "All", symbol: "sparkles", isSelected: storefront.selectedCategory == nil) {
+        categoryPill(
+          title: String(localized: "All", comment: "Category filter chip showing all feed categories"),
+          symbol: "sparkles",
+          isSelected: storefront.selectedCategory == nil
+        ) {
           withAnimation(.snappy(duration: 0.2)) { storefront.selectedCategory = nil }
         }
         .accessibilityIdentifier("feed.storefront.category.all")
@@ -147,8 +151,8 @@ struct FeedDiscoveryStorefrontView: View {
     if !storefront.popularFeeds.isEmpty {
       VStack(alignment: .leading, spacing: 10) {
         FeedShelfHeader(
-          title: "Popular on Bluesky",
-          subtitle: "Top community feeds right now",
+          title: String(localized: "Popular on Bluesky", comment: "Feed discovery shelf title for popular community feeds"),
+          subtitle: String(localized: "Top community feeds right now", comment: "Feed discovery shelf subtitle for popular community feeds"),
           onSeeAll: { onSeeAllShelf(.popular) }
         )
         FeedStorefrontCarousel(
@@ -185,8 +189,8 @@ struct FeedDiscoveryStorefrontView: View {
     } else if storefront.isLoadingFollowLiked {
       VStack(alignment: .leading, spacing: 10) {
         FeedShelfHeader(
-          title: "Liked by People You Follow",
-          subtitle: "Checking feeds across your network…"
+          title: String(localized: "Liked by People You Follow", comment: "Feed discovery shelf title showing feeds liked by followed accounts"),
+          subtitle: String(localized: "Checking feeds across your network…", comment: "Loading subtitle while checking feeds liked by followed accounts")
         )
         ProgressView()
           .controlSize(.small)
@@ -200,8 +204,8 @@ struct FeedDiscoveryStorefrontView: View {
     if !storefront.catbirdFeeds.isEmpty {
       VStack(alignment: .leading, spacing: 10) {
         FeedShelfHeader(
-          title: "Made by Catbird",
-          subtitle: "First-party feeds tuned for discovery"
+          title: String(localized: "Made by Catbird", comment: "Feed discovery shelf title for official Catbird feeds"),
+          subtitle: String(localized: "First-party feeds tuned for discovery", comment: "Feed discovery shelf subtitle for official Catbird feeds")
         )
         FeedStorefrontCarousel(
           items: storefront.catbirdFeeds,
@@ -247,7 +251,7 @@ extension FeedDiscoveryStorefrontView {
     return VStack(alignment: .leading, spacing: 12) {
       FeedShelfHeader(
         title: category.title,
-        subtitle: "Tap any feed for live posts and posting pace"
+        subtitle: String(localized: "Tap any feed for live posts and posting pace", comment: "Category feed shelf subtitle")
       )
       if feeds.isEmpty && storefront.isLoading(category: category) {
         ProgressView("Loading \(category.title)…")

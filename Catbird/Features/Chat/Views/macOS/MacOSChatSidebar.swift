@@ -96,7 +96,7 @@ struct MacOSChatSidebar: View {
               ChatProfileAvatarView(profile: profile, size: 32)
               VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
-                  Text(profile.displayName ?? profile.handle.description)
+                  Text(verbatim: profile.displayName ?? profile.handle.description)
                     .font(.body)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -108,7 +108,7 @@ struct MacOSChatSidebar: View {
                       .font(.caption)
                   }
                 }
-                Text("@\(profile.handle.description)")
+                Text(verbatim: "@\(profile.handle.description)")
                   .font(.caption)
                   .foregroundStyle(.secondary)
                   .lineLimit(1)

@@ -18,6 +18,7 @@ struct SavedSearchesSection: View {
     
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.locale) private var locale
     
     var body: some View {
         if !savedSearches.isEmpty {
@@ -25,7 +26,7 @@ struct SavedSearchesSection: View {
                 DiscoverySectionHeader("Saved Searches") {
                     if savedSearches.count > 3 {
                         Button(action: onShowAll) {
-                            Label("All Saved", systemImage: "chevron.right")
+                            Label("All Saved", systemImage: "chevron.forward")
                                 .labelStyle(DisclosureLinkLabelStyle())
                                 .appFont(size: Typography.Size.subheadline, weight: .medium, relativeTo: .subheadline)
                                 .frame(minHeight: 44)
@@ -55,7 +56,7 @@ struct SavedSearchesSection: View {
             savedSearchLabel(search)
         }
         .buttonStyle(.plain)
-        .accessibilityAction(named: "Delete") {
+        .accessibilityAction(named: Text("Delete", comment: "Accessibility action to delete a saved search")) {
             withAnimation {
                 onDelete(search)
             }
@@ -94,12 +95,18 @@ struct SavedSearchesSection: View {
                             .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
                             .lineLimit(1)
                         
-                        Text("Last used \(formatLastUsed(search.lastUsed))")
+                        Text(
+                            "Last used \(formatLastUsed(search.lastUsed))",
+                            comment: "Relative time when a saved search was last used — variable is a relative time phrase"
+                        )
                             .appFont(AppTextRole.caption2)
                             .foregroundStyle(.secondary)
 
                         if search.filters.activeFilterCount > 0 {
-                            Text("\(search.filters.activeFilterCount) filter\(search.filters.activeFilterCount == 1 ? "" : "s")")
+                            Text(
+                                "\(search.filters.activeFilterCount) filters",
+                                comment: "Number of active filters saved with a search"
+                            )
                                 .appFont(AppTextRole.caption)
                                 .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
                         }
@@ -107,7 +114,7 @@ struct SavedSearchesSection: View {
                 }
                 
                 Spacer(minLength: 0)
-                Image(systemName: "chevron.right")
+                Image(systemName: "chevron.forward")
                     .appFont(AppTextRole.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -117,18 +124,11 @@ struct SavedSearchesSection: View {
     }
 
     private func formatLastUsed(_ date: Date) -> String {
-        let now = Date()
-        let components = Calendar.current.dateComponents([.day, .hour, .minute], from: date, to: now)
-        
-        if let days = components.day, days > 0 {
-            return days == 1 ? "1d ago" : "\(days)d ago"
-        } else if let hours = components.hour, hours > 0 {
-            return hours == 1 ? "1h ago" : "\(hours)h ago"
-        } else if let minutes = components.minute, minutes > 0 {
-            return minutes == 1 ? "1m ago" : "\(minutes)m ago"
-        } else {
-            return "now"
-        }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        formatter.dateTimeStyle = .named
+        formatter.locale = locale
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 }
 
@@ -161,6 +161,7 @@ struct AllSavedSearchesView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.locale) private var locale
     
     let savedSearches: [SavedSearch]
     let onSelect: (SavedSearch) -> Void
@@ -173,6 +174,17 @@ struct AllSavedSearchesView: View {
         case recent = "Recently Used"
         case name = "Name"
         case created = "Date Created"
+
+        var localizedTitle: LocalizedStringResource {
+            switch self {
+            case .recent:
+                return LocalizedStringResource("Recently Used", comment: "Sort option for saved searches by last used time")
+            case .name:
+                return LocalizedStringResource("Name", comment: "Sort option for saved searches alphabetically by name")
+            case .created:
+                return LocalizedStringResource("Date Created", comment: "Sort option for saved searches by creation date")
+            }
+        }
     }
     
     private var filteredSearches: [SavedSearch] {
@@ -227,7 +239,7 @@ struct AllSavedSearchesView: View {
                     Menu {
                         Picker("Sort By", selection: $sortOption) {
                             ForEach(SortOption.allCases, id: \.self) { option in
-                                Text(option.rawValue).tag(option)
+                                Text(option.localizedTitle).tag(option)
                             }
                         }
                     } label: {
@@ -276,11 +288,25 @@ struct AllSavedSearchesView: View {
                             .lineLimit(2)
                         
                         HStack(spacing: 12) {
-                            Label("Created \(formatDate(search.createdAt))", systemImage: "calendar")
+                            Label {
+                                Text(
+                                    "Created \(formatDate(search.createdAt))",
+                                    comment: "Creation date of a saved search — variable is a formatted date"
+                                )
+                            } icon: {
+                                Image(systemName: "calendar")
+                            }
                                 .appFont(AppTextRole.caption2)
                                 .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
                             
-                            Label("Used \(formatLastUsed(search.lastUsed))", systemImage: "clock")
+                            Label {
+                                Text(
+                                    "Used \(formatLastUsed(search.lastUsed))",
+                                    comment: "Relative time when a saved search was last used — variable is a relative time phrase"
+                                )
+                            } icon: {
+                                Image(systemName: "clock")
+                            }
                                 .appFont(AppTextRole.caption2)
                                 .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
                         }
@@ -318,14 +344,20 @@ struct AllSavedSearchesView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 if filters.sort != .top {
-                    filterChip(icon: "arrow.up.arrow.down", text: filters.sort.displayName)
+                    filterChip(icon: "arrow.up.arrow.down", text: localizedSortName(filters.sort))
                 }
                 
-                ForEach(filters.summaryItems) { item in
+                ForEach(filters.summaryItems(locale: locale)) { item in
                     filterChip(icon: item.icon, text: item.text)
                 }
             }
         }
+    }
+
+    private func localizedSortName(_ sort: SearchSort) -> String {
+        var resource = sort.localizedDisplayName
+        resource.locale = locale
+        return String(localized: resource)
     }
     
     @ViewBuilder
@@ -347,7 +379,7 @@ struct AllSavedSearchesView: View {
     }
     
     private func hasActiveFilters(_ filters: SearchFilterState) -> Bool {
-        filters.sort != .top || !filters.summaryItems.isEmpty
+        filters.sort != .top || !filters.summaryItems(locale: locale).isEmpty
     }
     
     @ViewBuilder
@@ -360,9 +392,11 @@ struct AllSavedSearchesView: View {
             Text("No Saved Searches")
                 .appFont(AppTextRole.headline)
             
-            Text(searchFilter.isEmpty ? 
-                 "Save your frequent searches for quick access." :
-                 "No searches match “\(searchFilter)”.")
+            Text(
+                searchFilter.isEmpty
+                    ? LocalizedStringResource("Save your frequent searches for quick access.", comment: "Empty state description when no saved searches exist")
+                    : LocalizedStringResource("No searches match “\(searchFilter)”.", comment: "Empty state description when filtering saved searches yields no matches — variable is the filter query")
+            )
                 .appFont(AppTextRole.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -373,23 +407,15 @@ struct AllSavedSearchesView: View {
     }
     
     private func formatLastUsed(_ date: Date) -> String {
-        let now = Date()
-        let components = Calendar.current.dateComponents([.day, .hour], from: date, to: now)
-        
-        if let days = components.day, days > 0 {
-            return "\(days)d ago"
-        } else if let hours = components.hour, hours > 0 {
-            return "\(hours)h ago"
-        } else {
-            return "recently"
-        }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        formatter.dateTimeStyle = .named
+        formatter.locale = locale
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
     
     private func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .none
-        return formatter.string(from: date)
+        date.formatted(.dateTime.year().month(.abbreviated).day().locale(locale))
     }
 }
 

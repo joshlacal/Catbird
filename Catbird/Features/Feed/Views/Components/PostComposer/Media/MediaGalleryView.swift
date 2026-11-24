@@ -45,7 +45,7 @@ struct MediaGalleryView: View {
                 
                 Spacer()
                 
-                Text("\(mediaItems.count)/\(maxImagesAllowed)")
+                Text(verbatim: "\(mediaItems.count.formatted(.number))/\(maxImagesAllowed.formatted(.number))")
                     .appFont(AppTextRole.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -104,12 +104,12 @@ struct MediaGalleryView: View {
                             #endif
                             HStack(spacing: 0) {
                                 if let onMoveLeft = onMoveLeft {
-                                    Button(action: { onMoveLeft(item.id) }) { galleryControlIcon("arrow.left") }
-                                        .accessibilityLabel("Move Left")
+                                    Button(action: { onMoveLeft(item.id) }) { galleryControlIcon("arrow.backward") }
+                                        .accessibilityLabel(Text("Move Earlier", comment: "Accessibility label to move an attached photo earlier in the gallery order"))
                                 }
                                 if let onMoveRight = onMoveRight {
-                                    Button(action: { onMoveRight(item.id) }) { galleryControlIcon("arrow.right") }
-                                        .accessibilityLabel("Move Right")
+                                    Button(action: { onMoveRight(item.id) }) { galleryControlIcon("arrow.forward") }
+                                        .accessibilityLabel(Text("Move Later", comment: "Accessibility label to move an attached photo later in the gallery order"))
                                 }
                                 if let onCropSquare = onCropSquare {
                                     Button(action: { onCropSquare(item.id) }) { galleryControlIcon("crop") }

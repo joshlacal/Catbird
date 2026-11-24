@@ -446,8 +446,8 @@ final class FeedStateManager: StateInvalidationSubscriber {
         if !(await waitForAccountAvailability()) {
             guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return }
             logger.error("❌ Cannot load initial data: Account unavailable after retries")
-            errorMessage = "Account unavailable. Please try again."
-            loadingState = .error(NSError(domain: "FeedStateManager", code: -2, userInfo: [NSLocalizedDescriptionKey: "Account unavailable"]))
+            errorMessage = String(localized: "Account unavailable. Please try again.", comment: "Error message when feed loading fails because the account is not ready")
+            loadingState = .error(NSError(domain: "FeedStateManager", code: -2, userInfo: [NSLocalizedDescriptionKey: String(localized: "Account unavailable", comment: "Error description when the user account is unavailable")]))
             return
         }
 
@@ -499,8 +499,8 @@ final class FeedStateManager: StateInvalidationSubscriber {
         if !(await waitForAccountAvailability()) {
             guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return }
             logger.error("❌ Cannot load system initial data: Account unavailable after retries")
-            errorMessage = "Account unavailable. Please try again."
-            loadingState = .error(NSError(domain: "FeedStateManager", code: -2, userInfo: [NSLocalizedDescriptionKey: "Account unavailable"]))
+            errorMessage = String(localized: "Account unavailable. Please try again.", comment: "Error message when feed loading fails because the account is not ready")
+            loadingState = .error(NSError(domain: "FeedStateManager", code: -2, userInfo: [NSLocalizedDescriptionKey: String(localized: "Account unavailable", comment: "Error description when the user account is unavailable")]))
             return
         }
 
@@ -610,8 +610,8 @@ final class FeedStateManager: StateInvalidationSubscriber {
         // Validate account state before attempting refresh
         guard let client = appState.atProtoClient else {
             logger.error("❌ Cannot refresh: No ATProto client available")
-            errorMessage = "Authentication required. Please restart the app."
-            loadingState = .error(NSError(domain: "FeedStateManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "No client available"]))
+            errorMessage = String(localized: "Authentication required. Please restart the app.", comment: "Error message when refreshing a feed fails due to missing authentication")
+            loadingState = .error(NSError(domain: "FeedStateManager", code: -1, userInfo: [NSLocalizedDescriptionKey: String(localized: "No client available", comment: "Error description when no AT Protocol client is available")]))
             return
         }
 
@@ -619,8 +619,8 @@ final class FeedStateManager: StateInvalidationSubscriber {
         if !(await waitForAccountAvailability(maxAttempts: 3)) {
             guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return }
             logger.error("❌ Cannot refresh: Account manager state is inconsistent after retries")
-            errorMessage = "Account session lost. Please try again or restart the app."
-            loadingState = .error(NSError(domain: "FeedStateManager", code: -2, userInfo: [NSLocalizedDescriptionKey: "Account unavailable"]))
+            errorMessage = String(localized: "Account session lost. Please try again or restart the app.", comment: "Error message when account session state is lost during feed refresh")
+            loadingState = .error(NSError(domain: "FeedStateManager", code: -2, userInfo: [NSLocalizedDescriptionKey: String(localized: "Account unavailable", comment: "Error description when the user account is unavailable")]))
             return
         }
 
@@ -1570,7 +1570,7 @@ extension FeedStateManager {
         case .error(let error):
             return error.localizedDescription
         default:
-            return errorMessage ?? "Unknown error"
+            return errorMessage ?? String(localized: "Unknown error", comment: "Fallback error message when no specific error description is available")
         }
     }
     

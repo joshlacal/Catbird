@@ -51,8 +51,10 @@ enum ComposerImagePreparation {
 
     var errorDescription: String? {
       switch self {
-      case .unreadableImage: return "This photo couldn’t be read."
-      case .encodingFailed: return "This photo couldn’t be prepared for upload."
+      case .unreadableImage:
+        return String(localized: "This photo couldn’t be read.", comment: "Error when a selected photo cannot be decoded")
+      case .encodingFailed:
+        return String(localized: "This photo couldn’t be prepared for upload.", comment: "Error when encoding a photo for upload fails")
       }
     }
   }

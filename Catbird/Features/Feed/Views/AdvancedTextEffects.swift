@@ -40,7 +40,7 @@ struct AdvancedTextEffects: View {
                 textReveal("Fade In Characters One By One", delay: 0.05)
                 
                 // 3. 3D Rotated Text
-                Text("3D PERSPECTIVE")
+                Text(verbatim: "3D PERSPECTIVE")
                     .appFont(size: 32, weight: .black)
                     .rotation3DEffect(
                         .degrees(showScaledText ? 0 : 15),
@@ -56,17 +56,17 @@ struct AdvancedTextEffects: View {
                     }
                 
                 // 4. Outlined Text
-                Text("OUTLINED TEXT")
+                Text(verbatim: "OUTLINED TEXT")
                     .appFont(size: 36, weight: .black)
                     .foregroundColor(.clear)
                     .overlay(
-                        Text("OUTLINED TEXT")
+                        Text(verbatim: "OUTLINED TEXT")
                             .appFont(size: 36, weight: .black)
                             .foregroundColor(colorCycle ? .blue : .purple)
                             .opacity(0.8)
                     )
                     .background(
-                        Text("OUTLINED TEXT")
+                        Text(verbatim: "OUTLINED TEXT")
                             .appFont(size: 36, weight: .black)
                             .foregroundColor(.primary)
                             .offset(x: 2, y: 2)
@@ -79,7 +79,7 @@ struct AdvancedTextEffects: View {
                     }
                 
                 // 5. Dynamic Blur Text
-                Text("Blurred Text")
+                Text(verbatim: "Blurred Text")
                     .appFont(size: 32, weight: .bold)
                     .foregroundColor(.primary.opacity(0.8))
                     .blur(radius: animateBlur ? 0 : 5)
@@ -89,7 +89,7 @@ struct AdvancedTextEffects: View {
                     }
                 
                 // 6. Masked Text with Image
-                Text("IMAGE MASKED TEXT")
+                Text(verbatim: "IMAGE MASKED TEXT")
                     .appFont(size: 38, weight: .bold)
                     .foregroundStyle(
                         .linearGradient(
@@ -109,7 +109,7 @@ struct AdvancedTextEffects: View {
                 
                 // 9. Cross-Platform Animated Text
                 VStack(spacing: 16) {
-                    Text("Cross-Platform Animations")
+                    Text(verbatim: "Cross-Platform Animations")
                         .appFont(AppTextRole.from(.title2))
                         .foregroundColor(.primary)
                     

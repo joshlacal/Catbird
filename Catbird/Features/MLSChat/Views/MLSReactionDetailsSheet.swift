@@ -31,9 +31,9 @@ import SwiftUI
               }
             } header: {
               HStack(spacing: 8) {
-                Text(group.emoji)
+                Text(verbatim: group.emoji)
                   .font(.title2)
-                Text("\(group.reactors.count)")
+                Text(group.reactors.count, format: .number)
                   .font(.subheadline)
                   .foregroundColor(.secondary)
               }
@@ -140,12 +140,12 @@ import SwiftUI
           }
 
           if let handle = reactor.handle {
-            Text("@\(handle)")
+            Text(verbatim: "@\(handle)")
               .font(.subheadline)
               .foregroundColor(.secondary)
           } else {
             // Fallback to showing truncated DID
-            Text(truncatedDID(reactor.did))
+            Text(verbatim: truncatedDID(reactor.did))
               .font(.subheadline)
               .foregroundColor(.secondary)
           }

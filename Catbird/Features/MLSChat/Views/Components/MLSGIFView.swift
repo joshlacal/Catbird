@@ -138,7 +138,7 @@ struct MLSGIFView: View {
 
     // Validate MP4 URL
     guard let mp4URL = URL(string: gifEmbed.mp4URL) else {
-      loadError = "Invalid video URL"
+      loadError = String(localized: "Invalid video URL", comment: "Error when a GIF's MP4 URL is invalid")
       isLoading = false
       logger.error("Invalid MP4 URL: \(gifEmbed.mp4URL)")
       return

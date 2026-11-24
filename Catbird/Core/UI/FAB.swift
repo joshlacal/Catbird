@@ -20,13 +20,21 @@ enum FABQuickAction: CaseIterable, Hashable, Identifiable {
 
     var id: Self { self }
 
-    var title: String {
+    var localizedTitle: LocalizedStringResource {
         switch self {
-        case .newPost: "New Post"
-        case .browseDrafts: "Browse Drafts"
-        case .takePhoto: "Take Photo"
-        case .recordVideo: "Record Video"
+        case .newPost:
+            LocalizedStringResource("New Post", comment: "Floating action button menu item to start a new post.")
+        case .browseDrafts:
+            LocalizedStringResource("Browse Drafts", comment: "Floating action button menu item to view saved post drafts.")
+        case .takePhoto:
+            LocalizedStringResource("Take Photo", comment: "Floating action button menu item to capture a photo for a post.")
+        case .recordVideo:
+            LocalizedStringResource("Record Video", comment: "Floating action button menu item to record a video for a post.")
         }
+    }
+
+    var title: String {
+        String(localized: localizedTitle)
     }
 
     var systemImage: String {
@@ -199,7 +207,7 @@ struct FAB: View {
             Button {
                 perform(quickAction)
             } label: {
-                Label(quickAction.title, systemImage: quickAction.systemImage)
+                Label(quickAction.localizedTitle, systemImage: quickAction.systemImage)
             }
         }
 
@@ -210,7 +218,11 @@ struct FAB: View {
             Button(role: .destructive) {
                 clearDraftAction()
             } label: {
-                Label("Clear Draft", systemImage: "trash")
+                Label {
+                    Text("Clear Draft", comment: "Destructive floating action button menu item to discard current minimized post draft.")
+                } icon: {
+                    Image(systemName: "trash")
+                }
             }
         }
     }
@@ -271,13 +283,15 @@ struct FAB: View {
     // MARK: - Accessibility
 
     private var composeAccessibilityLabel: String {
-        hasMinimizedComposer ? "Resume draft" : "Compose post"
+        hasMinimizedComposer
+            ? String(localized: "Resume draft", comment: "Accessibility label on compose floating button when a minimized draft is waiting.")
+            : String(localized: "Compose post", comment: "Accessibility label on compose floating button.")
     }
 
     private var composeAccessibilityHint: String {
         hasMinimizedComposer
-            ? "Opens the post composer with your saved draft"
-            : "Opens the post composer"
+            ? String(localized: "Opens the post composer with your saved draft", comment: "Accessibility hint on compose floating button when a draft exists.")
+            : String(localized: "Opens the post composer", comment: "Accessibility hint on compose floating button.")
     }
 
 }

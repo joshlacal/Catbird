@@ -20,8 +20,10 @@ enum VerificationBadgeKind: Identifiable {
   /// VoiceOver label for this badge.
   var accessibilityLabel: String {
     switch self {
-    case .regular: return "Verified account"
-    case .trustedVerifier: return "Trusted verifier"
+    case .regular:
+      return String(localized: "Verified account", comment: "Accessibility label for Bluesky verification checkmark badge.")
+    case .trustedVerifier:
+      return String(localized: "Trusted verifier", comment: "Accessibility label for Bluesky trusted verifier seal badge.")
     }
   }
 }
@@ -134,7 +136,9 @@ struct VerificationBadgeView: View {
 
 /// Automation is an actor's own disclosure, independent of verification or moderation labels.
 enum AutomationBadge {
-  static let accessibilityLabel = String(localized: "Automated account")
+  static var accessibilityLabel: String {
+    String(localized: "Automated account", comment: "Accessibility label for self-declared automated/bot account badge.")
+  }
 
   static func isSelfDeclared(
     labels: [ComAtprotoLabelDefs.Label]?,
@@ -186,16 +190,16 @@ struct AutomationBadgeView: View {
 #Preview("Automation beside names") {
   VStack(alignment: .leading, spacing: 12) {
     HStack(spacing: 4) {
-      Text("Weather updates")
+      Text(verbatim: "Weather updates")
       AutomationBadgeView()
     }
     HStack(spacing: 4) {
-      Text("Verified automated account")
+      Text(verbatim: "Verified automated account")
       VerificationBadgeView(kind: .regular)
       AutomationBadgeView()
     }
     HStack(spacing: 4) {
-      Text("@automated.example")
+      Text(verbatim: "@automated.example")
       AutomationBadgeView(size: 18, relativeTo: .headline)
     }
     .font(.headline)

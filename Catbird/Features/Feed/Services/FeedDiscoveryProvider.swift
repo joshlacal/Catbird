@@ -15,15 +15,28 @@ struct FollowLikedFeed: Identifiable, Hashable {
 
   var socialProofSubtitle: String? {
     guard !likedByHandles.isEmpty else {
-      return isPersonalizedSuggestion ? "Suggested for you" : nil
+      return isPersonalizedSuggestion
+        ? String(localized: "Suggested for you", comment: "Subtitle for a personalized feed recommendation")
+        : nil
     }
     let first = "@\(likedByHandles[0])"
     if likedByHandles.count == 1 {
-      return "Liked by \(first)"
+      return String(
+        localized: "Liked by \(first)",
+        comment: "Social proof subtitle when one followed user liked a feed — variable is their @handle."
+      )
     } else if likedByHandles.count == 2 {
-      return "Liked by \(first) & @\(likedByHandles[1])"
+      let second = "@\(likedByHandles[1])"
+      return String(
+        localized: "Liked by \(first) & \(second)",
+        comment: "Social proof subtitle when two followed users liked a feed — first and second variables are their @handles."
+      )
     } else {
-      return "Liked by \(first) & \(likedByHandles.count - 1) others"
+      let remaining = likedByHandles.count - 1
+      return String(
+        localized: "Liked by \(first) & \(remaining) others",
+        comment: "Social proof subtitle when multiple followed users liked a feed — first variable is an @handle, second is the remaining count."
+      )
     }
   }
 
@@ -78,7 +91,7 @@ struct FeedDiscoveryProvider: FeedDiscoveryProviding, FeedStorefrontProviding {
       guard status == 200, let output else {
         throw NSError(
           domain: "FeedDiscovery", code: status,
-          userInfo: [NSLocalizedDescriptionKey: "Feeds could not be loaded. Please try again."]
+          userInfo: [NSLocalizedDescriptionKey: String(localized: "Feeds could not be loaded. Please try again.", comment: "Error when loading discoverable feeds fails")]
         )
       }
       let firstParty = await firstPartyResult
@@ -92,7 +105,7 @@ struct FeedDiscoveryProvider: FeedDiscoveryProviding, FeedStorefrontProviding {
     guard status == 200, let output else {
       throw NSError(
         domain: "FeedDiscovery", code: status,
-        userInfo: [NSLocalizedDescriptionKey: "Feeds could not be loaded. Please try again."]
+        userInfo: [NSLocalizedDescriptionKey: String(localized: "Feeds could not be loaded. Please try again.", comment: "Error when loading discoverable feeds fails")]
       )
     }
     return FeedDiscoveryPage(feeds: output.feeds, cursor: output.cursor)
@@ -106,7 +119,7 @@ struct FeedDiscoveryProvider: FeedDiscoveryProviding, FeedStorefrontProviding {
     guard status == 200, let output else {
       throw NSError(
         domain: "FeedDiscovery", code: status,
-        userInfo: [NSLocalizedDescriptionKey: "Feeds could not be loaded. Please try again."]
+        userInfo: [NSLocalizedDescriptionKey: String(localized: "Feeds could not be loaded. Please try again.", comment: "Error when loading discoverable feeds fails")]
       )
     }
     return FeedDiscoveryPage(feeds: output.feeds, cursor: output.cursor)
@@ -206,7 +219,7 @@ struct FeedDiscoveryProvider: FeedDiscoveryProviding, FeedStorefrontProviding {
     guard status == 200, let output else {
       throw NSError(
         domain: "FeedDiscovery", code: status,
-        userInfo: [NSLocalizedDescriptionKey: "Couldn’t load \(category.title) feeds. Try again."]
+        userInfo: [NSLocalizedDescriptionKey: String(localized: "Couldn’t load \(category.title) feeds. Try again.", comment: "Error when loading feeds for a specific discovery category fails — variable is the category name.")]
       )
     }
     return FeedDiscoveryPage(feeds: output.feeds, cursor: output.cursor)

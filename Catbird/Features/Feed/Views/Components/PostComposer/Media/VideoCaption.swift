@@ -45,17 +45,23 @@ public struct VideoCaption: Codable, Hashable, Sendable, Identifiable {
     public var errorDescription: String? {
       switch self {
       case .emptyContent:
-        return "Caption file is empty."
+        return String(localized: "Caption file is empty.", comment: "Validation error when imported WebVTT caption file is empty")
       case .invalidEncoding:
-        return "Caption file could not be read as valid UTF-8 text."
+        return String(localized: "Caption file could not be read as valid UTF-8 text.", comment: "Validation error when WebVTT caption file is not valid UTF-8")
       case .invalidHeader:
-        return "Invalid WebVTT file. The file must start with 'WEBVTT'."
+        return String(localized: "Invalid WebVTT file. The file must start with 'WEBVTT'.", comment: "Validation error when caption file lacks required WEBVTT header")
       case .missingLanguage:
-        return "Please select a language for the captions."
+        return String(localized: "Please select a language for the captions.", comment: "Validation error when no caption language is selected")
       case .exceedsByteLimit(let actualBytes):
-        return "Caption file size (\(actualBytes) bytes) exceeds the maximum limit of \(VideoCaption.maxByteSize) bytes."
+        return String(
+          localized: "Caption file size (\(actualBytes) bytes) exceeds the maximum limit of \(VideoCaption.maxByteSize) bytes.",
+          comment: "Validation error when WebVTT file exceeds byte limit; first variable is actual bytes, second is maximum bytes"
+        )
       case .exceedsCharacterLimit(let actualCharacters):
-        return "Caption text length (\(actualCharacters) characters) exceeds the maximum draft limit of \(VideoCaption.maxCharacterLength) characters."
+        return String(
+          localized: "Caption text length (\(actualCharacters) characters) exceeds the maximum draft limit of \(VideoCaption.maxCharacterLength) characters.",
+          comment: "Validation error when WebVTT text exceeds character limit; first variable is actual characters, second is maximum characters"
+        )
       }
     }
   }

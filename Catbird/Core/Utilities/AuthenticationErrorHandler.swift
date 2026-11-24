@@ -28,56 +28,88 @@ struct AuthenticationErrorHandler {
         
         // Check for 401 unauthorized errors
         if errorCode == 401 || errorDescription.contains("401") || errorDescription.contains("unauthorized") {
-            return (.unauthorized, "Your session has expired. Please sign in again.", true)
+            return (
+                .unauthorized,
+                String(localized: "Your session has expired. Please sign in again.", comment: "Authentication error message when the user's session has expired."),
+                true
+            )
         }
         
         // Check for token refresh failures
         if errorDescription.contains("token") && (errorDescription.contains("refresh") || errorDescription.contains("invalid")) {
-            return (.tokenRefreshFailed, "Your session has expired. Please sign in again.", true)
+            return (
+                .tokenRefreshFailed,
+                String(localized: "Your session has expired. Please sign in again.", comment: "Authentication error message when token refresh fails."),
+                true
+            )
         }
         
         // Check for invalid credentials
         if errorDescription.contains("invalid") && (errorDescription.contains("credential") || errorDescription.contains("password") || errorDescription.contains("username")) {
-            return (.invalidCredentials, "Invalid credentials. Please check your login information and try again.", true)
+            return (
+                .invalidCredentials,
+                String(localized: "Invalid credentials. Please check your login information and try again.", comment: "Authentication error message for incorrect login credentials."),
+                true
+            )
         }
         
         // Check for network errors
         if errorDescription.contains("network") || errorDescription.contains("connection") || errorDescription.contains("internet") {
-            return (.networkError, "Network connection issue. Please check your internet connection and try again.", false)
+            return (
+                .networkError,
+                String(localized: "Network connection issue. Please check your internet connection and try again.", comment: "Authentication error message when offline."),
+                false
+            )
         }
         
         // Check for server errors (5xx)
         if errorCode >= 500 && errorCode < 600 {
-            return (.serverError, "Server is temporarily unavailable. Please try again later.", false)
+            return (
+                .serverError,
+                String(localized: "Server is temporarily unavailable. Please try again later.", comment: "Authentication error message for 5xx server errors."),
+                false
+            )
         }
         
         // Check for session expired patterns
         if errorDescription.contains("session") && (errorDescription.contains("expired") || errorDescription.contains("invalid")) {
-            return (.sessionExpired, "Your session has expired. Please sign in again.", true)
+            return (
+                .sessionExpired,
+                String(localized: "Your session has expired. Please sign in again.", comment: "Authentication error message when the session is invalid."),
+                true
+            )
         }
         
         // Check for authentication patterns
         if errorDescription.contains("authentication") || errorDescription.contains("auth") {
-            return (.sessionExpired, "Authentication required. Please sign in again.", true)
+            return (
+                .sessionExpired,
+                String(localized: "Authentication required. Please sign in again.", comment: "Authentication error message prompting the user to sign in."),
+                true
+            )
         }
         
         // Default case
-        return (.unknown, "An unexpected error occurred. Please try again.", false)
+        return (
+            .unknown,
+            String(localized: "An unexpected error occurred. Please try again.", comment: "Generic fallback authentication error message."),
+            false
+        )
     }
     
     /// Gets a user-friendly title for the error type
     static func titleForErrorType(_ type: AuthErrorType) -> String {
         switch type {
         case .sessionExpired, .unauthorized, .tokenRefreshFailed:
-            return "Session Expired"
+            return String(localized: "Session Expired", comment: "Alert title when user session has expired.")
         case .invalidCredentials:
-            return "Invalid Credentials"
+            return String(localized: "Invalid Credentials", comment: "Alert title when login credentials are invalid.")
         case .networkError:
-            return "Connection Error"
+            return String(localized: "Connection Error", comment: "Alert title for a network connection failure.")
         case .serverError:
-            return "Server Error"
+            return String(localized: "Server Error", comment: "Alert title when the server returns an error.")
         case .unknown:
-            return "Error"
+            return String(localized: "Error", comment: "Generic alert title for an unexpected error.")
         }
     }
     
@@ -85,13 +117,13 @@ struct AuthenticationErrorHandler {
     static func actionButtonTitle(_ type: AuthErrorType) -> String {
         switch type {
         case .sessionExpired, .unauthorized, .tokenRefreshFailed, .invalidCredentials:
-            return "Sign In Again"
+            return String(localized: "Sign In Again", comment: "Button title prompting user to sign in again.")
         case .networkError:
-            return "Retry"
+            return String(localized: "Retry", comment: "Button title to retry a failed network request.")
         case .serverError:
-            return "Try Again Later"
+            return String(localized: "Try Again Later", comment: "Button title dismissing a temporary server error.")
         case .unknown:
-            return "Retry"
+            return String(localized: "Retry", comment: "Button title to retry after an unexpected error.")
         }
     }
     

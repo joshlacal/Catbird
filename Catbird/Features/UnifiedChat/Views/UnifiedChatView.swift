@@ -9,7 +9,7 @@ struct UnifiedChatView<DataSource: UnifiedChatDataSource>: View {
   @Environment(AppState.self) private var appState
   @Bindable var dataSource: DataSource
   @Binding var navigationPath: NavigationPath
-  var title: String = "Chat"
+  var title: String = String(localized: "Chat", comment: "Default navigation title for a chat conversation")
   /// The conversation kind; an encrypted chat shows a lock beside its title.
   var kind: ChatConversationKind = .bluesky
   #if os(iOS)
@@ -21,9 +21,30 @@ struct UnifiedChatView<DataSource: UnifiedChatDataSource>: View {
   var onReply: ((DataSource.Message) -> Void)? = nil
   var onDeleteMessage: ((DataSource.Message) -> Void)? = nil
 
+  private enum UnsendStatus {
+    case unsent
+    case failed
+
+    var message: LocalizedStringResource {
+      switch self {
+      case .unsent:
+        return LocalizedStringResource("Message unsent for everyone.", comment: "Status banner when an encrypted message is successfully unsent")
+      case .failed:
+        return LocalizedStringResource("Message could not be unsent. Try again.", comment: "Status banner when unsending an encrypted message fails")
+      }
+    }
+
+    var systemImage: String {
+      switch self {
+      case .unsent: return "checkmark.circle.fill"
+      case .failed: return "exclamationmark.triangle.fill"
+      }
+    }
+  }
+
   @State private var showingEmojiPicker = false
   @State private var emojiPickerMessageID: String?
-  @State private var unsendStatus: String?
+  @State private var unsendStatus: UnsendStatus?
 
   var body: some View {
     chatContent
@@ -44,20 +65,29 @@ struct UnifiedChatView<DataSource: UnifiedChatDataSource>: View {
                 .lineLimit(1)
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(title), encrypted chat")
+            .accessibilityLabel(
+              Text(
+                "\(title), encrypted chat",
+                comment: "Accessibility label for encrypted chat header. %@ is the conversation title."
+              )
+            )
             .accessibilityIdentifier("chat.header.encrypted")
           }
         }
       }
       .overlay(alignment: .top) {
         if let unsendStatus {
-          Label(unsendStatus, systemImage: unsendStatus.hasPrefix("Message unsent") ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-            .font(.footnote)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(.regularMaterial, in: Capsule())
-            .accessibilityLabel(unsendStatus)
-            .accessibilityIdentifier("mls-unsend-status")
+          Label {
+            Text(unsendStatus.message)
+          } icon: {
+            Image(systemName: unsendStatus.systemImage)
+          }
+          .font(.footnote)
+          .padding(.horizontal, 12)
+          .padding(.vertical, 8)
+          .background(.regularMaterial, in: Capsule())
+          .accessibilityLabel(Text(unsendStatus.message))
+          .accessibilityIdentifier("mls-unsend-status")
         }
       }
       .customEmojiPicker(isPresented: $showingEmojiPicker) { emoji in
@@ -91,9 +121,7 @@ struct UnifiedChatView<DataSource: UnifiedChatDataSource>: View {
         Task {
           let messageID = message.id
           await dataSource.deleteMessage(messageID: messageID)
-          unsendStatus = dataSource.message(for: messageID) == nil
-            ? "Message unsent for everyone."
-            : "Message could not be unsent. Try again."
+          unsendStatus = dataSource.message(for: messageID) == nil ? .unsent : .failed
         }
       },
       onReply: onReply,
@@ -117,5 +145,5 @@ struct UnifiedChatView<DataSource: UnifiedChatDataSource>: View {
 // MARK: - Preview
 
 #Preview {
-  Text("Unified Chat Preview")
+  Text(verbatim: "Unified Chat Preview")
 }

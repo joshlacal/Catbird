@@ -10,17 +10,17 @@ public enum ActivityPrivacyOption: String, CaseIterable, Identifiable {
 
   public var title: String {
     switch self {
-    case .followers: "Anyone Who Follows Me"
-    case .mutuals: "Only Followers Who I Follow"
-    case .none: "No One"
+    case .followers: String(localized: "Anyone Who Follows Me", comment: "Post activity subscription privacy option.")
+    case .mutuals: String(localized: "Only Followers Who I Follow", comment: "Post activity subscription privacy option.")
+    case .none: String(localized: "No One", comment: "Post activity subscription privacy option.")
     }
   }
 
   public var subtitle: String {
     switch self {
-    case .followers: "Anyone following your account can subscribe to receive notifications when you post."
-    case .mutuals: "Only mutual followers can subscribe to receive notifications when you post."
-    case .none: "No one can subscribe to receive notifications when you post."
+    case .followers: String(localized: "Anyone following your account can subscribe to receive notifications when you post.", comment: "Post activity subscription option description.")
+    case .mutuals: String(localized: "Only mutual followers can subscribe to receive notifications when you post.", comment: "Post activity subscription option description.")
+    case .none: String(localized: "No one can subscribe to receive notifications when you post.", comment: "Post activity subscription option description.")
     }
   }
 }
@@ -203,9 +203,9 @@ private enum ActivityPrivacySettingsError: LocalizedError {
 
   var errorDescription: String? {
     switch self {
-    case .notAuthenticated: "Sign in to load this account’s subscription rule."
-    case .accountChanged: "The account changed. Open these settings again."
-    case .response(let code): "The subscription rule couldn’t be confirmed (status \(code)). Try again."
+    case .notAuthenticated: String(localized: "Sign in to load this account’s subscription rule.", comment: "Error when loading post subscription settings while signed out.")
+    case .accountChanged: String(localized: "The account changed. Open these settings again.", comment: "Error when the active account changed while editing subscription settings.")
+    case .response(let code): String(localized: "The subscription rule couldn’t be confirmed (status \(code)). Try again.", comment: "Error when saving post subscription rule returns an HTTP error code.")
     }
   }
 }

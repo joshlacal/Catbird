@@ -113,26 +113,29 @@ struct FeedContinuityBanner: View {
   private var bannerTitle: String {
     switch type {
     case .newContentAvailable(let count):
-      return count == 1 ? "New post available" : "\(count) new posts available"
+      return String(
+        localized: "\(count) new posts available",
+        comment: "Feed continuity banner title — variable is the number of new posts available"
+      )
     case .loadingGap:
-      return "Loading…"
+      return String(localized: "Loading…", comment: "Feed continuity banner title while loading missing posts")
     case .connectionRestored:
-      return "Connection restored"
+      return String(localized: "Connection restored", comment: "Feed continuity banner title when network connectivity returns")
     case .cacheFallback:
-      return "Showing cached content"
+      return String(localized: "Showing cached content", comment: "Feed continuity banner title when offline cached posts are shown")
     }
   }
   
   private var bannerSubtitle: String? {
     switch type {
     case .newContentAvailable:
-      return "Tap to scroll to top"
+      return String(localized: "Tap to scroll to top", comment: "Feed continuity banner subtitle prompting user to jump to newest posts")
     case .loadingGap:
-      return "Fetching latest posts"
+      return String(localized: "Fetching latest posts", comment: "Feed continuity banner subtitle while fetching missing posts")
     case .connectionRestored:
-      return "Refreshing feed"
+      return String(localized: "Refreshing feed", comment: "Feed continuity banner subtitle when refreshing after reconnection")
     case .cacheFallback:
-      return "Pull to refresh when online"
+      return String(localized: "Pull to refresh when online", comment: "Feed continuity banner subtitle when offline")
     }
   }
   

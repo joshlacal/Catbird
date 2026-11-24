@@ -38,7 +38,7 @@ struct ThreadPostEditorView: View {
             .multilineTextAlignment(.leading)
             .lineLimit(6)
         } else {
-          Text("Write post \(entryIndex + 1)…")
+          Text("Write post \(entryIndex + 1)…", comment: "Placeholder for a numbered post in a thread; variable is 1-based post number")
             .appFont(AppTextRole.body)
             .foregroundStyle(Color.secondary)
             .multilineTextAlignment(.leading)
@@ -54,6 +54,7 @@ struct ThreadPostEditorView: View {
             .foregroundStyle(.white, Color.systemGray3)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(Text("Remove post \(entryIndex + 1) from thread", comment: "Accessibility label to delete a numbered post from thread composer"))
         .padding(.top, 2)
       }
     }

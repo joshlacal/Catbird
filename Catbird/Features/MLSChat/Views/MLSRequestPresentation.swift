@@ -86,7 +86,7 @@ struct MLSRequestPresentation: View {
     }
   }
 
-  private var title: String {
+  private var title: LocalizedStringKey {
     switch consent {
     case .incomingPending: "Encrypted message request"
     case .outgoingPending: "Request sent"

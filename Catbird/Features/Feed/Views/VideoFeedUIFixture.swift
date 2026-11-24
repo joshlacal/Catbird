@@ -33,18 +33,18 @@ struct VideoFeedUIFixture: View {
           .navigationDestination(for: VideoFeedFixtureDestination.self) { destination in
             switch destination {
             case .thread:
-              Text("Fixture thread comments").accessibilityIdentifier("videoFixtureThread")
+              Text(verbatim: "Fixture thread comments").accessibilityIdentifier("videoFixtureThread")
             case .profile:
-              Text("Fixture author profile").accessibilityIdentifier("videoFixtureProfile")
+              Text(verbatim: "Fixture author profile").accessibilityIdentifier("videoFixtureProfile")
             }
           }
         }
       }
-      Tab("Notifications", systemImage: "bell") { Text("Local notification fixture") }
-      Tab("Messages", systemImage: "bubble.left.and.bubble.right") { Text("Local messages fixture") }
+      Tab("Notifications", systemImage: "bell") { Text(verbatim: "Local notification fixture") }
+      Tab("Messages", systemImage: "bubble.left.and.bubble.right") { Text(verbatim: "Local messages fixture") }
       Tab("Search", systemImage: "magnifyingglass", role: .search) {
         NavigationStack {
-          Text("Local search fixture")
+          Text(verbatim: "Local search fixture")
             .searchable(text: .constant(""))
         }
       }
@@ -93,7 +93,7 @@ private struct VideoFeedFixturePage: View {
         .fill(item.color.gradient)
         .aspectRatio(item.aspectRatio, contentMode: .fit)
         .overlay(alignment: .top) {
-          Text("\(item.title) fixture \(item.id + 1)")
+          Text(verbatim: "\(item.title) fixture \(item.id + 1)")
             .font(.caption.bold())
             .foregroundStyle(.white)
             .padding(8)
@@ -141,8 +141,8 @@ private struct VideoFeedFixturePage: View {
           HStack(spacing: 8) {
             Circle().fill(.white.opacity(0.6)).frame(width: 38, height: 38)
             VStack(alignment: .leading) {
-              Text("An author with a long display name").font(.subheadline.bold()).lineLimit(1)
-              if !compact { Text("@local.fixture").font(.caption2).lineLimit(1) }
+              Text(verbatim: "An author with a long display name").font(.subheadline.bold()).lineLimit(1)
+              if !compact { Text(verbatim: "@local.fixture").font(.caption2).lineLimit(1) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
           }
@@ -154,7 +154,7 @@ private struct VideoFeedFixturePage: View {
       },
       caption: { lines in
         Button(action: onComments) {
-          Text("A long caption checks wrapping, larger text, and narrow or resized video pages.")
+          Text(verbatim: "A long caption checks wrapping, larger text, and narrow or resized video pages.")
             .font(.subheadline)
             .lineLimit(lines)
             .multilineTextAlignment(.leading)

@@ -41,7 +41,7 @@ struct PostHeaderView: View {
     private static let minimumTruncatedHandleWidth: CGFloat = 56
 
     private func handleText(color: Color) -> some View {
-        Text("@\(handle)")
+        Text(verbatim: "@\(handle)")
             .appBody()
             .foregroundColor(color)
             .lineLimit(1)
@@ -91,7 +91,7 @@ struct PostHeaderView: View {
                         }
                         
                         if let pronouns, !pronouns.isEmpty {
-                            Text("\(pronouns)")
+                            Text(pronouns)
                                 .appBody()
                                 .foregroundColor(metaColor)
                                 .lineLimit(1)
@@ -133,7 +133,7 @@ struct PostHeaderView: View {
             .layoutPriority(1) // Gives priority to this HStack
                                // Separator and Time
             HStack(alignment: .top, spacing: spacing) {
-                Text("·")
+                Text(verbatim: "·")
                     // At Tight the separator's line takes the constant line height like the time's.
                     .appLineSpacing()
                     .foregroundStyle(metaColor)

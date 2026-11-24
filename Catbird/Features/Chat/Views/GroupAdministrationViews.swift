@@ -64,7 +64,11 @@ struct AddGroupMembersSheet: View {
           errorMessage = nil
         }
       } message: {
-        Text(errorMessage ?? "An unknown error occurred")
+        if let errorMessage {
+          Text(errorMessage)
+        } else {
+          Text("An unknown error occurred")
+        }
       }
     }
   }
@@ -149,7 +153,11 @@ struct GroupJoinRequestsView: View {
         errorMessage = nil
       }
     } message: {
-      Text(errorMessage ?? "An unknown error occurred")
+      if let errorMessage {
+        Text(errorMessage)
+      } else {
+        Text("An unknown error occurred")
+      }
     }
   }
 
@@ -189,6 +197,7 @@ struct GroupJoinRequestsView: View {
 }
 
 private struct JoinRequestRow: View {
+  @Environment(\.locale) private var locale
   let request: ChatBskyGroupDefs.JoinRequestView
   let isProcessing: Bool
   let onApprove: () -> Void
@@ -204,10 +213,13 @@ private struct JoinRequestRow: View {
           .fontWeight(.medium)
           .lineLimit(1)
 
-        Text("@\(request.requestedBy.handle.description) · \(request.requestedAt.date.formatted(.relative(presentation: .named)))")
-          .appFont(AppTextRole.caption)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
+        Text(
+          "@\(request.requestedBy.handle.description) · \(request.requestedAt.date.formatted(Date.RelativeFormatStyle(presentation: .named, locale: locale)))",
+          comment: "Join request row subtitle showing handle and relative request time (%1$@ = user handle without @, %2$@ = relative timestamp)"
+        )
+        .appFont(AppTextRole.caption)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
       }
 
       Spacer()

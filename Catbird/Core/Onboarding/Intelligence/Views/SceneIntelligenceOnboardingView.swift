@@ -239,9 +239,15 @@ public struct SceneIntelligenceOnboardingView: View {
           .adaptiveGlassEffect(style: .regular, in: Circle())
 
         VStack(spacing: 10) {
-          Text(mode == .tuneExistingFeed ? "Your Feed Is Tuned" : "Your Orbit Is Live")
-            .font(.largeTitle.weight(.bold))
-            .multilineTextAlignment(.center)
+          Group {
+            if mode == .tuneExistingFeed {
+              Text("Your Feed Is Tuned", comment: "Celebration title after tuning an existing feed.")
+            } else {
+              Text("Your Orbit Is Live", comment: "Celebration title after completing scene onboarding.")
+            }
+          }
+          .font(.largeTitle.weight(.bold))
+          .multilineTextAlignment(.center)
 
           Text(vm.celebrationSummaryLine)
             .font(.body)
@@ -253,21 +259,21 @@ public struct SceneIntelligenceOnboardingView: View {
         if let receipt {
           HStack(spacing: 12) {
             CelebrationStatCard(
-              value: "\(receipt.followedCount)",
-              label: receipt.followedCount == 1 ? "Voice Followed" : "Voices Followed",
+              value: receipt.followedCount,
+              label: LocalizedStringResource("Voices Followed", comment: "Stat card label for count of accounts followed in onboarding."),
               symbol: "person.2.fill"
             )
             if receipt.originalsOnlyCount > 0 {
               CelebrationStatCard(
-                value: "\(receipt.originalsOnlyCount)",
-                label: "Originals Only",
+                value: receipt.originalsOnlyCount,
+                label: LocalizedStringResource("Originals Only", comment: "Stat card label for count of accounts set to Originals Only."),
                 symbol: "sparkles"
               )
             }
             if receipt.pinnedFeedsCount > 0 {
               CelebrationStatCard(
-                value: "\(receipt.pinnedFeedsCount)",
-                label: "Feeds Pinned",
+                value: receipt.pinnedFeedsCount,
+                label: LocalizedStringResource("Feeds Pinned", comment: "Stat card label for count of community feeds pinned."),
                 symbol: "pin.fill"
               )
             }
@@ -280,9 +286,14 @@ public struct SceneIntelligenceOnboardingView: View {
         VStack(spacing: 12) {
           Button(action: onComplete) {
             HStack(spacing: 8) {
-              Text(mode == .tuneExistingFeed ? "Back to Catbird" : "Continue")
-                .font(.headline)
-              Image(systemName: "arrow.right")
+              if mode == .tuneExistingFeed {
+                Text("Back to Catbird", comment: "Button to exit scene tuning and return to the app.")
+                  .font(.headline)
+              } else {
+                Text("Continue", comment: "Button to advance from scene onboarding celebration.")
+                  .font(.headline)
+              }
+              Image(systemName: "arrow.forward")
                 .font(.headline)
             }
             .foregroundStyle(.white)
@@ -315,8 +326,8 @@ public struct SceneIntelligenceOnboardingView: View {
 }
 
 private struct CelebrationStatCard: View {
-  let value: String
-  let label: String
+  let value: Int
+  let label: LocalizedStringResource
   let symbol: String
 
   var body: some View {
@@ -324,7 +335,7 @@ private struct CelebrationStatCard: View {
       Image(systemName: symbol)
         .font(.subheadline.weight(.bold))
         .foregroundStyle(Color.accentColor)
-      Text(value)
+      Text(value, format: .number)
         .font(.title2.weight(.bold).monospacedDigit())
       Text(label)
         .font(.caption2.weight(.medium))

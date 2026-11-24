@@ -79,21 +79,39 @@ public enum ContactMatchingError: LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .permissionDenied:
-            return "Contacts access was denied. Turn on Contacts access for Catbird in Settings to find your friends."
+            return String(
+                localized: "Contacts access was denied. Turn on Contacts access for Catbird in Settings to find your friends.",
+                comment: "Error when the user denied Contacts permission."
+            )
         case .permissionRestricted:
-            return "Contacts access is restricted on this device."
+            return String(
+                localized: "Contacts access is restricted on this device.",
+                comment: "Error when Contacts access is restricted by device policy."
+            )
         case .noValidPhoneNumbers:
-            return "No valid phone numbers were found in your contacts."
+            return String(
+                localized: "No valid phone numbers were found in your contacts.",
+                comment: "Error when none of the user's contacts have valid phone numbers."
+            )
         case .tooManyContacts:
-            return "Too many contacts to import (maximum 1,000)."
+            return String(
+                localized: "Too many contacts to import (maximum 1,000).",
+                comment: "Error when contact import exceeds the 1,000 phone number limit."
+            )
         case .invalidToken:
-            return "Your phone verification session expired. Please verify your number again."
+            return String(
+                localized: "Your phone verification session expired. Please verify your number again.",
+                comment: "Error when the phone verification token has expired."
+            )
         case .verificationFailed(let message):
             return message
         case .importFailed(let message):
             return message
         case .serviceUnavailable:
-            return "Finding contacts isn’t available right now. Try again later."
+            return String(
+                localized: "Finding contacts isn’t available right now. Try again later.",
+                comment: "Error when the Bluesky contact matching service is unavailable."
+            )
         }
     }
 }
@@ -217,7 +235,9 @@ public final class ContactMatchingService: @unchecked Sendable {
             let givenName = cnContact.givenName.trimmingCharacters(in: .whitespacesAndNewlines)
             let familyName = cnContact.familyName.trimmingCharacters(in: .whitespacesAndNewlines)
             let displayName = [givenName, familyName].filter { !$0.isEmpty }.joined(separator: " ")
-            let name = displayName.isEmpty ? "Contact" : displayName
+            let name = displayName.isEmpty
+                ? String(localized: "Contact", comment: "Fallback display name for an unnamed address book contact.")
+                : displayName
             
             let phoneNumbers = cnContact.phoneNumbers.map { $0.value.stringValue }
             if !phoneNumbers.isEmpty {
@@ -288,7 +308,9 @@ public final class ContactMatchingService: @unchecked Sendable {
     /// Start phone verification by sending SMS code via app.bsky.contact.startPhoneVerification
     public func startPhoneVerification(phone: String, client: ATProtoClient) async throws {
         guard let normalized = Self.normalizePhoneNumber(phone, defaultCountryCallingCode: Self.defaultCallingCode()) else {
-            throw ContactMatchingError.verificationFailed("Please enter a valid phone number.")
+            throw ContactMatchingError.verificationFailed(
+                String(localized: "Please enter a valid phone number.", comment: "Validation error when entering an invalid phone number.")
+            )
         }
         
         let input = AppBskyContactStartPhoneVerification.Input(phone: normalized)
@@ -296,7 +318,9 @@ public final class ContactMatchingService: @unchecked Sendable {
         
         guard code == 200 else {
             logger.error("startPhoneVerification returned HTTP \(code)")
-            throw ContactMatchingError.verificationFailed("We couldn’t send a verification code. Try again.")
+            throw ContactMatchingError.verificationFailed(
+                String(localized: "We couldn’t send a verification code. Try again.", comment: "Error when sending SMS verification code fails.")
+            )
         }
         
         self.verifiedPhoneNumber = normalized
@@ -306,14 +330,18 @@ public final class ContactMatchingService: @unchecked Sendable {
     /// Verify phone with SMS code and obtain short-lived verification token
     public func verifyPhone(phone: String, code: String, client: ATProtoClient) async throws -> String {
         guard let normalized = Self.normalizePhoneNumber(phone, defaultCountryCallingCode: Self.defaultCallingCode()) else {
-            throw ContactMatchingError.verificationFailed("Please enter a valid phone number.")
+            throw ContactMatchingError.verificationFailed(
+                String(localized: "Please enter a valid phone number.", comment: "Validation error when entering an invalid phone number.")
+            )
         }
         
         let input = AppBskyContactVerifyPhone.Input(phone: normalized, code: code.trimmingCharacters(in: .whitespacesAndNewlines))
         let (responseCode, output) = try await client.app.bsky.contact.verifyPhone(input: input)
         
         guard responseCode == 200, let token = output?.token else {
-            throw ContactMatchingError.verificationFailed("That code is incorrect or has expired. Check it or request a new one.")
+            throw ContactMatchingError.verificationFailed(
+                String(localized: "That code is incorrect or has expired. Check it or request a new one.", comment: "Error when SMS verification code is invalid or expired.")
+            )
         }
         
         self.verificationToken = token
@@ -347,7 +375,9 @@ public final class ContactMatchingService: @unchecked Sendable {
                 throw ContactMatchingError.invalidToken
             }
             logger.error("importContacts returned HTTP \(code)")
-            throw ContactMatchingError.importFailed("We couldn’t check your contacts. Try again.")
+            throw ContactMatchingError.importFailed(
+                String(localized: "We couldn’t check your contacts. Try again.", comment: "Error when importing contacts to Bluesky fails.")
+            )
         }
         
         var matches: [ContactMatch] = []

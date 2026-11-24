@@ -69,10 +69,10 @@ struct ThreadSeparatorView: View {
   /// The call-to-action content for viewing the full thread
   private var threadContinuationContent: some View {
     HStack {
-      Text("View full thread")
+      Text("View full thread", comment: "Button in a collapsed thread row to expand the full conversation.")
         .appFont(AppTextRole.subheadline)
         .foregroundColor(Color("AccentTextColor"))
-      Image(systemName: "chevron.right")
+      Image(systemName: "chevron.forward")
         .appFont(AppTextRole.subheadline)
         .foregroundColor(.accentColor)
     }

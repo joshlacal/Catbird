@@ -484,15 +484,24 @@ private enum VideoGenerationError: LocalizedError {
   
   var errorDescription: String? {
     switch self {
-    case .cannotAddInput: return "Cannot add video input to writer"
-    case .cannotAddAudioInput: return "Cannot add audio input to writer"
-    case .cannotStartWriting: return "Cannot start video writing"
-    case .cannotCreatePixelBuffer: return "Cannot create pixel buffer"
-    case .cannotAppendFrame: return "Cannot append video frame"
-    case .cannotAccessPixelBuffer: return "Cannot access pixel buffer data"
-    case .cannotCreateContext: return "Cannot create graphics context"
-    case .noAudioTrack: return "No audio track found in source"
-    case .cannotStartReading: return "Cannot start reading audio"
+    case .cannotAddInput:
+      return String(localized: "Cannot add video input to writer", comment: "Error when AVAssetWriter cannot accept video track input")
+    case .cannotAddAudioInput:
+      return String(localized: "Cannot add audio input to writer", comment: "Error when AVAssetWriter cannot accept audio track input")
+    case .cannotStartWriting:
+      return String(localized: "Cannot start video writing", comment: "Error when AVAssetWriter fails to start writing")
+    case .cannotCreatePixelBuffer:
+      return String(localized: "Cannot create pixel buffer", comment: "Error when allocating a video frame pixel buffer fails")
+    case .cannotAppendFrame:
+      return String(localized: "Cannot append video frame", comment: "Error when appending a video frame to AVAssetWriter fails")
+    case .cannotAccessPixelBuffer:
+      return String(localized: "Cannot access pixel buffer data", comment: "Error when locking pixel buffer base address fails")
+    case .cannotCreateContext:
+      return String(localized: "Cannot create graphics context", comment: "Error when creating CoreGraphics context for waveform rendering fails")
+    case .noAudioTrack:
+      return String(localized: "No audio track found in source", comment: "Error when source asset has no audio track to copy")
+    case .cannotStartReading:
+      return String(localized: "Cannot start reading audio", comment: "Error when AVAssetReader fails to start reading source audio")
     }
   }
 }
