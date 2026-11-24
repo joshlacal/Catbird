@@ -1235,8 +1235,6 @@ import os
         headerIsPresent: headerView != nil, postCount: capturedPosts.count)
       let accountID = manager.appState.userDID ?? "unknown-account"
       let feedID = manager.currentFeedType.identifier
-      let isEligibleFeed = manager.currentFeedType == .timeline
-        || feedID.contains("discover") || feedID == "timeline"
 
       var items: [Item] = capturedHeaderPresent ? [.header] : []
       let isDiscoverFeed = feedID.contains("whats-hot") || feedID.contains("discover")
@@ -1244,8 +1242,8 @@ import os
         items.append(.liveEvent(id: liveEvent.id))
       }
       for (index, post) in capturedPosts.enumerated() {
-        if !capturedTrendingContent.isEmpty && isEligibleFeed
-          && capturedPosts.count >= 7 && index == 6 {
+        // Trending content is only loaded for the default feed (TrendingFeedEligibility).
+        if !capturedTrendingContent.isEmpty && capturedPosts.count >= 7 && index == 6 {
           items.append(.trendingInterstitial)
         }
         items.append(.post(account: accountID, feed: feedID, id: post.id))

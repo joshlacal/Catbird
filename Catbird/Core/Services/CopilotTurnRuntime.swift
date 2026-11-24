@@ -64,6 +64,31 @@ struct CopilotTurnRuntime: Sendable {
       continuation.onTermination = { @Sendable _ in producer.cancel() }
     }
   }
+
+  /// Streams with a reasoning level, so the model thinks through gathered
+  /// evidence before it writes. Reasoning text is not shown or stored.
+  @available(iOS 27.0, macOS 27.0, *)
+  static func stream(
+    session: LanguageModelSession, input: CopilotTurnInput, options: GenerationOptions,
+    reasoningLevel: ContextOptions.ReasoningLevel
+  ) -> AsyncThrowingStream<String, Error> {
+    AsyncThrowingStream { continuation in
+      let producer = Task {
+        do {
+          try Task.checkCancellation()
+          let contextOptions = ContextOptions(reasoningLevel: reasoningLevel)
+          for try await snapshot in session.streamResponse(to: input.prompt, options: options, contextOptions: contextOptions) {
+            try Task.checkCancellation()
+            continuation.yield(snapshot.content)
+          }
+          continuation.finish()
+        } catch {
+          continuation.finish(throwing: error)
+        }
+      }
+      continuation.onTermination = { @Sendable _ in producer.cancel() }
+    }
+  }
 }
 
 /// Inject only I/O boundaries; the actor still performs preparation, budgeting,

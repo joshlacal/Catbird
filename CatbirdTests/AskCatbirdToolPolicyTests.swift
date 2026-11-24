@@ -48,14 +48,14 @@ struct AskCatbirdToolPolicyTests {
         let selection = try await CopilotContextBudget.selectHistory(
             turns: turns,
             modelContextSize: 4096,
-            reservedTokenCount: 1000 + AskCatbirdToolPolicy.onDeviceToolResultTokenReserve,
+            reservedTokenCount: 1000 + AskCatbirdToolPolicy.Budget(route: .onDevice).toolResultReserve,
             candidateTokenCount: { 100 + $0.count * 600 }
         )
         #expect(selection.fits)
         #expect(selection.retainedTurns.map(\.id) == Array(turns.suffix(2)).map(\.id))
         let remainingAfterPromptAndAnswer = selection.tokenLimit - 1000
             - (100 + selection.retainedTurns.count * 600)
-        #expect(remainingAfterPromptAndAnswer >= AskCatbirdToolPolicy.onDeviceToolResultTokenReserve)
+        #expect(remainingAfterPromptAndAnswer >= AskCatbirdToolPolicy.Budget(route: .onDevice).toolResultReserve)
     }
 
     @Test func invalidReferenceErrorDoesNotExposeMachineIdentity() {

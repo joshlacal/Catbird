@@ -6,6 +6,7 @@ enum CopilotToolResult {
 
   static func bounded(
     _ text: String,
+    maximumTokens: Int = maximumTokens,
     tokenCount: @Sendable (String) async throws -> Int
   ) async throws -> (text: String, wasTruncated: Bool) {
     try Task.checkCancellation()
@@ -14,7 +15,7 @@ enum CopilotToolResult {
     guard count > maximumTokens else { return (text, false) }
     if let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)),
        object is [String: Any] || object is [Any] {
-      return try await boundedJSON(object, tokenCount: tokenCount)
+      return try await boundedJSON(object, maximumTokens: maximumTokens, tokenCount: tokenCount)
     }
     let notice = "Partial tool result (truncated; omitted contents are unknown):\n"
     var prefix = text
@@ -32,7 +33,7 @@ enum CopilotToolResult {
   /// Reduce complete JSON values, never raw serialized prefixes. Identities and
   /// field names survive reduction; the envelope discloses omitted data.
   private static func boundedJSON(
-    _ object: Any, tokenCount: @Sendable (String) async throws -> Int
+    _ object: Any, maximumTokens: Int, tokenCount: @Sendable (String) async throws -> Int
   ) async throws -> (text: String, wasTruncated: Bool) {
     for (stringLimit, arrayLimit) in [(256, 6), (128, 3), (64, 2), (32, 1), (8, 1)] {
       try Task.checkCancellation()

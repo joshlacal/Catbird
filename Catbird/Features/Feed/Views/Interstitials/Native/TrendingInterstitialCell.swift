@@ -371,7 +371,7 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
     } else {
       topicsScrollView.isHidden = true
     }
-    updateVisibleTopicCards()
+    updateVisibleTopicCards(force: true)
 
     // Videos
     if let header = layout.videosHeader {
@@ -399,7 +399,7 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
     } else {
       videosScrollView.isHidden = true
     }
-    updateVisibleVideoCards()
+    updateVisibleVideoCards(force: true)
 
     if let frame = layout.emptyVideosFrame {
       emptyVideosLabel.isHidden = false
@@ -444,8 +444,16 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
     }
   }
 
-  private func updateVisibleTopicCards() {
-    guard let layout = appliedLayout, let typography, let configuration, layout.topicsFrame != nil else { return }
+  /// Attaches cards that scrolled into view and recycles those that left. A horizontal scroll
+  /// tick only touches the cards it attaches: cards already on screen keep the content they
+  /// were given. `force` re-applies every visible card, for a new layout, model or setting.
+  private func updateVisibleTopicCards(force: Bool = false) {
+    guard let layout = appliedLayout, let typography, let configuration, layout.topicsFrame != nil else {
+      // The section is gone (turned off in settings, or no topics): detach its cards.
+      for (_, card) in visibleTopicCards { recycle(card) }
+      visibleTopicCards.removeAll()
+      return
+    }
     let size = layout.topicCardSize
     let wanted = Set(visibleIndices(
       count: min(model.topics.count, layout.topicCards.count), positions: layout.topicCardX,
@@ -454,12 +462,12 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
       recycle(card)
       visibleTopicCards[index] = nil
     }
-    let images = TrendingTopicImages(appState: configuration.appState, displayScale: traitCollection.displayScale,
-      allowsImageLoading: allowsImageLoading)
+    var images: TrendingTopicImages?
     let reduceMotion = UIAccessibility.isReduceMotionEnabled
     for index in wanted.sorted() {
       let card: TrendingTopicCardView
       if let existing = visibleTopicCards[index] {
+        guard force else { continue }
         card = existing
       } else {
         card = Self.sharedTopicCardsByIndex.removeValue(forKey: index)
@@ -472,15 +480,24 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
       }
       let x = isRightToLeft ? layout.topicsContentWidth - layout.topicCardX[index] - size.width : layout.topicCardX[index]
       card.frame = CGRect(x: x, y: 0, width: size.width, height: size.height)
+      let cardImages = images ?? TrendingTopicImages(
+        appState: configuration.appState, displayScale: traitCollection.displayScale,
+        allowsImageLoading: allowsImageLoading)
+      images = cardImages
       card.apply(
         model.topics[index], layout: layout.topicCards[index], size: size, typography: typography,
-        isRightToLeft: isRightToLeft, reduceMotion: reduceMotion, images: images)
+        isRightToLeft: isRightToLeft, reduceMotion: reduceMotion, images: cardImages)
       card.isHidden = false
     }
   }
 
-  private func updateVisibleVideoCards() {
-    guard let layout = appliedLayout, let typography, layout.videosFrame != nil else { return }
+  /// Same contract as `updateVisibleTopicCards(force:)`.
+  private func updateVisibleVideoCards(force: Bool = false) {
+    guard let layout = appliedLayout, let typography, layout.videosFrame != nil else {
+      for (_, card) in visibleVideoCards { recycle(card) }
+      visibleVideoCards.removeAll()
+      return
+    }
     let size = layout.videoCardSize
     let wanted = Set(visibleIndices(
       count: min(model.videos.count, layout.videoCardX.count), positions: layout.videoCardX,
@@ -492,6 +509,7 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
     for index in wanted.sorted() {
       let card: TrendingVideoCardView
       if let existing = visibleVideoCards[index] {
+        guard force else { continue }
         card = existing
       } else {
         card = Self.sharedVideoCardsByIndex.removeValue(forKey: index)
@@ -594,8 +612,8 @@ final class TrendingInterstitialCell: UICollectionViewCell, UIScrollViewDelegate
   }
 
   @objc private func voiceOverStatusChanged() {
-    updateVisibleTopicCards()
-    updateVisibleVideoCards()
+    updateVisibleTopicCards(force: true)
+    updateVisibleVideoCards(force: true)
   }
 
   // MARK: Actions
