@@ -113,7 +113,7 @@ struct MacOSChatContentView: View {
       let messageView: Text = if let lastErrorMessage {
         Text(lastErrorMessage)
       } else {
-        Text("An unknown error occurred.")
+        Text("An unknown error occurred")
       }
       return Alert(
         title: Text("Chat Error"),

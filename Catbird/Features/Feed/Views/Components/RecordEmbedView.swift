@@ -336,7 +336,7 @@ struct RecordEmbedView: View {
 
                                 EmbeddedAuthorNameView(
                                     name: String(
-                                        localized: "Quoting @\(viewRecord.author.handle)",
+                                        localized: "Quoting @\(viewRecord.author.handle.description)",
                                         comment: "Nested quote attribution inside an embedded post — variable is the quoted author's handle"
                                     ),
                                     verification: viewRecord.author.verification,
