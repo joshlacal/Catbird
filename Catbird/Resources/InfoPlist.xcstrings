@@ -279,38 +279,38 @@
       "localizations" : {
         "ar" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "عندما تختار البحث عن أصدقائك من جهات الاتصال، يرسل Catbird أرقام هواتفهم إلى خدمة مطابقة جهات الاتصال في Bluesky لإظهار من منهم موجود على Bluesky."
+            "state" : "needs_review",
+            "value" : "يستخدم Catbird جهات اتصالك لمساعدتك في العثور على أصدقائك والتواصل معهم على Bluesky."
           }
         },
         "ca" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Quan tries trobar amics a partir dels teus contactes, Catbird envia els seus números de telèfon al servei de coincidència de contactes de Bluesky per mostrar quins d'ells són a Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird utilitza els teus contactes per ajudar-te a trobar amics i connectar-hi a Bluesky."
           }
         },
         "cs" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Když se rozhodnete najít přátele ve svých kontaktech, Catbird odešle jejich telefonní čísla službě Bluesky pro párování kontaktů, aby zobrazil, kdo z nich je na Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird používá vaše kontakty, aby vám pomohl najít přátele na Bluesky a spojit se s nimi."
           }
         },
         "da" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Når du vælger at finde venner blandt dine kontakter, sender Catbird deres telefonnumre til Blueskys tjeneste til kontaktmatchning for at vise, hvem af dem der er på Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird bruger dine kontakter til at hjælpe dig med at finde og få forbindelse til venner på Bluesky."
           }
         },
         "de" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wenn du Freunde über deine Kontakte finden möchtest, sendet Catbird deren Telefonnummern an den Kontaktabgleich-Dienst von Bluesky, um zu zeigen, wer von ihnen auf Bluesky ist."
+            "state" : "needs_review",
+            "value" : "Catbird verwendet deine Kontakte, damit du Freunde auf Bluesky finden und dich mit ihnen vernetzen kannst."
           }
         },
         "el" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Όταν επιλέγετε να βρείτε φίλους από τις επαφές σας, το Catbird στέλνει τους αριθμούς τηλεφώνου τους στην υπηρεσία αντιστοίχισης επαφών του Bluesky, για να δείξει ποιοι από αυτούς βρίσκονται στο Bluesky."
+            "state" : "needs_review",
+            "value" : "Το Catbird χρησιμοποιεί τις επαφές σας για να σας βοηθήσει να βρείτε και να συνδεθείτε με φίλους στο Bluesky."
           }
         },
         "en" : {
@@ -321,200 +321,200 @@
         },
         "en-AU" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "When you choose to find friends from your contacts, Catbird sends their phone numbers to Bluesky's contact-matching service to show which of them are on Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird uses your contacts to help you find and connect with friends on Bluesky."
           }
         },
         "en-CA" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "When you choose to find friends from your contacts, Catbird sends their phone numbers to Bluesky's contact-matching service to show which of them are on Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird uses your contacts to help you find and connect with friends on Bluesky."
           }
         },
         "en-GB" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "When you choose to find friends from your contacts, Catbird sends their phone numbers to Bluesky's contact-matching service to show which of them are on Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird uses your contacts to help you find and connect with friends on Bluesky."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cuando eliges buscar amigos entre tus contactos, Catbird envía sus números de teléfono al servicio de coincidencia de contactos de Bluesky para mostrarte cuáles de ellos están en Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird usa tus contactos para ayudarte a encontrar amigos y conectar con ellos en Bluesky."
           }
         },
         "es-419" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cuando eliges buscar amigos entre tus contactos, Catbird envía sus números de teléfono al servicio de coincidencia de contactos de Bluesky para mostrarte cuáles de ellos están en Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird usa tus contactos para ayudarte a encontrar amigos y conectar con ellos en Bluesky."
           }
         },
         "fi" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kun valitset kavereiden etsimisen yhteystiedoistasi, Catbird lähettää heidän puhelinnumeronsa Blueskyn yhteystietojen vertailupalveluun näyttääkseen, ketkä heistä ovat Blueskyssa."
+            "state" : "needs_review",
+            "value" : "Catbird käyttää yhteystietojasi auttaakseen sinua löytämään kaverisi Blueskyssa."
           }
         },
         "fr" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Lorsque vous choisissez de retrouver des amis à partir de vos contacts, Catbird envoie leurs numéros de téléphone au service de correspondance de contacts de Bluesky afin d’indiquer lesquels d’entre eux sont sur Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird utilise vos contacts pour vous aider à retrouver vos amis et à entrer en contact avec eux sur Bluesky."
           }
         },
         "fr-CA" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Lorsque vous choisissez de retrouver des amis à partir de vos contacts, Catbird envoie leurs numéros de téléphone au service de correspondance de contacts de Bluesky afin d’indiquer lesquels d’entre eux sont sur Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird utilise vos contacts pour vous aider à retrouver vos amis et à entrer en contact avec eux sur Bluesky."
           }
         },
         "he" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "כשבוחרים למצוא חברים מאנשי הקשר שלך, Catbird שולחת את מספרי הטלפון שלהם לשירות התאמת אנשי הקשר של Bluesky כדי להראות מי מהם נמצא ב-Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird משתמשת באנשי הקשר שלך כדי לעזור לך למצוא חברים ולהתחבר אליהם ב-Bluesky."
           }
         },
         "hi" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "जब आप अपने संपर्कों में से दोस्तों को खोजना चुनते हैं, तो Catbird उनके फ़ोन नंबर Bluesky की संपर्क-मिलान सेवा को भेजता है, ताकि यह दिखाया जा सके कि उनमें से कौन Bluesky पर है।"
+            "state" : "needs_review",
+            "value" : "Catbird आपके संपर्कों का उपयोग Bluesky पर दोस्तों को खोजने और उनसे जुड़ने में आपकी मदद करने के लिए करता है।"
           }
         },
         "hr" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kada odlučite pronaći prijatelje među svojim kontaktima, Catbird šalje njihove telefonske brojeve Blueskyjevoj usluzi za uparivanje kontakata kako bi prikazao tko je od njih na usluzi Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird koristi vaše kontakte kako bi vam pomogao pronaći prijatelje i povezati se s njima na usluzi Bluesky."
           }
         },
         "hu" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ha úgy döntesz, hogy a névjegyeid között keresel ismerősöket, a Catbird elküldi a telefonszámukat a Bluesky névjegyegyeztető szolgáltatásának, hogy megmutassa, kik vannak közülük a Bluesky-on."
+            "state" : "needs_review",
+            "value" : "A Catbird a névjegyeidet használja, hogy segítsen megtalálni az ismerőseidet a Bluesky-on és kapcsolatba lépni velük."
           }
         },
         "id" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Saat Anda memilih untuk mencari teman dari kontak, Catbird mengirim nomor telepon mereka ke layanan pencocokan kontak Bluesky untuk menunjukkan siapa saja di antara mereka yang ada di Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird menggunakan kontak Anda untuk membantu Anda menemukan dan terhubung dengan teman di Bluesky."
           }
         },
         "it" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Quando scegli di trovare amici dai tuoi contatti, Catbird invia i loro numeri di telefono al servizio di corrispondenza dei contatti di Bluesky per mostrarti chi di loro è su Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird utilizza i tuoi contatti per aiutarti a trovare amici e connetterti con loro su Bluesky."
           }
         },
         "ja" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "連絡先から友だちを探すことを選択すると、Catbirdは連絡先の電話番号をBlueskyの連絡先照合サービスに送信し、そのうちBlueskyを利用している人を表示します。"
+            "state" : "needs_review",
+            "value" : "Catbirdは、Blueskyで友だちを見つけてつながるために連絡先を使用します。"
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "연락처에서 친구 찾기를 선택하면 Catbird가 연락처의 전화번호를 Bluesky의 연락처 매칭 서비스로 보내 그중 Bluesky를 사용하는 사람을 보여 줍니다."
+            "state" : "needs_review",
+            "value" : "Catbird에서 Bluesky의 친구를 찾고 연결할 수 있도록 연락처에 접근합니다."
           }
         },
         "ms" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Apabila anda memilih untuk mencari rakan daripada kenalan anda, Catbird menghantar nombor telefon mereka ke perkhidmatan pemadanan kenalan Bluesky untuk menunjukkan siapa antara mereka yang berada di Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird menggunakan kenalan anda untuk membantu anda mencari dan berhubung dengan rakan di Bluesky."
           }
         },
         "nb" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Når du velger å finne venner blant kontaktene dine, sender Catbird telefonnumrene deres til Blueskys tjeneste for kontaktsamsvar for å vise hvem av dem som er på Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird bruker kontaktene dine for å hjelpe deg med å finne og komme i kontakt med venner på Bluesky."
           }
         },
         "nl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Als je ervoor kiest vrienden te zoeken in je contacten, stuurt Catbird hun telefoonnummers naar de contactmatchingdienst van Bluesky om te laten zien wie van hen op Bluesky zit."
+            "state" : "needs_review",
+            "value" : "Catbird gebruikt je contacten om je te helpen vrienden te vinden en met hen in contact te komen op Bluesky."
           }
         },
         "pl" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Gdy zdecydujesz się wyszukać znajomych w kontaktach, Catbird wyśle ich numery telefonów do usługi dopasowywania kontaktów Bluesky, aby pokazać, którzy z nich są na Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird używa Twoich kontaktów, aby pomóc Ci znaleźć znajomych na Bluesky i nawiązać z nimi kontakt."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Quando você escolhe encontrar amigos nos seus contatos, o Catbird envia os números de telefone deles ao serviço de correspondência de contatos do Bluesky para mostrar quais deles estão no Bluesky."
+            "state" : "needs_review",
+            "value" : "O Catbird usa seus contatos para ajudar você a encontrar e se conectar com amigos no Bluesky."
           }
         },
         "pt-PT" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Quando opta por encontrar amigos nos seus contactos, o Catbird envia os números de telefone deles para o serviço de correspondência de contactos do Bluesky para mostrar quais deles estão no Bluesky."
+            "state" : "needs_review",
+            "value" : "O Catbird utiliza os seus contactos para ajudar a encontrar amigos e a ligar-se a eles no Bluesky."
           }
         },
         "ro" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Când alegeți să găsiți prieteni din contactele dvs., Catbird trimite numerele lor de telefon serviciului de potrivire a contactelor al Bluesky pentru a vă arăta care dintre ei sunt pe Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird vă folosește contactele pentru a vă ajuta să găsiți prieteni și să vă conectați cu ei pe Bluesky."
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Если вы решите найти друзей среди контактов, Catbird отправит их номера телефонов в сервис сопоставления контактов Bluesky, чтобы показать, кто из них есть в Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird использует ваши контакты, чтобы помочь вам найти друзей в Bluesky и подписаться на них."
           }
         },
         "sk" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keď sa rozhodnete nájsť priateľov vo svojich kontaktoch, Catbird odošle ich telefónne čísla službe Bluesky na párovanie kontaktov, aby zobrazil, kto z nich je na Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird používa vaše kontakty, aby vám pomohol nájsť priateľov na Bluesky a spojiť sa s nimi."
           }
         },
         "sv" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "När du väljer att hitta vänner bland dina kontakter skickar Catbird deras telefonnummer till Blueskys tjänst för kontaktmatchning för att visa vilka av dem som finns på Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird använder dina kontakter för att hjälpa dig att hitta och få kontakt med vänner på Bluesky."
           }
         },
         "th" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "เมื่อคุณเลือกค้นหาเพื่อนจากรายชื่อติดต่อ Catbird จะส่งหมายเลขโทรศัพท์ของพวกเขาไปยังบริการจับคู่รายชื่อติดต่อของ Bluesky เพื่อแสดงว่าใครบ้างที่ใช้ Bluesky"
+            "state" : "needs_review",
+            "value" : "Catbird ใช้รายชื่อติดต่อของคุณเพื่อช่วยค้นหาและเชื่อมต่อกับเพื่อนบน Bluesky"
           }
         },
         "tr" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kişilerinden arkadaş bulmayı seçtiğinde Catbird, hangilerinin Bluesky'da olduğunu göstermek için telefon numaralarını Bluesky'ın kişi eşleştirme hizmetine gönderir."
+            "state" : "needs_review",
+            "value" : "Catbird, Bluesky üzerindeki arkadaşlarını bulmana ve onlarla bağlantı kurmana yardımcı olmak için kişilerini kullanır."
           }
         },
         "uk" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Якщо ви вирішите знайти друзів серед контактів, Catbird надішле їхні номери телефонів до сервісу зіставлення контактів Bluesky, щоб показати, хто з них є в Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird використовує ваші контакти, щоб допомогти вам знайти друзів у Bluesky та підписатися на них."
           }
         },
         "vi" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "Khi bạn chọn tìm bạn bè từ danh bạ, Catbird sẽ gửi số điện thoại của họ đến dịch vụ đối chiếu danh bạ của Bluesky để cho biết ai trong số họ đang dùng Bluesky."
+            "state" : "needs_review",
+            "value" : "Catbird sử dụng danh bạ của bạn để giúp bạn tìm và kết nối với bạn bè trên Bluesky."
           }
         },
         "zh-HK" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "當你選擇從通訊錄尋找朋友時，Catbird 會將他們的電話號碼傳送至 Bluesky 的聯絡人配對服務，以顯示當中哪些人正在使用 Bluesky。"
+            "state" : "needs_review",
+            "value" : "Catbird 會使用你的通訊錄資料，協助你在 Bluesky 上尋找並聯繫朋友。"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "当你选择从通讯录中查找好友时，Catbird 会将他们的电话号码发送到 Bluesky 的联系人匹配服务，以显示其中哪些人在使用 Bluesky。"
+            "state" : "needs_review",
+            "value" : "Catbird 使用你的通讯录帮助你在 Bluesky 上查找并关注好友。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
-            "state" : "translated",
-            "value" : "當你選擇從聯絡人中尋找朋友時，Catbird 會將他們的電話號碼傳送至 Bluesky 的聯絡人配對服務，以顯示其中哪些人正在使用 Bluesky。"
+            "state" : "needs_review",
+            "value" : "Catbird 會使用你的聯絡人資訊，協助你在 Bluesky 上尋找並認識朋友。"
           }
         }
       }
