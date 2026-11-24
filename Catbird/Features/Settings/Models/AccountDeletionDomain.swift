@@ -192,6 +192,7 @@ enum HostedAccountDeletionSequence {
     confirmationToken: String,
     remoteErasureConsent: HostedAccountDeletionRemoteErasureConsent,
     authenticateHostedAccount: () async throws -> Session,
+    eraseCircles: () async -> Void = {},
     eraseRemoteEncryptedData: () async throws -> Void,
     deleteHostedAccount: (Session, String) async throws -> Void,
     eraseRemainingLocalData: () async throws -> Void
@@ -209,6 +210,8 @@ enum HostedAccountDeletionSequence {
     }
 
     let session = try await authenticateHostedAccount()
+    // Best effort: the PDS deletion below removes the same data.
+    await eraseCircles()
     try await eraseRemoteEncryptedData()
     try await deleteHostedAccount(session, trimmedToken)
     try await eraseRemainingLocalData()

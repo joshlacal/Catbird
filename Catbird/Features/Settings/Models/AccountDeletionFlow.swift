@@ -249,6 +249,8 @@ struct AccountDeletionCoordinator {
   /// current APIs, after a separate UI warning explicitly accepts the non-atomic boundary:
   /// 1. Pre-validates `(did, password)` via ephemeral `com.atproto.server.createSession` BEFORE
   ///    running any irreversible Labyrinth/MLS server backup erasure.
+  /// 1a. Best effort, removes the account's Circles from its PDS (`CircleAccountErasure`): deletes
+  ///    the Circles it owns and clears its records from other owners' Circles. Never blocks deletion.
   /// 2. Runs fail-closed `eraseServerSideLabyrinthDataIfAuthenticated` while OAuth/Spaces credentials
   ///    are still live. All participating delivery services must confirm erasure. AT Protocol cannot
   ///    validate `confirmationToken` without consuming it through `deleteAccount`, so a rejected or
@@ -271,6 +273,7 @@ struct AccountDeletionCoordinator {
     coordinatorOverride: MLSClientCoordinator? = nil,
     remoteMLSErasure: (@MainActor @Sendable (String) async throws -> Void)? = nil,
     localErasureOverride: (@MainActor @Sendable (String) async throws -> Void)? = nil,
+    circleErasureTransport: (any CircleAccountErasureTransport)? = nil,
     directClient: PDSDirectDeletionClient = PDSDirectDeletionClient()
   ) async throws {
     try await HostedAccountDeletionSequence.run(
@@ -283,6 +286,14 @@ struct AccountDeletionCoordinator {
           identifier: did,
           password: password,
           authFactorToken: authFactorToken
+        )
+      },
+      eraseCircles: {
+        await eraseCirclesIfAuthenticated(
+          forDID: did,
+          appStateOverride: appStateOverride,
+          clientOverride: clientOverride,
+          transportOverride: circleErasureTransport
         )
       },
       eraseRemoteEncryptedData: {
@@ -401,6 +412,33 @@ struct AccountDeletionCoordinator {
       logger.error("Failed to remove account from AuthManager: \(error.localizedDescription)")
       throw error
     }
+  }
+
+  /// Removes the account's Circles from its PDS while its session is live. Best effort: logs and
+  /// returns when the session is missing or belongs to another account, because deleting the PDS
+  /// account removes the same data and the Circle AppView purges its copy when it sees the deletion.
+  @discardableResult
+  static func eraseCirclesIfAuthenticated(
+    forDID did: String,
+    appStateOverride: AppState? = nil,
+    clientOverride: ATProtoClient? = nil,
+    transportOverride: (any CircleAccountErasureTransport)? = nil
+  ) async -> CircleAccountErasureReport? {
+    if let transportOverride {
+      return await CircleAccountErasure.run(accountDID: did, transport: transportOverride)
+    }
+    let resolvedAppState = erasureAppState(for: did, override: appStateOverride)
+    let resolvedClient = clientOverride ?? resolvedAppState?.atProtoClient ?? AppStateManager.shared.authentication.client
+    guard let client = resolvedClient,
+          (await client.getCurrentAccount())?.did == did
+    else {
+      logger.info("No live session for the deleted account; leaving Circles to the PDS deletion")
+      return nil
+    }
+    return await CircleAccountErasure.run(
+      accountDID: did,
+      transport: PetrelCircleAccountErasureTransport(client: client, accountDID: did)
+    )
   }
 
   static func eraseServerSideLabyrinthDataIfAuthenticated(
