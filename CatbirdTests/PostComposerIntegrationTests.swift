@@ -212,7 +212,7 @@ struct PostComposerIntegrationTests {
         let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
         let appState = AppState(userDID: "did:plc:testuser", client: client)
 
-        let parentURI = try ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/parent999")
+        let parentURI = try ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/did:plc:alice/app.bsky.feed.post/parent999")
         let parentCID = CID.fromDAGCBOR(Data("parent-cid-999".utf8))
         let parentRecord = AppBskyFeedPost(
             text: "Parent in Space",

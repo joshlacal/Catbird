@@ -137,14 +137,14 @@ actor DestinationRecordingCircleTransport: CircleTransport {
     if let error { throw error }
     publishedPosts.append((destination: destination, draft: draft))
     callLog.append("publishPost:\(destination.uri.uriString())")
-    return try ATProtocolURI(uriString: "\(destination.uri.uriString())/app.bsky.feed.post/test123")
+    return try ATProtocolURI(uriString: "\(destination.uri.uriString())/did:plc:alice/app.bsky.feed.post/test123")
   }
 
   func like(post: AppBskyFeedDefs.PostView, circle: CircleSummary) async throws -> ATProtocolURI {
     if let error { throw error }
     likedPosts.append((post: post, circle: circle))
     callLog.append("like:\(circle.uri.uriString())")
-    return try ATProtocolURI(uriString: "\(circle.uri.uriString())/app.bsky.feed.like/testlike123")
+    return try ATProtocolURI(uriString: "\(circle.uri.uriString())/did:plc:alice/app.bsky.feed.like/testlike123")
   }
 
   func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws {
@@ -205,7 +205,8 @@ struct CircleDestinationTests {
     circleService: CircleService? = nil
   ) async -> PostComposerViewModel {
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
-    let state = appState ?? AppState(userDID: "did:plc:testuser", client: client)
+    let state: AppState
+    if let appState { state = appState } else { state = await writableTestAppState(client: client) }
     let effectiveDest: CircleDestination
     if let _ = replyingTo, destination == .public {
       effectiveDest = .circle(CircleTestFixtures.family)
@@ -284,7 +285,7 @@ struct CircleDestinationTests {
       createdAt: ATProtocolDate(date: Date())
     )
     return AppBskyFeedDefs.PostView(
-      uri: try! ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/parent123"),
+      uri: try! ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/did:plc:alice/app.bsky.feed.post/parent123"),
       cid: CIDString(CID.fromDAGCBOR(Data("test-parent-post".utf8))),
       author: author,
       record: ATProtocolValueContainer.knownType(post),
@@ -439,11 +440,11 @@ struct CircleDestinationTests {
     let transport = DestinationRecordingCircleTransport()
     let service = CircleService(transport: transport)
 
-    let rootURI = try ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/root123")
+    let rootURI = try ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/did:plc:alice/app.bsky.feed.post/root123")
     let rootCID = CID.fromDAGCBOR(Data("root-cid".utf8))
     let rootRef = ComAtprotoRepoStrongRef(uri: rootURI, cid: CIDString(rootCID))
 
-    let parentURI = try ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/child123")
+    let parentURI = try ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/did:plc:alice/app.bsky.feed.post/child123")
     let parentCID = CID.fromDAGCBOR(Data("child-cid".utf8))
     let parentRef = ComAtprotoRepoStrongRef(uri: parentURI, cid: CIDString(parentCID))
 
@@ -569,7 +570,7 @@ struct CircleDestinationTests {
     let service = CircleService(transport: transport)
 
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
-    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    let appState = await writableTestAppState(client: client)
     appState.circleService = service
 
     let vm = PostViewModel(post: circlePost, appState: appState, visibilityContext: .circle(family))
@@ -609,7 +610,7 @@ struct CircleDestinationTests {
     let transport = DestinationRecordingCircleTransport()
     let service = CircleService(transport: transport)
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
-    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    let appState = await writableTestAppState(client: client)
     appState.circleService = service
 
     let vm = PostViewModel(post: circlePost, appState: appState, visibilityContext: .circle(family))
@@ -629,7 +630,7 @@ struct CircleDestinationTests {
     let service = CircleService(transport: transport)
 
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
-    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    let appState = await writableTestAppState(client: client)
     appState.circleService = service
 
     let feedViewPost = AppBskyFeedDefs.FeedViewPost(
@@ -700,7 +701,7 @@ struct CircleDestinationTests {
   func actionButtonsViewModelRespectsCircleCapabilities() async throws {
     let family = CircleTestFixtures.family
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
-    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    let appState = await writableTestAppState(client: client)
 
     let postVm = PostViewModel(post: circlePost, appState: appState, visibilityContext: .circle(family))
     let actionVm = ActionButtonViewModel(postId: circlePost.uri.uriString(), postViewModel: postVm, appState: appState)
@@ -720,7 +721,7 @@ struct CircleDestinationTests {
   func iosThreadViewControllerAndRepresentablePropagateVisibilityContext() async throws {
     let family = CircleTestFixtures.family
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
-    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    let appState = await writableTestAppState(client: client)
     let binding = Binding.constant(NavigationPath())
 
     if #available(iOS 18.0, *) {
@@ -758,7 +759,7 @@ struct CircleDestinationTests {
     let transport = DestinationRecordingCircleTransport()
     let service = CircleService(transport: transport)
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
-    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    let appState = await writableTestAppState(client: client)
     appState.circleService = service
     let binding = Binding.constant(NavigationPath())
 
@@ -1000,7 +1001,7 @@ struct CircleDestinationTests {
 
     // 2. Non-member getPostThread is denied
     await #expect(throws: CircleError.self) {
-      try await service.getPostThread(uri: try! ATProtocolURI(uriString: "\(familySummary.uri.uriString())/app.bsky.feed.post/post1"), space: familySummary.uri)
+      try await service.getPostThread(uri: try! ATProtocolURI(uriString: "\(familySummary.uri.uriString())/did:plc:alice/app.bsky.feed.post/post1"), space: familySummary.uri)
     }
 
     // 3. Non-member media access is denied
@@ -1015,7 +1016,7 @@ struct CircleDestinationTests {
     }
 
     // 5. Non-member like is denied
-    let familyPostView = CircleTestFixtures.makePostView(uri: try! ATProtocolURI(uriString: "\(familySummary.uri.uriString())/app.bsky.feed.post/post1"), authorDID: familySummary.owner, text: "Welcome to Family Circle")
+    let familyPostView = CircleTestFixtures.makePostView(uri: try! ATProtocolURI(uriString: "\(familySummary.uri.uriString())/did:plc:alice/app.bsky.feed.post/post1"), authorDID: familySummary.owner, text: "Welcome to Family Circle")
     await #expect(throws: CircleError.self) {
       try await service.like(post: familyPostView, circle: familySummary)
     }

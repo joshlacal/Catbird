@@ -106,11 +106,11 @@ actor ModerationRecordingCircleTransport: CircleTransport {
   }
 
   func publishPost(destination: CircleSummary, draft: CirclePostDraft) async throws -> ATProtocolURI {
-    try! ATProtocolURI(uriString: "\(destination.uri.uriString())/app.bsky.feed.post/test123")
+    try! ATProtocolURI(uriString: "\(destination.uri.uriString())/did:plc:alice/app.bsky.feed.post/test123")
   }
 
   func like(post: AppBskyFeedDefs.PostView, circle: CircleSummary) async throws -> ATProtocolURI {
-    try! ATProtocolURI(uriString: "\(circle.uri.uriString())/app.bsky.feed.like/like123")
+    try! ATProtocolURI(uriString: "\(circle.uri.uriString())/did:plc:alice/app.bsky.feed.like/like123")
   }
 
   func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws {}
@@ -134,7 +134,7 @@ actor ModerationRecordingCircleTransport: CircleTransport {
 
 @Suite("Circle Moderation and Private Reporting", .serialized)
 struct CircleModerationTests {
-  let privatePostURI = try! ATProtocolURI(uriString: "at://did:plc:alice/space/blue.catbird.circle/3abc/app.bsky.feed.post/post123")
+  let privatePostURI = try! ATProtocolURI(uriString: "at://did:plc:alice/space/blue.catbird.circle/3abc/did:plc:alice/app.bsky.feed.post/post123")
   let family = CircleTestFixtures.family
 
   @Test func reportingCirclePostUsesPrivateCircleEndpoint() async throws {

@@ -101,7 +101,7 @@ jobs:
           python3 scripts/verify_ios_ci_dependencies.py resolved \
             --reports "$VALIDATION_DIR" --source-packages "$RUNNER_TEMP/SourcePackages"
 
-      - name: Run the complete keychain suite
+      - name: Run the keychain, native MLS and Circle suites
         shell: bash
         run: |
           set -euo pipefail
@@ -142,6 +142,43 @@ jobs:
           fi
           echo "Expecting $native_expected_tests native MLS tests in $native_suite"
 
+          # Circles (end-to-end encrypted posts) suites. Swift Testing suites
+          # can span several files through extensions, so these are checked
+          # per suite at run time (each must run at least one case, and every
+          # case must pass) rather than counted from source.
+          circle_suites=(
+            CircleAccountErasureTests HostedAccountDeletionCirclesTests
+            CircleConfigurationTests CircleCoordinatorCacheTests
+            CircleDestinationTests CircleDraftDestinationTests
+            CircleFeedCacheIsolationTests CircleFeedModelTests CircleFixWave2Tests
+            CircleKeyManagerTests CircleKeyStoreTests CircleKeychainQueryTests
+            CircleManagementViewModelTests EncryptedCircleManagementTests
+            CircleMediaLoaderTests CircleModerationTests CircleNotificationTests
+            CirclePostOpenerTests CirclePostSealerTests CircleReportDisclosureTests
+            CircleRawWriteTests CircleServiceTests
+          )
+          for suite in "${circle_suites[@]}"; do
+            if ! grep -REqw "(struct|class|extension) $suite" CatbirdTests; then
+              echo "Circle suite $suite is not declared in CatbirdTests" >&2
+              exit 1
+            fi
+          done
+          # Live account-switch tests drive the shared AppStateManager, the
+          # real keychain and a network switch to bsky.social; on a hosted
+          # runner they hang. They are skipped here and allowed below by exact id.
+          circle_skipped=(
+            "CircleNotificationTests/accountSwitchAliceBobAliceRebuildsFreshCircleModels()"
+            "CircleNotificationTests/forcedDatabaseDrainFailureDuringSwitchRecoversSafely()"
+          )
+          circle_only_testing=()
+          for suite in "${circle_suites[@]}"; do
+            circle_only_testing+=("-only-testing:CatbirdTests/$suite")
+          done
+          for test_id in "${circle_skipped[@]}"; do
+            circle_only_testing+=("-skip-testing:CatbirdTests/$test_id")
+          done
+          echo "Running ${#circle_suites[@]} Circle suites"
+
           xcrun simctl list devices available -j > "$VALIDATION_DIR/simulators.json"
           simulator_id="$(jq -r '[.devices | to_entries[] | select(.key == "com.apple.CoreSimulator.SimRuntime.iOS-27-0") | .value[] | select(.isAvailable and (.name | startswith("iPhone")))] | first | .udid // empty' "$VALIDATION_DIR/simulators.json")"
           if [[ -z "$simulator_id" ]]; then
@@ -169,6 +206,7 @@ jobs:
             -only-testing:CatbirdTests/KeychainAccessGroupPrefixCacheTests \
             -only-testing:CatbirdTests/GatewaySessionRejectionTests \
             -only-testing:CatbirdTests/CrossLanguageRealFFITests \
+            "${circle_only_testing[@]}" \
             CODE_SIGNING_ALLOWED=YES \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_REQUIRED=YES \
@@ -234,6 +272,29 @@ jobs:
             exit 1
           fi
           echo "Native MLS tests passed in the signed application host: $native_passed_tests"
+
+          for suite in "${circle_suites[@]}"; do
+            n="$(count_cases "[\"$suite/\"]")"
+            if [[ "$n" -eq 0 ]]; then
+              echo "Circle suite $suite ran no test cases" >&2
+              exit 1
+            fi
+          done
+          circle_prefixes="$(printf '%s/\n' "${circle_suites[@]}" | jq -R . | jq -sc .)"
+          circle_tests="$(count_cases "$circle_prefixes")"
+          circle_passed="$(count_cases "$circle_prefixes" passed)"
+          circle_skip_ids="$(printf '%s\n' "${circle_skipped[@]}" | jq -R . | jq -sc .)"
+          circle_non_passed="$(jq --argjson p "$circle_prefixes" --argjson skip "$circle_skip_ids" '
+            [.. | objects | select(.nodeType == "Test Case"
+              and ((.nodeIdentifier? // "") as $id | any($p[]; . as $x | $id | startswith($x)))
+              and (.result != "Passed")
+              and ((.nodeIdentifier? // "") as $id | ($skip | index($id)) == null))] | length' "$report")"
+          circle_skipped_count=$((circle_tests - circle_passed - circle_non_passed))
+          if [[ "$circle_non_passed" -ne 0 || "$circle_skipped_count" -gt "${#circle_skipped[@]}" ]]; then
+            echo "Circle tests did not all pass: discovered=$circle_tests passed=$circle_passed nonPassed=$circle_non_passed" >&2
+            exit 1
+          fi
+          echo "Circle suites passed: $circle_passed test cases across ${#circle_suites[@]} suites ($circle_skipped_count known live tests skipped)"
 
       - name: Preserve simulator signing evidence
         if: always()
