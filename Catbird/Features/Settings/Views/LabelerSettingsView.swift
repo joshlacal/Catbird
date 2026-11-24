@@ -24,7 +24,7 @@ struct LabelerSettingsView: View {
           } label: {
             VStack(alignment: .leading, spacing: 4) {
               Text(labeler.creator.displayName ?? labeler.creator.handle.description)
-              Text("@\(labeler.creator.handle.description)").appFont(AppTextRole.caption).foregroundStyle(.secondary)
+              Text(verbatim: "@\(labeler.creator.handle.description)").appFont(AppTextRole.caption).foregroundStyle(.secondary)
               if labeler.creator.did.didString() == Self.defaultDID {
                 Text("Always active").appFont(AppTextRole.caption).foregroundStyle(.secondary)
               }
@@ -313,7 +313,7 @@ struct LabelerLabelRowView: View {
     }
   }
 
-  private static func note(for source: LabelerLabelRow.Source) -> String {
+  private static func note(for source: LabelerLabelRow.Source) -> LocalizedStringKey {
     switch source {
     case .service: "Saved for this service."
     case .global: "Using your global setting for this label."

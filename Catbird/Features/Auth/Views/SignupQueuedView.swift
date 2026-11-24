@@ -162,12 +162,11 @@ public struct SignupQueuedView: View {
             if let place = placeInQueue {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Position in Queue")
+                        Text("Position in Queue", comment: "Header label above the user's numeric position in the signup waiting list.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .textCase(.uppercase)
                         
-                        Text("#\(place)")
+                        Text("#\(place)", comment: "User's numbered position in the signup waiting list, e.g. #42.")
                             .font(.system(size: 36, weight: .bold, design: .rounded))
                             .foregroundStyle(Color.accentColor)
                     }
@@ -209,17 +208,31 @@ public struct SignupQueuedView: View {
     }
     
     public static func formatEstimate(ms: Int?) -> String {
-        guard let ms, ms > 0 else { return "Estimating wait time…" }
+        guard let ms, ms > 0 else {
+            return String(
+                localized: "Estimating wait time…",
+                comment: "Placeholder shown while calculating signup queue wait time."
+            )
+        }
         let totalSeconds = ms / 1000
         let minutes = totalSeconds / 60
         let hours = minutes / 60
         
         if hours > 0 {
-            return "Estimated wait: ~\(hours) hour\(hours == 1 ? "" : "s")"
+            return String(
+                localized: "Estimated wait: ~\(hours) hours",
+                comment: "Estimated wait time in hours in the signup queue."
+            )
         } else if minutes > 0 {
-            return "Estimated wait: ~\(minutes) minute\(minutes == 1 ? "" : "s")"
+            return String(
+                localized: "Estimated wait: ~\(minutes) minutes",
+                comment: "Estimated wait time in minutes in the signup queue."
+            )
         } else {
-            return "Estimated wait: less than a minute"
+            return String(
+                localized: "Estimated wait: less than a minute",
+                comment: "Estimated wait time when under one minute in the signup queue."
+            )
         }
     }
     
@@ -246,7 +259,10 @@ public struct SignupQueuedView: View {
         guard !isCheckingStatus else { return }
         guard let client = appState.atProtoClient else {
             if isManual {
-                errorMessage = "Couldn’t check your place in line. Try again."
+                errorMessage = String(
+                    localized: "Couldn’t check your place in line. Try again.",
+                    comment: "Error when manually checking signup queue status without an active client."
+                )
             }
             return
         }
@@ -265,7 +281,10 @@ public struct SignupQueuedView: View {
                 guard code == 200, let queueOutput = output else {
                     if isManual {
                         self.logger.error("checkSignupQueue returned HTTP \(code)")
-                        self.errorMessage = "Couldn’t check your place in line. Retrying automatically."
+                        self.errorMessage = String(
+                            localized: "Couldn’t check your place in line. Retrying automatically.",
+                            comment: "Error when checking signup queue status fails and will retry automatically."
+                        )
                     }
                     return
                 }
@@ -290,7 +309,10 @@ public struct SignupQueuedView: View {
                 self.isCheckingStatus = false
                 self.logger.error("Signup queue check failed: \(error.localizedDescription)")
                 if isManual {
-                    self.errorMessage = "Couldn’t check your place in line. Retrying automatically."
+                    self.errorMessage = String(
+                        localized: "Couldn’t check your place in line. Retrying automatically.",
+                        comment: "Error when checking signup queue status fails and will retry automatically."
+                    )
                 }
             }
         }
@@ -302,7 +324,10 @@ public struct SignupQueuedView: View {
         
         Task { @MainActor in
             guard let client = appState.atProtoClient else {
-                errorMessage = "Couldn’t finish setting up your account. Tap Check My Status to try again."
+                errorMessage = String(
+                    localized: "Couldn’t finish setting up your account. Tap Check My Status to try again.",
+                    comment: "Error when account activation after signup queue cannot access client."
+                )
                 startPolling()
                 return
             }
@@ -316,7 +341,10 @@ public struct SignupQueuedView: View {
                 let (sessionCode, sessionOutput) = try await client.com.atproto.server.getSession()
                 guard sessionCode == 200, sessionOutput != nil else {
                     logger.error("Session probe returned HTTP \(sessionCode) after activation")
-                    errorMessage = "Couldn’t verify your account yet. Tap Check My Status to try again."
+                    errorMessage = String(
+                        localized: "Couldn’t verify your account yet. Tap Check My Status to try again.",
+                        comment: "Error when verifying activated account session fails."
+                    )
                     startPolling()
                     return
                 }
@@ -334,7 +362,10 @@ public struct SignupQueuedView: View {
                 }
             } catch {
                 logger.error("Token refresh / verification after activation failed: \(error.localizedDescription)")
-                errorMessage = "Couldn’t verify your account yet. Tap Check My Status to try again."
+                errorMessage = String(
+                    localized: "Couldn’t verify your account yet. Tap Check My Status to try again.",
+                    comment: "Error when verifying activated account session fails."
+                )
                 startPolling()
             }
         }

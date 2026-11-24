@@ -426,7 +426,12 @@ private actor FollowRecordCreatedAtCacheActor {
         logger.error("Bad response from notifications API: \(responseCode)")
         let failure = NSError(
           domain: "NotificationsError", code: responseCode,
-          userInfo: [NSLocalizedDescriptionKey: "Bluesky didn’t respond. Pull to refresh or try again in a moment."])
+          userInfo: [
+            NSLocalizedDescriptionKey: String(
+              localized: "Bluesky didn’t respond. Pull to refresh or try again in a moment.",
+              comment: "Error message when the notifications API returns an unsuccessful HTTP status"
+            )
+          ])
         await MainActor.run {
           guard generation == self.fetchGeneration, filter == self.currentFilter else { return }
           self.recordFailure(failure, resetCursor: resetCursor)
@@ -463,8 +468,16 @@ private actor FollowRecordCreatedAtCacheActor {
     } catch {
       guard !Task.isCancelled, !error.isCancellation else { return }
       logger.error("Error fetching notifications: \(error.localizedDescription)")
-      let message = UserFacingError.message(for: error, action: "load notifications")
-        ?? "Couldn’t load notifications. Try again."
+      let message = UserFacingError.message(
+        for: error,
+        action: String(
+          localized: "load notifications",
+          comment: "Action phrase interpolated into an error message when loading notifications fails"
+        )
+      ) ?? String(
+        localized: "Couldn’t load notifications. Try again.",
+        comment: "Fallback error message when loading notifications fails"
+      )
       let failure = NSError(
         domain: "NotificationsError", code: (error as NSError).code,
         userInfo: [NSLocalizedDescriptionKey: message])

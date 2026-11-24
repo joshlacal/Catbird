@@ -28,19 +28,19 @@ public enum OnboardingMacroCategory: String, CaseIterable, Identifiable, Sendabl
 
   public var title: String {
     switch self {
-    case .all: "All Scenes"
-    case .softwareAITech: "Tech & Code"
-    case .scienceNature: "Science & Nature"
-    case .newsCivicsHistory: "News & History"
-    case .artsIllustration: "Art & Photo"
-    case .gamesInteractive: "Games & Play"
-    case .musicAudio: "Music & Sound"
-    case .filmTVAnime: "Film, TV & Anime"
-    case .booksWritingComics: "Books & Comics"
-    case .queerFandomHangout: "Fandom & Hangout"
-    case .sportsMotorsport: "Sports"
-    case .citiesCraftFood: "Cities, Craft & Food"
-    case .worldLanguages: "Global Scenes"
+    case .all: String(localized: "All Scenes", comment: "Onboarding filter chip showing all community scenes.")
+    case .softwareAITech: String(localized: "Tech & Code", comment: "Onboarding macro category title.")
+    case .scienceNature: String(localized: "Science & Nature", comment: "Onboarding macro category title.")
+    case .newsCivicsHistory: String(localized: "News & History", comment: "Onboarding macro category title.")
+    case .artsIllustration: String(localized: "Art & Photo", comment: "Onboarding macro category title.")
+    case .gamesInteractive: String(localized: "Games & Play", comment: "Onboarding macro category title.")
+    case .musicAudio: String(localized: "Music & Sound", comment: "Onboarding macro category title.")
+    case .filmTVAnime: String(localized: "Film, TV & Anime", comment: "Onboarding macro category title.")
+    case .booksWritingComics: String(localized: "Books & Comics", comment: "Onboarding macro category title.")
+    case .queerFandomHangout: String(localized: "Fandom & Hangout", comment: "Onboarding macro category title.")
+    case .sportsMotorsport: String(localized: "Sports", comment: "Onboarding macro category title.")
+    case .citiesCraftFood: String(localized: "Cities, Craft & Food", comment: "Onboarding macro category title.")
+    case .worldLanguages: String(localized: "Global Scenes", comment: "Onboarding macro category title.")
     }
   }
 
@@ -91,31 +91,36 @@ public enum CommunityRole: String, CaseIterable, Identifiable, Hashable, Sendabl
 
   public var displayTitle: String {
     switch self {
-    case .anchorCreator: "Community Anchors"
-    case .visualMaker: "Original Makers"
-    case .conversationalist: "Warm Conversationalists"
-    case .sceneCurator: "High-Signal Curators"
-    case .projectOrStudio: "Projects & Studios"
+    case .anchorCreator: String(localized: "Community Anchors", comment: "Onboarding community role section title.")
+    case .visualMaker: String(localized: "Original Makers", comment: "Onboarding community role section title.")
+    case .conversationalist: String(localized: "Warm Conversationalists", comment: "Onboarding community role section title.")
+    case .sceneCurator: String(localized: "High-Signal Curators", comment: "Onboarding community role section title.")
+    case .projectOrStudio: String(localized: "Projects & Studios", comment: "Onboarding community role section title.")
     }
   }
 
   public var badgeTitle: String {
     switch self {
-    case .anchorCreator: "Anchor"
-    case .visualMaker: "Maker"
-    case .conversationalist: "Conversational"
-    case .sceneCurator: "Curator"
-    case .projectOrStudio: "Project / Studio"
+    case .anchorCreator: String(localized: "Anchor", comment: "Short badge label for community anchor role.")
+    case .visualMaker: String(localized: "Maker", comment: "Short badge label for visual/original maker role.")
+    case .conversationalist: String(localized: "Conversational", comment: "Short badge label for conversationalist role.")
+    case .sceneCurator: String(localized: "Curator", comment: "Short badge label for scene curator role.")
+    case .projectOrStudio: String(localized: "Project / Studio", comment: "Short badge label for project or studio role.")
     }
   }
 
   public var subtitle: String {
     switch self {
-    case .anchorCreator: "Trusted pillars widely followed across the community"
-    case .visualMaker: "Original craft, demos, photography, art, and dispatches"
-    case .conversationalist: "Friendly voices who spark real threads and replies"
-    case .sceneCurator: "Finds great work across the network (ideal in Originals Only)"
-    case .projectOrStudio: "Official tools, collectives, journals, and indie studios"
+    case .anchorCreator:
+      String(localized: "Trusted pillars widely followed across the community", comment: "Onboarding community role description.")
+    case .visualMaker:
+      String(localized: "Original craft, demos, photography, art, and dispatches", comment: "Onboarding community role description.")
+    case .conversationalist:
+      String(localized: "Friendly voices who spark real threads and replies", comment: "Onboarding community role description.")
+    case .sceneCurator:
+      String(localized: "Finds great work across the network (ideal in Originals Only)", comment: "Onboarding community role description.")
+    case .projectOrStudio:
+      String(localized: "Official tools, collectives, journals, and indie studios", comment: "Onboarding community role description.")
     }
   }
 
@@ -319,11 +324,11 @@ public enum CatbirdIntelligenceError: LocalizedError, Equatable, Sendable {
   public var errorDescription: String? {
     switch self {
     case .clientUnavailable:
-      "Sign in to load community recommendations."
+      String(localized: "Sign in to load community recommendations.", comment: "Error shown when scene recommendations require an active signed-in session.")
     case .serviceUnavailable:
-      "Scene recommendations are temporarily unavailable."
+      String(localized: "Scene recommendations are temporarily unavailable.", comment: "Error shown when the community intelligence service returns 502/503.")
     case .invalidResponse(let code):
-      "Couldn’t load community intelligence (HTTP \(code))."
+      String(localized: "Couldn’t load community intelligence (HTTP \(code)).", comment: "Error shown when community intelligence returns an unexpected HTTP status code.")
     case .commitFailed(let reason):
       reason
     }

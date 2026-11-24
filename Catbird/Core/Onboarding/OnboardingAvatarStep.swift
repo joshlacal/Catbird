@@ -31,6 +31,15 @@ public struct OnboardingAvatarStep: View {
         case photo = "Upload Photo"
         
         var id: String { rawValue }
+        
+        var localizedTitle: LocalizedStringResource {
+            switch self {
+            case .sticker:
+                LocalizedStringResource("Design Avatar", comment: "Onboarding mode option to create an icon-based avatar.")
+            case .photo:
+                LocalizedStringResource("Upload Photo", comment: "Onboarding mode option to upload a profile photo.")
+            }
+        }
     }
     
     private let availableSymbols = [
@@ -40,22 +49,34 @@ public struct OnboardingAvatarStep: View {
         "music.note", "camera.fill", "crown.fill", "globe.americas.fill"
     ]
     
-    private let symbolNames: [String: String] = [
-        "bird.fill": "Bird", "cat.fill": "Cat", "dog.fill": "Dog", "sparkles": "Sparkles",
-        "star.fill": "Star", "heart.fill": "Heart", "flame.fill": "Flame", "bolt.fill": "Lightning Bolt",
-        "moon.stars.fill": "Moon and Stars", "sun.max.fill": "Sun", "leaf.fill": "Leaf", "paintbrush.fill": "Paintbrush",
-        "music.note": "Music Note", "camera.fill": "Camera", "crown.fill": "Crown", "globe.americas.fill": "Globe"
+    private let symbolNames: [String: LocalizedStringResource] = [
+        "bird.fill": LocalizedStringResource("Bird", comment: "Avatar icon name."),
+        "cat.fill": LocalizedStringResource("Cat", comment: "Avatar icon name."),
+        "dog.fill": LocalizedStringResource("Dog", comment: "Avatar icon name."),
+        "sparkles": LocalizedStringResource("Sparkles", comment: "Avatar icon name."),
+        "star.fill": LocalizedStringResource("Star", comment: "Avatar icon name."),
+        "heart.fill": LocalizedStringResource("Heart", comment: "Avatar icon name."),
+        "flame.fill": LocalizedStringResource("Flame", comment: "Avatar icon name."),
+        "bolt.fill": LocalizedStringResource("Lightning Bolt", comment: "Avatar icon name."),
+        "moon.stars.fill": LocalizedStringResource("Moon and Stars", comment: "Avatar icon name."),
+        "sun.max.fill": LocalizedStringResource("Sun", comment: "Avatar icon name."),
+        "leaf.fill": LocalizedStringResource("Leaf", comment: "Avatar icon name."),
+        "paintbrush.fill": LocalizedStringResource("Paintbrush", comment: "Avatar icon name."),
+        "music.note": LocalizedStringResource("Music Note", comment: "Avatar icon name."),
+        "camera.fill": LocalizedStringResource("Camera", comment: "Avatar icon name."),
+        "crown.fill": LocalizedStringResource("Crown", comment: "Avatar icon name."),
+        "globe.americas.fill": LocalizedStringResource("Globe", comment: "Avatar icon name.")
     ]
     
-    private let availableColors: [(name: String, hex: String, color: Color)] = [
-        ("Blue", "#0A84FF", .blue),
-        ("Purple", "#AF52DE", .purple),
-        ("Indigo", "#5856D6", .indigo),
-        ("Pink", "#FF2D55", .pink),
-        ("Orange", "#FF9500", .orange),
-        ("Teal", "#30B0C7", .teal),
-        ("Mint", "#00C7BE", .mint),
-        ("Green", "#34C759", .green)
+    private let availableColors: [(name: LocalizedStringResource, hex: String, color: Color)] = [
+        (LocalizedStringResource("Blue", comment: "Avatar background color name."), "#0A84FF", .blue),
+        (LocalizedStringResource("Purple", comment: "Avatar background color name."), "#AF52DE", .purple),
+        (LocalizedStringResource("Indigo", comment: "Avatar background color name."), "#5856D6", .indigo),
+        (LocalizedStringResource("Pink", comment: "Avatar background color name."), "#FF2D55", .pink),
+        (LocalizedStringResource("Orange", comment: "Avatar background color name."), "#FF9500", .orange),
+        (LocalizedStringResource("Teal", comment: "Avatar background color name."), "#30B0C7", .teal),
+        (LocalizedStringResource("Mint", comment: "Avatar background color name."), "#00C7BE", .mint),
+        (LocalizedStringResource("Green", comment: "Avatar background color name."), "#34C759", .green)
     ]
     
     public init(onContinue: @escaping () -> Void, onSkip: @escaping () -> Void) {
@@ -74,9 +95,13 @@ public struct OnboardingAvatarStep: View {
         return existingAvatarURL == nil || hasCustomizedSticker
     }
     
-    private var primaryButtonTitle: String {
-        if isUploading { return "Saving…" }
-        return willUpload ? "Save & Continue" : "Continue"
+    private var primaryButtonTitle: LocalizedStringResource {
+        if isUploading {
+            return LocalizedStringResource("Saving…", comment: "Progress button label while uploading onboarding avatar.")
+        }
+        return willUpload
+            ? LocalizedStringResource("Save & Continue", comment: "Button to upload selected onboarding avatar and advance.")
+            : LocalizedStringResource("Continue", comment: "Button to advance onboarding without uploading a new avatar.")
     }
     
     public var body: some View {
@@ -103,10 +128,12 @@ public struct OnboardingAvatarStep: View {
                     .padding(.vertical, 8)
                 
                 // Mode Picker
-                Picker("Avatar Mode", selection: $avatarMode) {
+                Picker(selection: $avatarMode) {
                     ForEach(AvatarCreationMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
+                        Text(mode.localizedTitle).tag(mode)
                     }
+                } label: {
+                    Text("Avatar Mode", comment: "Segmented control label for choosing between designing an avatar or uploading a photo.")
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal, 24)
@@ -236,7 +263,7 @@ public struct OnboardingAvatarStep: View {
                             .frame(height: 52)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(symbolNames[symbol] ?? "Icon")
+                        .accessibilityLabel(Text(symbolNames[symbol] ?? LocalizedStringResource("Icon", comment: "Fallback accessibility label for an avatar icon.")))
                         .accessibilityAddTraits(selectedSymbol == symbol ? .isSelected : [])
                     }
                 }
@@ -270,7 +297,7 @@ public struct OnboardingAvatarStep: View {
                             }
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("\(item.name) color")
+                        .accessibilityLabel(Text("\(String(localized: item.name)) color", comment: "Accessibility label for avatar background color swatch — variable is the localized color name."))
                         .accessibilityAddTraits(selectedColorHex == item.hex ? .isSelected : [])
                     }
                 }
@@ -286,7 +313,11 @@ public struct OnboardingAvatarStep: View {
             PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
                 HStack(spacing: 8) {
                     Image(systemName: "photo.on.rectangle")
-                    Text(selectedPhoto == nil ? "Choose Photo from Library" : "Choose Another Photo")
+                    if selectedPhoto == nil {
+                        Text("Choose Photo from Library", comment: "Button to select an avatar photo from the user's photo library.")
+                    } else {
+                        Text("Choose Another Photo", comment: "Button to replace the currently selected avatar photo.")
+                    }
                 }
                 .font(.headline)
                 .frame(maxWidth: .infinity)
@@ -364,7 +395,10 @@ public struct OnboardingAvatarStep: View {
             } catch {
                 await MainActor.run {
                     isUploading = false
-                    uploadErrorMessage = UserFacingError.message(for: error, action: "save your profile picture")
+                    uploadErrorMessage = UserFacingError.message(
+                        for: error,
+                        action: String(localized: "save your profile picture", comment: "Action phrase in error message when saving onboarding avatar fails.")
+                    )
                     logger.error("Avatar upload failed: \(error)")
                 }
             }

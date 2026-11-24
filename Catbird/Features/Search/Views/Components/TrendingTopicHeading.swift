@@ -56,21 +56,110 @@ enum TrendingTopicCategoryStyle {
   /// One distinct symbol and color per getTrends category, including legacy and alias values.
   private static func style(for category: String?) -> Style {
     switch category?.lowercased() {
-    case "culture": return Style(symbol: "theatermasks", tint: .pink, name: nil)
-    case "entertainment", "pop-culture": return Style(symbol: "popcorn", tint: .purple, name: "Entertainment")
-    case "politics": return Style(symbol: "building.columns", tint: .blue, name: nil)
-    case "news", "world": return Style(symbol: "newspaper", tint: .red, name: nil)
-    case "sports": return Style(symbol: "figure.basketball", tint: .orange, name: nil)
-    case "video-games", "gaming": return Style(symbol: "gamecontroller", tint: .green, name: "Video Games")
-    case "science-tech": return Style(symbol: "atom", tint: .teal, name: "Science & Tech")
-    case "science": return Style(symbol: "atom", tint: .mint, name: nil)
-    case "tech", "technology": return Style(symbol: "cpu", tint: .cyan, name: "Tech")
-    case "business", "economy", "finance": return Style(symbol: "chart.line.uptrend.xyaxis", tint: .yellow, name: nil)
-    case "health": return Style(symbol: "cross.case", tint: .red, name: nil)
-    case "music": return Style(symbol: "music.note", tint: .indigo, name: nil)
-    case "weather": return Style(symbol: "cloud.sun", tint: .cyan, name: nil)
-    case "other": return Style(symbol: "sparkles", tint: .brown, name: "Trending")
-    default: return Style(symbol: "number", tint: .gray, name: nil)
+    case "culture":
+      return Style(
+        symbol: "theatermasks",
+        tint: .pink,
+        name: String(localized: "Culture", comment: "Trending topic category name")
+      )
+    case "entertainment", "pop-culture":
+      return Style(
+        symbol: "popcorn",
+        tint: .purple,
+        name: String(localized: "Entertainment", comment: "Trending topic category name")
+      )
+    case "politics":
+      return Style(
+        symbol: "building.columns",
+        tint: .blue,
+        name: String(localized: "Politics", comment: "Trending topic category name")
+      )
+    case "news":
+      return Style(
+        symbol: "newspaper",
+        tint: .red,
+        name: String(localized: "News", comment: "Trending topic category name")
+      )
+    case "world":
+      return Style(
+        symbol: "newspaper",
+        tint: .red,
+        name: String(localized: "World", comment: "Trending topic category name")
+      )
+    case "sports":
+      return Style(
+        symbol: "figure.basketball",
+        tint: .orange,
+        name: String(localized: "Sports", comment: "Trending topic category name")
+      )
+    case "video-games", "gaming":
+      return Style(
+        symbol: "gamecontroller",
+        tint: .green,
+        name: String(localized: "Video Games", comment: "Trending topic category name")
+      )
+    case "science-tech":
+      return Style(
+        symbol: "atom",
+        tint: .teal,
+        name: String(localized: "Science & Tech", comment: "Trending topic category name")
+      )
+    case "science":
+      return Style(
+        symbol: "atom",
+        tint: .mint,
+        name: String(localized: "Science", comment: "Trending topic category name")
+      )
+    case "tech", "technology":
+      return Style(
+        symbol: "cpu",
+        tint: .cyan,
+        name: String(localized: "Tech", comment: "Trending topic category name")
+      )
+    case "business":
+      return Style(
+        symbol: "chart.line.uptrend.xyaxis",
+        tint: .yellow,
+        name: String(localized: "Business", comment: "Trending topic category name")
+      )
+    case "economy":
+      return Style(
+        symbol: "chart.line.uptrend.xyaxis",
+        tint: .yellow,
+        name: String(localized: "Economy", comment: "Trending topic category name")
+      )
+    case "finance":
+      return Style(
+        symbol: "chart.line.uptrend.xyaxis",
+        tint: .yellow,
+        name: String(localized: "Finance", comment: "Trending topic category name")
+      )
+    case "health":
+      return Style(
+        symbol: "cross.case",
+        tint: .red,
+        name: String(localized: "Health", comment: "Trending topic category name")
+      )
+    case "music":
+      return Style(
+        symbol: "music.note",
+        tint: .indigo,
+        name: String(localized: "Music", comment: "Trending topic category name")
+      )
+    case "weather":
+      return Style(
+        symbol: "cloud.sun",
+        tint: .cyan,
+        name: String(localized: "Weather", comment: "Trending topic category name")
+      )
+    case "other":
+      return Style(
+        symbol: "sparkles",
+        tint: .brown,
+        name: String(localized: "Trending", comment: "Fallback trending topic category name")
+      )
+    default:
+      return Style(symbol: "number", tint: .gray, name: nil)
     }
   }
 
@@ -81,7 +170,7 @@ enum TrendingTopicCategoryStyle {
   static func color(for category: String?) -> Color { style(for: category).tint.color }
 
   static func name(for category: String) -> String {
-    style(for: category).name ?? category.replacingOccurrences(of: "-", with: " ").capitalized
+    style(for: category).name ?? category.replacingOccurrences(of: "-", with: " ").localizedCapitalized
   }
 }
 

@@ -122,6 +122,7 @@ struct PostComposerUIKitVideoAttachmentView: View {
   let videoItem: PostComposerViewModel.MediaItem
   let vm: PostComposerViewModel
   @State private var showingCaptionEditor = false
+  @Environment(\.locale) private var locale
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -143,7 +144,7 @@ struct PostComposerUIKitVideoAttachmentView: View {
       HStack(spacing: 6) {
         if let caption = videoItem.caption {
           let langCode = caption.lang.lang.languageCode?.identifier ?? caption.lang.lang.minimalIdentifier
-          let langName = Locale.current.localizedString(forLanguageCode: langCode) ?? caption.lang.lang.minimalIdentifier
+          let langName = locale.localizedString(forLanguageCode: langCode) ?? caption.lang.lang.minimalIdentifier
 
           Button {
             showingCaptionEditor = true

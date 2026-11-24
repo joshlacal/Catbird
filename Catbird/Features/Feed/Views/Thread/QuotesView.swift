@@ -72,7 +72,7 @@ struct QuotesView: View {
                 )
             }
         }
-        .navigationTitle("Quotes")
+        .navigationTitle(Text("Quotes", comment: "Navigation bar title for posts quoting this post"))
         .task {
             // `.task` restarts each time the screen reappears, such as on the way
             // back from a quoting post; keep the loaded pages and scroll position.

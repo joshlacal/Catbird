@@ -59,7 +59,12 @@ public struct RecentSearchesSection: View {
           Button(role: .destructive) { delete(entry) } label: {
             Label("Delete", systemImage: "trash")
           }
-          .accessibilityLabel("Delete \(entry.query)")
+          .accessibilityLabel(
+            Text(
+              "Delete \(entry.query)",
+              comment: "Swipe action accessibility label to delete a recent search — variable is the search query"
+            )
+          )
         }
       }
     }
@@ -98,8 +103,8 @@ public struct RecentSearchesSection: View {
         rowLabel(entry)
       }
       .buttonStyle(.plain)
-      .accessibilityHint("Searches again")
-      .accessibilityAction(named: "Delete") { delete(entry) }
+      .accessibilityHint(Text("Searches again", comment: "Accessibility hint for tapping a recent search row"))
+      .accessibilityAction(named: Text("Delete", comment: "Accessibility action to delete a recent search")) { delete(entry) }
 
       if let onFill {
         fillButton(entry, onFill: onFill)
@@ -126,8 +131,13 @@ public struct RecentSearchesSection: View {
     }
     .buttonStyle(.plain)
     .padding(.trailing, 4)
-    .accessibilityLabel("Edit \(entry.query)")
-    .accessibilityHint("Places this search in the search field")
+    .accessibilityLabel(
+      Text(
+        "Edit \(entry.query)",
+        comment: "Button accessibility label to place a recent search query into the search field — variable is the search query"
+      )
+    )
+    .accessibilityHint(Text("Places this search in the search field", comment: "Accessibility hint for the fill query button on a recent search row"))
   }
 
   private func rowLabel(_ entry: RecentSearchEntry) -> some View {
@@ -150,7 +160,7 @@ public struct RecentSearchesSection: View {
         HStack(spacing: 3) {
           Image(systemName: "line.3.horizontal.decrease")
             .appFont(AppTextRole.caption2)
-          Text("\(filterCount)")
+          Text(filterCount, format: .number)
             .appFont(AppTextRole.caption2)
             .fontWeight(.semibold)
         }
@@ -159,7 +169,12 @@ public struct RecentSearchesSection: View {
         .foregroundStyle(Color.accentColor)
         .background(Color.accentColor.opacity(0.12), in: Capsule())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(filterCount == 1 ? "1 active filter" : "\(filterCount) active filters")
+        .accessibilityLabel(
+          Text(
+            "\(filterCount) active filters",
+            comment: "Accessibility label for badge showing how many search filters are active on a recent search"
+          )
+        )
       }
 
       Spacer(minLength: 0)

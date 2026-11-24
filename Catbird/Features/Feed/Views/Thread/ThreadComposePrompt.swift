@@ -64,8 +64,8 @@ struct ThreadComposePrompt: View {
     .frame(maxWidth: .infinity)
     .padding(.vertical, 8)
     .disabled(isReplyDisabled)
-    .accessibilityLabel(isReplyDisabled ? "Replies to this post are limited" : "Compose reply")
-    .accessibilityHint(isReplyDisabled ? "" : "Opens composer")
+    .accessibilityLabel(isReplyDisabled ? Text("Replies to this post are limited") : Text("Compose reply", comment: "Accessibility label for the thread quick reply button"))
+    .accessibilityHint(isReplyDisabled ? Text(verbatim: "") : Text("Opens composer", comment: "Accessibility hint for the thread quick reply button"))
     .accessibilityIdentifier("thread.composeReply")
 
   }

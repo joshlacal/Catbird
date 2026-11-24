@@ -372,6 +372,15 @@ enum HandleType: String, CaseIterable, Identifiable {
     case customDomain = "Custom Domain"
     
     var id: String { rawValue }
+
+    var displayName: LocalizedStringResource {
+        switch self {
+        case .serviceDomain:
+            LocalizedStringResource("Bluesky Handle", comment: "Option to pick a handle hosted by a Bluesky/ATProto service domain.")
+        case .customDomain:
+            LocalizedStringResource("Custom Domain", comment: "Option to use a custom DNS domain as an ATProto handle.")
+        }
+    }
 }
 
 struct HandleUpdateSheet: View {
@@ -466,14 +475,14 @@ struct HandleUpdateSheet: View {
         NavigationStack {
             Form {
                 Section("Current Handle") {
-                    Text("@\(currentHandle)")
+                    Text(verbatim: "@\(currentHandle)")
                         .foregroundStyle(.secondary)
                 }
                 
                 Section {
                     Picker("Handle Type", selection: $handleType) {
                         ForEach(HandleType.allCases) { type in
-                            Text(type.rawValue).tag(type)
+                            Text(type.displayName).tag(type)
                         }
                     }
                     .pickerStyle(.segmented)
@@ -516,7 +525,7 @@ struct HandleUpdateSheet: View {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         guard let handle = try? Handle(handleString: effectiveHandleString) else {
-                            errorMessage = "That handle isn’t valid. Use letters, numbers and hyphens."
+                            errorMessage = String(localized: "That handle isn’t valid. Use letters, numbers and hyphens.", comment: "Validation error when a typed Bluesky handle has invalid characters.")
                             return
                         }
                         updateTask?.cancel()
@@ -565,7 +574,7 @@ struct HandleUpdateSheet: View {
         Group {
             Section("New Handle") {
                 HStack(spacing: 4) {
-                    Text("@")
+                    Text(verbatim: "@")
                         .foregroundStyle(.secondary)
                     
                     TextField("username", text: $localPart)
@@ -628,7 +637,7 @@ struct HandleUpdateSheet: View {
         Group {
             Section("Your Domain") {
                 HStack {
-                    Text("@")
+                    Text(verbatim: "@")
                         .foregroundStyle(.secondary)
                     TextField("example.com", text: $customDomain)
                         #if os(iOS)
@@ -686,22 +695,28 @@ struct HandleUpdateSheet: View {
                             .appFont(AppTextRole.subheadline)
                         
                         let domainText = cleanedCustomDomain.isEmpty ? "yourdomain.com" : cleanedCustomDomain
-                        (Text("Host / Name: ")
-                            .fontWeight(.semibold)
-                        + Text("_atproto.\(domainText)")
-                            .fontDesign(.monospaced))
-                            .appFont(AppTextRole.caption)
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text("Host / Name:", comment: "Label for DNS TXT record host field.")
+                                .fontWeight(.semibold)
+                            Text(verbatim: "_atproto.\(domainText)")
+                                .fontDesign(.monospaced)
+                        }
+                        .appFont(AppTextRole.caption)
                         
-                        (Text("Type: ")
-                            .fontWeight(.semibold)
-                        + Text("TXT"))
-                            .appFont(AppTextRole.caption)
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text("Type:", comment: "Label for DNS record type field.")
+                                .fontWeight(.semibold)
+                            Text(verbatim: "TXT")
+                        }
+                        .appFont(AppTextRole.caption)
                         
-                        (Text("Value: ")
-                            .fontWeight(.semibold)
-                        + Text("did=\(appState.userDID)")
-                            .fontDesign(.monospaced))
-                            .appFont(AppTextRole.caption)
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text("Value:", comment: "Label for DNS TXT record value field.")
+                                .fontWeight(.semibold)
+                            Text(verbatim: "did=\(appState.userDID)")
+                                .fontDesign(.monospaced)
+                        }
+                        .appFont(AppTextRole.caption)
                     }
                     .padding(8)
                     .background(Color.secondary.opacity(0.1))
@@ -714,17 +729,21 @@ struct HandleUpdateSheet: View {
                             .appFont(AppTextRole.subheadline)
                         
                         let domainText = cleanedCustomDomain.isEmpty ? "yourdomain.com" : cleanedCustomDomain
-                        (Text("URL: ")
-                            .fontWeight(.semibold)
-                        + Text("https://\(domainText)/.well-known/atproto-did")
-                            .fontDesign(.monospaced))
-                            .appFont(AppTextRole.caption)
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text("URL:", comment: "Label for HTTPS well-known verification URL.")
+                                .fontWeight(.semibold)
+                            Text(verbatim: "https://\(domainText)/.well-known/atproto-did")
+                                .fontDesign(.monospaced)
+                        }
+                        .appFont(AppTextRole.caption)
                         
-                        (Text("Content: ")
-                            .fontWeight(.semibold)
-                        + Text(appState.userDID)
-                            .fontDesign(.monospaced))
-                            .appFont(AppTextRole.caption)
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text("Content:", comment: "Label for HTTPS well-known file content.")
+                                .fontWeight(.semibold)
+                            Text(verbatim: appState.userDID)
+                                .fontDesign(.monospaced)
+                        }
+                        .appFont(AppTextRole.caption)
                     }
                     .padding(8)
                     .background(Color.secondary.opacity(0.1))

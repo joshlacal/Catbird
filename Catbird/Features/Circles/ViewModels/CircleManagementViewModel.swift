@@ -6,29 +6,68 @@ import PetrelCatbird
 
 /// Copy constants for Circle management disclosures and confirmations.
 enum CircleManagementCopy {
-  static let metadataReadFailed = "Couldn't read this Circle's settings. Try again."
-  static let addMemberDisclosure = "Newly added members will receive the entire Circle history."
-  static let removeMemberDisclosure = "Removed members cannot access future posts, but prior downloads cannot be recalled."
+  static var metadataReadFailed: String {
+    String(localized: "Couldn't read this Circle's settings. Try again.", comment: "Error when reading a Circle's metadata settings fails.")
+  }
+  static var addMemberDisclosure: String {
+    String(localized: "Newly added members will receive the entire Circle history.", comment: "Disclosure explaining that newly added Circle members can view earlier posts.")
+  }
+  static var removeMemberDisclosure: String {
+    String(localized: "Removed members cannot access future posts, but prior downloads cannot be recalled.", comment: "Disclosure shown before removing a member from a Circle.")
+  }
 
   // Encrypted Circles (spec §6, §7, §9)
-  static let historyToggleLabel = "New members can see earlier posts"
-  static let historyOffAddConfirmation = "They will only see new posts."
-  static let rotateKeyNow = "Rotate key now"
-  static let rotateKeyConfirmation = "Members will need to refresh. Posts you make from now on use a new key."
-  static let retryNow = "Retry now"
-  static let upgradeToEncrypted = "Upgrade to encrypted"
-  static let upgradeIncomplete = "Upgrade incomplete — tap to retry"
-  static let removalPending = "Removal pending"
-  static let accessPending = "Access pending"
-  static let keyRefreshPending = "Key refresh pending"
-  static let waitingToRefreshAccess = "Waiting to refresh access"
-  static let encryptionUnavailableHint = "Encrypted Circles need encrypted features turned on."
-  static let encryptionCheckFailed = "Couldn't check whether this Circle can be encrypted. Try again."
-  static let eligibilityCheckFailed = "Couldn't check who can be carried over. Try again."
-  static let noMembersCanBeCarriedOver = "No members can be carried over yet"
+  static var historyToggleLabel: String {
+    String(localized: "New members can see earlier posts", comment: "Toggle label controlling whether newly added encrypted Circle members receive past keys.")
+  }
+  static var historyOffAddConfirmation: String {
+    String(localized: "They will only see new posts.", comment: "Confirmation detail when adding members to an encrypted Circle with history sharing turned off.")
+  }
+  static var rotateKeyNow: String {
+    String(localized: "Rotate key now", comment: "Button and alert title to manually rotate an encrypted Circle's content key.")
+  }
+  static var rotateKeyConfirmation: String {
+    String(localized: "Members will need to refresh. Posts you make from now on use a new key.", comment: "Confirmation message explaining manual Circle key rotation.")
+  }
+  static var retryNow: String {
+    String(localized: "Retry now", comment: "Button to retry pending Circle key re-wraps or membership changes.")
+  }
+  static var upgradeToEncrypted: String {
+    String(localized: "Upgrade to encrypted", comment: "Button and sheet title to upgrade a plaintext Circle to end-to-end encryption.")
+  }
+  static var upgradeIncomplete: String {
+    String(localized: "Upgrade incomplete — tap to retry", comment: "Button and status message when upgrading a Circle to encrypted stopped partway through.")
+  }
+  static var removalPending: String {
+    String(localized: "Removal pending", comment: "Badge on a Circle member row whose removal is waiting to complete.")
+  }
+  static var accessPending: String {
+    String(localized: "Access pending", comment: "Badge on a Circle member row whose access grant is waiting to complete.")
+  }
+  static var keyRefreshPending: String {
+    String(localized: "Key refresh pending", comment: "Badge on a Circle member row whose history key re-wrap is pending.")
+  }
+  static var waitingToRefreshAccess: String {
+    String(localized: "Waiting to refresh access", comment: "Badge on a Circle member row waiting for encryption key access refresh.")
+  }
+  static var encryptionUnavailableHint: String {
+    String(localized: "Encrypted Circles need encrypted features turned on.", comment: "Hint explaining why encrypted Circles cannot be created or upgraded yet.")
+  }
+  static var encryptionCheckFailed: String {
+    String(localized: "Couldn't check whether this Circle can be encrypted. Try again.", comment: "Error when checking encrypted Circle capability fails.")
+  }
+  static var eligibilityCheckFailed: String {
+    String(localized: "Couldn't check who can be carried over. Try again.", comment: "Error when checking which Circle members support encryption fails.")
+  }
+  static var noMembersCanBeCarriedOver: String {
+    String(localized: "No members can be carried over yet", comment: "Warning when none of a Circle's current members have enabled encrypted features.")
+  }
 
   static func ineligibleMember(handle: String) -> String {
-    "Can't add: \(handle) hasn't enabled encrypted features."
+    String(
+      localized: "Can't add: \(handle) hasn't enabled encrypted features.",
+      comment: "Message when a person cannot be added to an encrypted Circle — %1$@ is their handle or DID."
+    )
   }
 
   /// Badge copy for a pending entry's reason (`CircleKeyManager` reasons; any
@@ -178,7 +217,10 @@ final class CircleManagementViewModel {
   static func validateName(_ name: String) -> Result<String, CircleError> {
     let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty, (1...64).contains(trimmed.count) else {
-      return .failure(.invalidParameter("Circle name must be between 1 and 64 characters"))
+      return .failure(.invalidParameter(String(
+        localized: "Circle name must be between 1 and 64 characters",
+        comment: "Validation error when a Circle name is empty or exceeds 64 characters."
+      )))
     }
     return .success(trimmed)
   }
@@ -195,7 +237,10 @@ final class CircleManagementViewModel {
       }
     }
     guard uniqueDIDs.count <= 150 else {
-      return .failure(.invalidParameter("Circle cannot exceed 150 unique members"))
+      return .failure(.invalidParameter(String(
+        localized: "Circle cannot exceed 150 unique members",
+        comment: "Validation error when more than 150 members are added to a Circle."
+      )))
     }
     return .success(uniqueDIDs)
   }
@@ -339,7 +384,10 @@ final class CircleManagementViewModel {
     }
 
     guard members.count < 150 else {
-      let error = CircleError.invalidParameter("Circle cannot exceed 150 unique members")
+      let error = CircleError.invalidParameter(String(
+        localized: "Circle cannot exceed 150 unique members",
+        comment: "Validation error when more than 150 members are added to a Circle."
+      ))
       state = .failed(message: error.localizedDescription)
       throw error
     }

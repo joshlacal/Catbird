@@ -288,10 +288,10 @@ enum MLSDeviceActivityState: String, Equatable, Sendable {
 
     var badgeTitle: String {
         switch self {
-        case .active: "Active"
-        case .dormant: "Dormant"
-        case .pendingApproval: "Pending Approval"
-        case .revoked: "Revoked"
+        case .active: String(localized: "Active", comment: "MLS device status badge.")
+        case .dormant: String(localized: "Dormant", comment: "MLS device status badge.")
+        case .pendingApproval: String(localized: "Pending Approval", comment: "MLS device status badge.")
+        case .revoked: String(localized: "Revoked", comment: "MLS device status badge.")
         }
     }
 
@@ -551,7 +551,7 @@ struct DeviceRow: View {
                             .accessibilityIdentifier("device-status-badge-\(device.activityState.rawValue)")
                     }
 
-                    Text("\(device.deviceId.prefix(8))… · \(formatDate(device.lastSeenAt))")
+                    Text(verbatim: "\(device.deviceId.prefix(8))… · \(formatDate(device.lastSeenAt))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
@@ -574,7 +574,7 @@ struct DeviceRow: View {
                         .accessibilityIdentifier("device-approve-\(device.deviceId)")
                     }
                     Label {
-                        Text("\(device.keyPackageCount)")
+                        Text(device.keyPackageCount, format: .number)
                             .font(.caption)
                     } icon: {
                         Image(systemName: "key.fill")
@@ -585,7 +585,7 @@ struct DeviceRow: View {
             }
 
             if let deviceUUID = device.deviceUUID {
-                Text("UUID: \(deviceUUID.prefix(8))…")
+                Text(verbatim: "UUID: \(deviceUUID.prefix(8))…")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -642,13 +642,13 @@ struct DeviceRow: View {
         let components = Calendar.current.dateComponents([.day, .hour, .minute], from: date, to: now)
 
         if let days = components.day, days > 0 {
-            return days == 1 ? "Last seen 1 day ago" : "Last seen \(days) days ago"
+            return String(localized: "Last seen \(days) days ago", comment: "Relative timestamp showing how many days ago a device was last active.")
         } else if let hours = components.hour, hours > 0 {
-            return hours == 1 ? "Last seen 1 hour ago" : "Last seen \(hours) hours ago"
+            return String(localized: "Last seen \(hours) hours ago", comment: "Relative timestamp showing how many hours ago a device was last active.")
         } else if let minutes = components.minute, minutes > 0 {
-            return minutes == 1 ? "Last seen 1 minute ago" : "Last seen \(minutes) minutes ago"
+            return String(localized: "Last seen \(minutes) minutes ago", comment: "Relative timestamp showing how many minutes ago a device was last active.")
         } else {
-            return "Last seen just now"
+            return String(localized: "Last seen just now", comment: "Relative timestamp showing a device was active moments ago.")
         }
     }
 }

@@ -98,7 +98,7 @@ struct MacOSUnifiedSidebar: View {
       Label("Notifications", systemImage: "bell")
       Spacer()
       if appState.notificationManager.unreadCount > 0 {
-        Text("\(appState.notificationManager.unreadCount)")
+        Text(appState.notificationManager.unreadCount, format: .number)
           .font(.caption2)
           .fontWeight(.bold)
           .foregroundStyle(.white)
@@ -117,7 +117,7 @@ struct MacOSUnifiedSidebar: View {
       Label("Chat", systemImage: "bubble.left.and.bubble.right")
       Spacer()
       if appState.totalMessagesUnreadCount > 0 {
-        Text("\(appState.totalMessagesUnreadCount)")
+        Text(appState.totalMessagesUnreadCount, format: .number)
           .font(.caption2)
           .fontWeight(.bold)
           .foregroundStyle(.white)
@@ -184,15 +184,17 @@ struct MacOSUnifiedSidebar: View {
 
   private func feedDisplayName(for feedURI: String) -> String {
     guard let vm = viewModel else { return feedURI }
-    if SystemFeedTypes.isTimelineFeed(feedURI) { return "Timeline" }
+    if SystemFeedTypes.isTimelineFeed(feedURI) {
+      return String(localized: "Timeline", comment: "Display name for the primary Following timeline feed.")
+    }
     if let uri = try? ATProtocolURI(uriString: feedURI) {
       if let generator = vm.feedGenerators[uri] { return generator.displayName }
       if let list = vm.listDetails[uri] { return list.name }
     }
     if let uri = try? ATProtocolURI(uriString: feedURI) {
-      return uri.recordKey ?? "Feed"
+      return uri.recordKey ?? String(localized: "Feed", comment: "Fallback display name for an unnamed custom feed.")
     }
-    return "Feed"
+    return String(localized: "Feed", comment: "Fallback display name for an unnamed custom feed.")
   }
 
   private func feedIcon(for feedURI: String) -> String {

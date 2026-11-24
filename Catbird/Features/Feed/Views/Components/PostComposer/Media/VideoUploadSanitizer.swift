@@ -26,15 +26,15 @@ enum VideoUploadSanitizationError: LocalizedError, Equatable {
   var errorDescription: String? {
     switch self {
     case .unreadable:
-      return "This video’s format isn’t supported for upload. Your attachment is still here."
+      return String(localized: "This video’s format isn’t supported for upload. Your attachment is still here.", comment: "Error when video file cannot be read or sanitized for upload")
     case .exportFailed:
-      return "Couldn’t prepare your video for upload. Your attachment is still here; try again."
+      return String(localized: "Couldn’t prepare your video for upload. Your attachment is still here; try again.", comment: "Error when passthrough video export fails during upload preparation")
     case .metadataRemained:
-      return "Couldn’t remove location and device details from this video, so it wasn’t uploaded. Your attachment is still here."
+      return String(localized: "Couldn’t remove location and device details from this video, so it wasn’t uploaded. Your attachment is still here.", comment: "Error when video metadata stripping verification fails")
     case .tooLarge:
       return VideoUploadPolicy.sizeMessage
     case .insufficientStorage:
-      return "There isn’t enough free space on this device to prepare your video for upload. Free up some space and try again. Your attachment is still here."
+      return String(localized: "There isn’t enough free space on this device to prepare your video for upload. Free up some space and try again. Your attachment is still here.", comment: "Error when device lacks free storage to prepare video for upload")
     }
   }
 }

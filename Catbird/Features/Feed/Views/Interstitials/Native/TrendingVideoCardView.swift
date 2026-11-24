@@ -63,7 +63,7 @@ final class TrendingVideoCardView: TrendingCardControl {
     }
     isAccessibilityElement = true
     accessibilityTraits = .button
-    accessibilityHint = "Play this video in The Vids"
+    accessibilityHint = String(localized: "Play this video in The Vids", comment: "VoiceOver hint for a trending video card")
   }
 
   @available(*, unavailable)

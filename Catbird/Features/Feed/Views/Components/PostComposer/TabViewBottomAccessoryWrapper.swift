@@ -107,8 +107,13 @@ struct TabViewBottomAccessoryWrapper: View {
         }
         
         // Draft content preview
-        let previewText = draft.postText.isEmpty ? "Draft in progress…" : draft.postText
-        Text("Draft: \(String(previewText.prefix(30)))\(previewText.count > 30 ? "…" : "")")
+        let previewText = draft.postText.isEmpty
+          ? String(localized: "Draft in progress…", comment: "Placeholder text for minimized empty draft in tab bar accessory")
+          : draft.postText
+        let truncatedPreview = previewText.count > 30
+          ? "\(previewText.prefix(30))…"
+          : previewText
+        Text("Draft: \(truncatedPreview)", comment: "Minimized composer bar showing draft text preview")
           .font(.system(size: 14))
           .foregroundColor(.primary)
           .lineLimit(1)
@@ -127,7 +132,7 @@ struct TabViewBottomAccessoryWrapper: View {
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
               if draft.mediaItems.count > 1 {
-                Text("\(draft.mediaItems.count)")
+                Text(draft.mediaItems.count, format: .number)
                   .font(.system(size: 10, weight: .semibold))
                   .foregroundColor(.secondary)
               }
@@ -138,7 +143,7 @@ struct TabViewBottomAccessoryWrapper: View {
                 .foregroundColor(.secondary)
             }
             if hasGif {
-              Text("GIF")
+              Text("GIF", comment: "Badge indicating attached GIF in minimized draft bar")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(.secondary)
             }
@@ -148,7 +153,7 @@ struct TabViewBottomAccessoryWrapper: View {
         // Character count
         let remaining = 300 - draft.postText.count
         if remaining < 20 {
-          Text("\(remaining)")
+          Text(remaining, format: .number)
             .font(.system(size: 12, weight: .medium))
             .foregroundColor(remaining < 0 ? .red : .orange)
         }
@@ -164,6 +169,7 @@ struct TabViewBottomAccessoryWrapper: View {
             .foregroundColor(.secondary)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Discard Draft")
       }
       .padding(.horizontal, 16)
       .padding(.vertical, 12)

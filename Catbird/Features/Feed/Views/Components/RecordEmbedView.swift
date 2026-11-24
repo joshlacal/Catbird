@@ -197,7 +197,7 @@ struct RecordEmbedView: View {
                                 .appFont(AppTextRole.subheadline.weight(.semibold))
                                 .foregroundStyle(.primary)
                                 .lineLimit(1)
-                            Text("@\(post.author.handle.description)")
+                            Text(verbatim: "@\(post.author.handle.description)")
                                 .appFont(AppTextRole.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -330,12 +330,15 @@ struct RecordEmbedView: View {
                     case .appBskyEmbedRecordViewRecord(let viewRecord):
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
-                                Image(systemName: "chevron.right.circle")
+                                Image(systemName: "chevron.forward.circle")
                                     .appFont(AppTextRole.caption)
                                     .foregroundStyle(.secondary)
 
                                 EmbeddedAuthorNameView(
-                                    name: "Quoting @\(viewRecord.author.handle)",
+                                    name: String(
+                                        localized: "Quoting @\(viewRecord.author.handle)",
+                                        comment: "Nested quote attribution inside an embedded post — variable is the quoted author's handle"
+                                    ),
                                     verification: viewRecord.author.verification,
                                     isAutomated: AutomationBadge.isSelfDeclared(labels: viewRecord.author.labels, authorDID: viewRecord.author.did)
                                 )

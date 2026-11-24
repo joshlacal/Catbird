@@ -99,9 +99,15 @@ private struct PlatformAgeAccessNotice: View {
 
   private var unavailableExplanation: String {
     #if os(iOS)
-    "Your device’s age requirements currently prevent using this feature. You can retry the system check. Settings and safety tools remain available."
+    String(
+      localized: "Your device’s age requirements currently prevent using this feature. You can retry the system check. Settings and safety tools remain available.",
+      comment: "Explanation shown on iOS when platform age requirements prevent access to a feature."
+    )
     #else
-    "This device cannot complete the required age check. You can retry to check current availability. Settings and safety tools remain available."
+    String(
+      localized: "This device cannot complete the required age check. You can retry to check current availability. Settings and safety tools remain available.",
+      comment: "Explanation shown on macOS when platform age check cannot be completed."
+    )
     #endif
   }
 

@@ -209,7 +209,7 @@ struct DataBackupSettingsView: View {
         }
       } catch {
         await MainActor.run {
-          errorMessage = "Failed to load backups: \(error.localizedDescription)"
+          errorMessage = String(localized: "Failed to load backups: \(error.localizedDescription)", comment: "Error alert message — variable is the underlying error description.")
           showError = true
         }
       }
@@ -235,7 +235,7 @@ struct DataBackupSettingsView: View {
         config = newConfig
       }
     } catch {
-      errorMessage = "Failed to load backup settings: \(error.localizedDescription)"
+      errorMessage = String(localized: "Failed to load backup settings: \(error.localizedDescription)", comment: "Error alert message — variable is the underlying error description.")
       showError = true
     }
   }
@@ -244,7 +244,7 @@ struct DataBackupSettingsView: View {
     do {
       try modelContext.save()
     } catch {
-      errorMessage = "Failed to save settings: \(error.localizedDescription)"
+      errorMessage = String(localized: "Failed to save settings: \(error.localizedDescription)", comment: "Error alert message — variable is the underlying error description.")
       showError = true
     }
   }
@@ -253,7 +253,7 @@ struct DataBackupSettingsView: View {
 
   private func startBackup() {
     guard let backupManager = appState.backupManager else {
-      errorMessage = "Backup manager not available"
+      errorMessage = String(localized: "Backup manager not available", comment: "Error alert message when backup service is unavailable.")
       showError = true
       return
     }
@@ -274,7 +274,7 @@ struct DataBackupSettingsView: View {
         await MainActor.run {
           isBackingUp = false
           backupProgress = 0
-          errorMessage = "Backup failed: \(error.localizedDescription)"
+          errorMessage = String(localized: "Backup failed: \(error.localizedDescription)", comment: "Error alert message — variable is the underlying error description.")
           showError = true
         }
       }
@@ -292,7 +292,7 @@ struct DataBackupSettingsView: View {
         }
       } catch {
         await MainActor.run {
-          errorMessage = "Verification failed: \(error.localizedDescription)"
+          errorMessage = String(localized: "Verification failed: \(error.localizedDescription)", comment: "Error alert message — variable is the underlying error description.")
           showError = true
         }
       }
@@ -301,7 +301,7 @@ struct DataBackupSettingsView: View {
 
   private func deleteBackups(at offsets: IndexSet) {
     guard let backupManager = appState.backupManager else {
-      errorMessage = "Backup manager not available"
+      errorMessage = String(localized: "Backup manager not available", comment: "Error alert message when backup service is unavailable.")
       showError = true
       return
     }
@@ -318,7 +318,7 @@ struct DataBackupSettingsView: View {
         }
       } catch {
         await MainActor.run {
-          errorMessage = "Failed to delete backup: \(error.localizedDescription)"
+          errorMessage = String(localized: "Failed to delete backup: \(error.localizedDescription)", comment: "Error alert message — variable is the underlying error description.")
           showError = true
         }
       }

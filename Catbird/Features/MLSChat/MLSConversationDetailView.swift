@@ -126,7 +126,7 @@ struct MLSOrdinaryConversationDetailView: View {
         UnifiedChatView(
           dataSource: dataSource,
           navigationPath: chatNavigationPath,
-          title: groupTitle ?? "Encrypted Chat",
+          title: groupTitle ?? String(localized: "Encrypted Chat", comment: "Fallback navigation title for an unnamed MLS encrypted chat"),
           kind: .encrypted,
           composerConfig: makeComposerConfig(for: dataSource),
           onEditMessage: { message in
@@ -619,10 +619,16 @@ struct MLSOrdinaryConversationDetailView: View {
             ))
             .disabled(isUpdatingHistoryBackup)
             .accessibilityIdentifier("chatInfo.historyBackup")
-            LabeledContent("This device", value: "Supports this setting")
+            LabeledContent("This device") {
+              Text("Supports this setting", comment: "Capability status for this device in group history backup settings")
+            }
             ForEach(nonSelfParticipantDIDs, id: \.self) { did in
               let profile = dataSource?.enrichedProfilesSnapshot[MLSProfileEnricher.canonicalDID(did)]
-              LabeledContent(profile.map { "@\($0.handle)" } ?? did, value: "Support unconfirmed")
+              LabeledContent {
+                Text("Support unconfirmed", comment: "Capability status when another participant's client has not confirmed history backup support")
+              } label: {
+                Text(verbatim: profile.map { "@\($0.handle)" } ?? did)
+              }
             }
           } header: {
             Text("Group History Backup")

@@ -138,7 +138,11 @@ struct NotificationsView: View {
       // A failed refresh keeps the loaded list on screen and reports the problem as a toast.
       guard hasError, !viewModel.groupedNotifications.isEmpty else { return }
       appState.toastManager.show(ToastItem(
-        message: "Couldn’t refresh notifications", icon: "exclamationmark.triangle.fill"))
+        message: String(
+          localized: "Couldn’t refresh notifications",
+          comment: "Toast message shown when refreshing notifications fails"
+        ),
+        icon: "exclamationmark.triangle.fill"))
       viewModel.clearError()
     }
   }
@@ -226,8 +230,8 @@ struct NotificationsView: View {
     #if compiler(>=6.4)
     if #available(anyAppleOS 27.0, *) {
       Picker("Filter", selection: $selectedFilter) {
-        Text("All").tag(NotificationsViewModel.NotificationFilter.all)
-        Text("Mentions").tag(NotificationsViewModel.NotificationFilter.mentions)
+        Text("All", comment: "Notifications filter tab showing all activity").tag(NotificationsViewModel.NotificationFilter.all)
+        Text("Mentions", comment: "Notifications filter tab showing only mentions, replies, and quotes").tag(NotificationsViewModel.NotificationFilter.mentions)
       }
       .buttonBorderShape(.capsule)
       .pickerStyle(.tabs)
@@ -256,7 +260,10 @@ struct NotificationsView: View {
       if let error = viewModel.error, viewModel.groupedNotifications.isEmpty {
         ErrorStateView(
           error: error,
-          context: "Couldn’t load notifications",
+          context: String(
+            localized: "Couldn’t load notifications",
+            comment: "Error state title when notifications fail to load"
+          ),
           retryAction: { Task { await retryLoadNotifications() } }
         )
       } else if (viewModel.isLoading || viewModel.isRefreshing) && viewModel.groupedNotifications.isEmpty {
@@ -289,16 +296,26 @@ struct NotificationsView: View {
         .appFont(size: 48)
         .foregroundColor(.secondary)
 
-      Text(isMentions ? "No Mentions Yet" : "No Notifications")
-        .enhancedAppHeadline()
-        .fontWeight(.semibold)
+      Group {
+        if isMentions {
+          Text("No Mentions Yet")
+        } else {
+          Text("No Notifications")
+        }
+      }
+      .enhancedAppHeadline()
+      .fontWeight(.semibold)
 
-      Text(isMentions
-        ? "Replies, mentions, and quotes will appear here."
-        : "You don’t have any notifications yet.")
-        .enhancedAppSubheadline()
-        .foregroundColor(.secondary)
-        .multilineTextAlignment(.center)
+      Group {
+        if isMentions {
+          Text("Replies, mentions, and quotes will appear here.")
+        } else {
+          Text("You don’t have any notifications yet.")
+        }
+      }
+      .enhancedAppSubheadline()
+      .foregroundColor(.secondary)
+      .multilineTextAlignment(.center)
 
       if viewModel.hasMoreNotifications {
         loadMoreFilteredNotificationsButton
@@ -352,7 +369,10 @@ struct NotificationsView: View {
         if let error = viewModel.error, viewModel.groupedNotifications.isEmpty, appState.circlesEnabled {
           ErrorStateView(
             error: error,
-            context: "Couldn’t load public notifications",
+            context: String(
+              localized: "Couldn’t load public notifications",
+              comment: "Error state title when public Bluesky notifications fail to load"
+            ),
             retryAction: { Task { await retryLoadNotifications() } }
           )
           .listRowSeparator(.hidden)
@@ -604,14 +624,14 @@ struct NotificationCard: View, Equatable {
                 }
               }
 
-              Text("@\(notification.author.handle)")
+              Text(verbatim: "@\(notification.author.handle)")
                 .appSubheadline()
                 .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
             }
 
             Spacer()
 
-            Image(systemName: "chevron.right")
+            Image(systemName: "chevron.forward")
               .appFont(AppTextRole.caption)
               .foregroundColor(.secondary.opacity(0.6))
           }
@@ -721,94 +741,407 @@ struct NotificationCard: View, Equatable {
     .contentShape(Rectangle())
   }
 
-  /// The verb phrase that follows the (first) author's name, e.g. " liked your post".
-  /// Kept separate from the composed `Text` so the verified badge can be inserted
-  /// between the bold author name and this phrase.
-  private var notificationVerbPhrase: String {
-    let count = group.notifications.count
-    let others = count - 1
-    let othersSuffix = " and \(others) other\(count > 2 ? "s" : "")"
-
-    switch (group.type, count) {
-    case (.like, 1): return " liked your post"
-    case (.like, _): return "\(othersSuffix) liked your post"
-    case (.repost, 1): return " reposted your post"
-    case (.repost, _): return "\(othersSuffix) reposted your post"
-    case (.likeViaRepost, 1): return " liked your repost"
-    case (.likeViaRepost, _): return "\(othersSuffix) liked your repost"
-    case (.repostViaRepost, 1): return " reposted your repost"
-    case (.repostViaRepost, _): return "\(othersSuffix) reposted your repost"
-    case (.follow, 1): return " followed you"
-    case (.follow, _): return "\(othersSuffix) followed you"
-    case (.followBack, 1): return " followed you back"
-    case (.followBack, _): return "\(othersSuffix) followed you back"
-    case (.mention, 1): return " mentioned you in a post"
-    case (.mention, _): return "\(othersSuffix) mentioned you"
-    case (.reply, 1): return " replied to your post"
-    case (.reply, _): return "\(othersSuffix) replied"
-    case (.quote, 1): return " quoted your post"
-    case (.quote, _): return "\(othersSuffix) quoted"
-    case (.activitySubscription, 1): return " shared a new post"
-    case (.activitySubscription, let n): return " shared \(n) new posts"
-    case (.starterpackJoined, 1): return " signed up with your starter pack"
-    case (.starterpackJoined, _): return "\(othersSuffix) signed up with your starter pack"
-    case (.verified, _): return " verified your account"
-    case (.unverified, _): return " removed their verification from your account"
-    case (.contactMatch, _): return " is on Bluesky"
-    case (.feedgenLike, 1): return " liked your custom feed"
-    case (.feedgenLike, _): return "\(othersSuffix) liked your custom feed"
-    }
-  }
-
-  /// First author's display name (falls back to @handle, then "Someone").
-  private var notificationAuthorName: String {
-    let firstAuthor = group.notifications.first?.author
-    if let displayName = firstAuthor?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines), !displayName.isEmpty {
+  /// Resolves an actor's display name (falling back to `@handle`, then localized `"Someone"`).
+  private func actorDisplayName(for author: AppBskyActorDefs.ProfileView?) -> String {
+    if let displayName = author?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines), !displayName.isEmpty {
       return displayName
-    } else if let handle = firstAuthor?.handle {
-      return "@" + handle.description
+    } else if let handle = author?.handle {
+      return "@\(handle.description)"
     }
-    return "Someone"
+    return String(
+      localized: "Someone",
+      comment: "Fallback actor name when a notification author's profile name is unavailable"
+    )
   }
 
-  /// Composed `Text` for the notification sentence: bold author name, an optional
-  /// inline verified badge, then the verb phrase. Built with `Text` concatenation
-  /// (not `AttributedString`) so the SwiftUI badge image can be embedded inline
-  /// while preserving FontManager typography, baseline, and line wrapping.
-  private var notificationText: Text {
-    let firstAuthor = group.notifications.first?.author
-    let bodyFont = appState.fontManager.fontForTextRole(.body)
-    let authorName = notificationAuthorName
-
-    var sentence = Text(authorName).font(bodyFont.bold())
-
-    if let author = firstAuthor,
+  /// Styled `Text` for a notification actor: bold name plus optional inline verification badge.
+  private func styledActorText(for author: AppBskyActorDefs.ProfileView?, bodyFont: Font) -> Text {
+    var actorText = Text(actorDisplayName(for: author)).font(bodyFont.bold())
+    if let author,
        let badge = VerificationBadge.inlineText(
          for: author.verification,
          did: author.did,
          hideBadges: appState.preferencesManager.hideVerificationBadges
        ) {
-      sentence = sentence + Text(verbatim: " ") + badge
+      actorText = actorText + Text(verbatim: " ") + badge
     }
-
-    sentence = sentence + Text(notificationVerbPhrase).font(bodyFont)
-    return sentence
+    return actorText
   }
 
-  /// VoiceOver-friendly version of the notification sentence. `Text(Image:)` does
-  /// not narrate the badge, so we splice the badge's spoken label in explicitly.
-  private var notificationAccessibilityLabel: String {
-    let firstAuthor = group.notifications.first?.author
-    var label = notificationAuthorName
-    if let author = firstAuthor,
+  /// Spoken actor name for VoiceOver, including verification status when present.
+  private func spokenActorName(for author: AppBskyActorDefs.ProfileView?) -> String {
+    let name = actorDisplayName(for: author)
+    if let author,
        let kind = VerificationBadge.kind(
          for: author.verification,
          did: author.did,
          hideBadges: appState.preferencesManager.hideVerificationBadges
        ) {
-      label += ", \(kind.accessibilityLabel),"
+      return String(
+        localized: "\(name), \(kind.accessibilityLabel)",
+        comment: "VoiceOver actor name with verification status. %1$@ is the actor's name, %2$@ is the verification badge description."
+      )
     }
-    return label + notificationVerbPhrase
+    return name
+  }
+
+  /// Composed `Text` for the notification sentence using single localized templates so
+  /// translators can reorder actor names and counts across languages (Japanese, Korean,
+  /// Arabic, German, Spanish) while keeping bold actor styling and inline verification badges.
+  private var notificationText: Text {
+    let bodyFont = appState.fontManager.fontForTextRole(.body)
+    let count = group.notifications.count
+    let firstActor = styledActorText(for: group.notifications.first?.author, bodyFont: bodyFont)
+
+    let sentence: Text
+    switch group.type {
+    case .activitySubscription:
+      if count <= 1 {
+        sentence = Text(
+          "\(firstActor) shared a new post",
+          comment: "Notification summary when a subscribed account shares one new post. %@ is the author's name."
+        )
+      } else {
+        sentence = Text(
+          "\(firstActor) shared \(count) new posts",
+          comment: "Notification summary when a subscribed account shares new posts. %1$@ is the author's name, %2$lld is the post count."
+        )
+      }
+    case .verified:
+      sentence = Text(
+        "\(firstActor) verified your account",
+        comment: "Notification summary when a verifier verifies the user's account. %@ is the verifier's name."
+      )
+    case .unverified:
+      sentence = Text(
+        "\(firstActor) removed their verification from your account",
+        comment: "Notification summary when a verifier removes verification from the user's account. %@ is the verifier's name."
+      )
+    case .contactMatch:
+      sentence = Text(
+        "\(firstActor) is on Bluesky",
+        comment: "Notification summary when a contact joins Bluesky. %@ is the contact's name."
+      )
+    case .like:
+      if count == 2 {
+        let secondActor = styledActorText(for: group.notifications[1].author, bodyFont: bodyFont)
+        sentence = Text(
+          "\(firstActor) and \(secondActor) liked your post",
+          comment: "Notification summary when two people liked the user's post. %1$@ is the first person's name, %2$@ is the second person's name."
+        )
+      } else if count > 2 {
+        let others = count - 1
+        sentence = Text(
+          "\(firstActor) and \(others) others liked your post",
+          comment: "Notification summary when multiple people liked the user's post. %1$@ is the first person's name, %2$lld is the number of additional people."
+        )
+      } else {
+        sentence = Text(
+          "\(firstActor) liked your post",
+          comment: "Notification summary when one person liked the user's post. %@ is the person's name."
+        )
+      }
+    case .repost:
+      if count == 2 {
+        let secondActor = styledActorText(for: group.notifications[1].author, bodyFont: bodyFont)
+        sentence = Text(
+          "\(firstActor) and \(secondActor) reposted your post",
+          comment: "Notification summary when two people reposted the user's post. %1$@ is the first person's name, %2$@ is the second person's name."
+        )
+      } else if count > 2 {
+        let others = count - 1
+        sentence = Text(
+          "\(firstActor) and \(others) others reposted your post",
+          comment: "Notification summary when multiple people reposted the user's post. %1$@ is the first person's name, %2$lld is the number of additional people."
+        )
+      } else {
+        sentence = Text(
+          "\(firstActor) reposted your post",
+          comment: "Notification summary when one person reposted the user's post. %@ is the person's name."
+        )
+      }
+    case .likeViaRepost:
+      if count == 2 {
+        let secondActor = styledActorText(for: group.notifications[1].author, bodyFont: bodyFont)
+        sentence = Text(
+          "\(firstActor) and \(secondActor) liked your repost",
+          comment: "Notification summary when two people liked the user's repost. %1$@ is the first person's name, %2$@ is the second person's name."
+        )
+      } else if count > 2 {
+        let others = count - 1
+        sentence = Text(
+          "\(firstActor) and \(others) others liked your repost",
+          comment: "Notification summary when multiple people liked the user's repost. %1$@ is the first person's name, %2$lld is the number of additional people."
+        )
+      } else {
+        sentence = Text(
+          "\(firstActor) liked your repost",
+          comment: "Notification summary when one person liked the user's repost. %@ is the person's name."
+        )
+      }
+    case .repostViaRepost:
+      if count == 2 {
+        let secondActor = styledActorText(for: group.notifications[1].author, bodyFont: bodyFont)
+        sentence = Text(
+          "\(firstActor) and \(secondActor) reposted your repost",
+          comment: "Notification summary when two people reposted the user's repost. %1$@ is the first person's name, %2$@ is the second person's name."
+        )
+      } else if count > 2 {
+        let others = count - 1
+        sentence = Text(
+          "\(firstActor) and \(others) others reposted your repost",
+          comment: "Notification summary when multiple people reposted the user's repost. %1$@ is the first person's name, %2$lld is the number of additional people."
+        )
+      } else {
+        sentence = Text(
+          "\(firstActor) reposted your repost",
+          comment: "Notification summary when one person reposted the user's repost. %@ is the person's name."
+        )
+      }
+    case .follow:
+      if count == 2 {
+        let secondActor = styledActorText(for: group.notifications[1].author, bodyFont: bodyFont)
+        sentence = Text(
+          "\(firstActor) and \(secondActor) followed you",
+          comment: "Notification summary when two people followed the user. %1$@ is the first person's name, %2$@ is the second person's name."
+        )
+      } else if count > 2 {
+        let others = count - 1
+        sentence = Text(
+          "\(firstActor) and \(others) others followed you",
+          comment: "Notification summary when multiple people followed the user. %1$@ is the first person's name, %2$lld is the number of additional people."
+        )
+      } else {
+        sentence = Text(
+          "\(firstActor) followed you",
+          comment: "Notification summary when one person followed the user. %@ is the person's name."
+        )
+      }
+    case .followBack:
+      if count == 2 {
+        let secondActor = styledActorText(for: group.notifications[1].author, bodyFont: bodyFont)
+        sentence = Text(
+          "\(firstActor) and \(secondActor) followed you back",
+          comment: "Notification summary when two people followed the user back. %1$@ is the first person's name, %2$@ is the second person's name."
+        )
+      } else if count > 2 {
+        let others = count - 1
+        sentence = Text(
+          "\(firstActor) and \(others) others followed you back",
+          comment: "Notification summary when multiple people followed the user back. %1$@ is the first person's name, %2$lld is the number of additional people."
+        )
+      } else {
+        sentence = Text(
+          "\(firstActor) followed you back",
+          comment: "Notification summary when one person followed the user back. %@ is the person's name."
+        )
+      }
+    case .mention:
+      if count == 2 {
+        let secondActor = styledActorText(for: group.notifications[1].author, bodyFont: bodyFont)
+        sentence = Text(
+          "\(firstActor) and \(secondActor) mentioned you",
+          comment: "Notification summary when two people mentioned the user. %1$@ is the first person's name, %2$@ is the second person's name."
+        )
+      } else if count > 2 {
+        let others = count - 1
+        sentence = Text(
+          "\(firstActor) and \(others) others mentioned you",
+          comment: "Notification summary when multiple people mentioned the user. %1$@ is the first person's name, %2$lld is the number of additional people."
+        )
+      } else {
+        sentence = Text(
+          "\(firstActor) mentioned you in a post",
+          comment: "Notification summary when one person mentioned the user in a post. %@ is the person's name."
+        )
+      }
+    case .reply:
+      if count == 2 {
+        let secondActor = styledActorText(for: group.notifications[1].author, bodyFont: bodyFont)
+        sentence = Text(
+          "\(firstActor) and \(secondActor) replied",
+          comment: "Notification summary when two people replied to the user. %1$@ is the first person's name, %2$@ is the second person's name."
+        )
+      } else if count > 2 {
+        let others = count - 1
+        sentence = Text(
+          "\(firstActor) and \(others) others replied",
+          comment: "Notification summary when multiple people replied to the user. %1$@ is the first person's name, %2$lld is the number of additional people."
+        )
+      } else {
+        sentence = Text(
+          "\(firstActor) replied to your post",
+          comment: "Notification summary when one person replied to the user's post. %@ is the person's name."
+        )
+      }
+    case .quote:
+      if count == 2 {
+        let secondActor = styledActorText(for: group.notifications[1].author, bodyFont: bodyFont)
+        sentence = Text(
+          "\(firstActor) and \(secondActor) quoted",
+          comment: "Notification summary when two people quoted the user. %1$@ is the first person's name, %2$@ is the second person's name."
+        )
+      } else if count > 2 {
+        let others = count - 1
+        sentence = Text(
+          "\(firstActor) and \(others) others quoted",
+          comment: "Notification summary when multiple people quoted the user. %1$@ is the first person's name, %2$lld is the number of additional people."
+        )
+      } else {
+        sentence = Text(
+          "\(firstActor) quoted your post",
+          comment: "Notification summary when one person quoted the user's post. %@ is the person's name."
+        )
+      }
+    case .starterpackJoined:
+      if count == 2 {
+        let secondActor = styledActorText(for: group.notifications[1].author, bodyFont: bodyFont)
+        sentence = Text(
+          "\(firstActor) and \(secondActor) signed up with your starter pack",
+          comment: "Notification summary when two people signed up using the user's starter pack. %1$@ is the first person's name, %2$@ is the second person's name."
+        )
+      } else if count > 2 {
+        let others = count - 1
+        sentence = Text(
+          "\(firstActor) and \(others) others signed up with your starter pack",
+          comment: "Notification summary when multiple people signed up using the user's starter pack. %1$@ is the first person's name, %2$lld is the number of additional people."
+        )
+      } else {
+        sentence = Text(
+          "\(firstActor) signed up with your starter pack",
+          comment: "Notification summary when one person signed up using the user's starter pack. %@ is the person's name."
+        )
+      }
+    case .feedgenLike:
+      if count == 2 {
+        let secondActor = styledActorText(for: group.notifications[1].author, bodyFont: bodyFont)
+        sentence = Text(
+          "\(firstActor) and \(secondActor) liked your custom feed",
+          comment: "Notification summary when two people liked the user's custom feed. %1$@ is the first person's name, %2$@ is the second person's name."
+        )
+      } else if count > 2 {
+        let others = count - 1
+        sentence = Text(
+          "\(firstActor) and \(others) others liked your custom feed",
+          comment: "Notification summary when multiple people liked the user's custom feed. %1$@ is the first person's name, %2$lld is the number of additional people."
+        )
+      } else {
+        sentence = Text(
+          "\(firstActor) liked your custom feed",
+          comment: "Notification summary when one person liked the user's custom feed. %@ is the person's name."
+        )
+      }
+    }
+
+    return sentence.font(bodyFont)
+  }
+
+  /// VoiceOver-friendly version of the notification sentence using the same localized templates.
+  /// `Text(Image:)` does not narrate the badge, so we include the badge's spoken label in each actor name.
+  private var notificationAccessibilityLabel: String {
+    let count = group.notifications.count
+    let firstActor = spokenActorName(for: group.notifications.first?.author)
+
+    switch group.type {
+    case .activitySubscription:
+      return count <= 1
+        ? String(localized: "\(firstActor) shared a new post")
+        : String(localized: "\(firstActor) shared \(count) new posts")
+    case .verified:
+      return String(localized: "\(firstActor) verified your account")
+    case .unverified:
+      return String(localized: "\(firstActor) removed their verification from your account")
+    case .contactMatch:
+      return String(localized: "\(firstActor) is on Bluesky")
+    case .like:
+      if count == 2 {
+        let secondActor = spokenActorName(for: group.notifications[1].author)
+        return String(localized: "\(firstActor) and \(secondActor) liked your post")
+      } else if count > 2 {
+        return String(localized: "\(firstActor) and \(count - 1) others liked your post")
+      }
+      return String(localized: "\(firstActor) liked your post")
+    case .repost:
+      if count == 2 {
+        let secondActor = spokenActorName(for: group.notifications[1].author)
+        return String(localized: "\(firstActor) and \(secondActor) reposted your post")
+      } else if count > 2 {
+        return String(localized: "\(firstActor) and \(count - 1) others reposted your post")
+      }
+      return String(localized: "\(firstActor) reposted your post")
+    case .likeViaRepost:
+      if count == 2 {
+        let secondActor = spokenActorName(for: group.notifications[1].author)
+        return String(localized: "\(firstActor) and \(secondActor) liked your repost")
+      } else if count > 2 {
+        return String(localized: "\(firstActor) and \(count - 1) others liked your repost")
+      }
+      return String(localized: "\(firstActor) liked your repost")
+    case .repostViaRepost:
+      if count == 2 {
+        let secondActor = spokenActorName(for: group.notifications[1].author)
+        return String(localized: "\(firstActor) and \(secondActor) reposted your repost")
+      } else if count > 2 {
+        return String(localized: "\(firstActor) and \(count - 1) others reposted your repost")
+      }
+      return String(localized: "\(firstActor) reposted your repost")
+    case .follow:
+      if count == 2 {
+        let secondActor = spokenActorName(for: group.notifications[1].author)
+        return String(localized: "\(firstActor) and \(secondActor) followed you")
+      } else if count > 2 {
+        return String(localized: "\(firstActor) and \(count - 1) others followed you")
+      }
+      return String(localized: "\(firstActor) followed you")
+    case .followBack:
+      if count == 2 {
+        let secondActor = spokenActorName(for: group.notifications[1].author)
+        return String(localized: "\(firstActor) and \(secondActor) followed you back")
+      } else if count > 2 {
+        return String(localized: "\(firstActor) and \(count - 1) others followed you back")
+      }
+      return String(localized: "\(firstActor) followed you back")
+    case .mention:
+      if count == 2 {
+        let secondActor = spokenActorName(for: group.notifications[1].author)
+        return String(localized: "\(firstActor) and \(secondActor) mentioned you")
+      } else if count > 2 {
+        return String(localized: "\(firstActor) and \(count - 1) others mentioned you")
+      }
+      return String(localized: "\(firstActor) mentioned you in a post")
+    case .reply:
+      if count == 2 {
+        let secondActor = spokenActorName(for: group.notifications[1].author)
+        return String(localized: "\(firstActor) and \(secondActor) replied")
+      } else if count > 2 {
+        return String(localized: "\(firstActor) and \(count - 1) others replied")
+      }
+      return String(localized: "\(firstActor) replied to your post")
+    case .quote:
+      if count == 2 {
+        let secondActor = spokenActorName(for: group.notifications[1].author)
+        return String(localized: "\(firstActor) and \(secondActor) quoted")
+      } else if count > 2 {
+        return String(localized: "\(firstActor) and \(count - 1) others quoted")
+      }
+      return String(localized: "\(firstActor) quoted your post")
+    case .starterpackJoined:
+      if count == 2 {
+        let secondActor = spokenActorName(for: group.notifications[1].author)
+        return String(localized: "\(firstActor) and \(secondActor) signed up with your starter pack")
+      } else if count > 2 {
+        return String(localized: "\(firstActor) and \(count - 1) others signed up with your starter pack")
+      }
+      return String(localized: "\(firstActor) signed up with your starter pack")
+    case .feedgenLike:
+      if count == 2 {
+        let secondActor = spokenActorName(for: group.notifications[1].author)
+        return String(localized: "\(firstActor) and \(secondActor) liked your custom feed")
+      } else if count > 2 {
+        return String(localized: "\(firstActor) and \(count - 1) others liked your custom feed")
+      }
+      return String(localized: "\(firstActor) liked your custom feed")
+    }
   }
 
   private var shouldShowPostPreview: Bool {
@@ -1186,7 +1519,7 @@ struct NotificationMediaThumbnail: View {
       
       // Show count indicator if there are more thumbnails
       if thumbnails.count > maxThumbnails {
-        Text("+\(thumbnails.count - maxThumbnails)")
+        Text(verbatim: "+\((thumbnails.count - maxThumbnails).formatted())")
           .appFont(.customSystemFont(size: 12, weight: .medium, width: 60, relativeTo: .caption))
           .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
           .frame(width: thumbnailSize, height: thumbnailSize)
@@ -1196,7 +1529,7 @@ struct NotificationMediaThumbnail: View {
     }
   }
   
-  private func accessibilityLabel(for thumbnail: MediaThumbnailInfo) -> String {
+  private func accessibilityLabel(for thumbnail: MediaThumbnailInfo) -> LocalizedStringKey {
     switch thumbnail.mediaType {
     case .image: return "Image thumbnail"
     case .video: return "Video thumbnail"
@@ -1260,7 +1593,7 @@ struct AvatarStack: View {
       }
 
       if notifications.count > 3 {
-        Text("+\(notifications.count - 3)")
+        Text(verbatim: "+\((notifications.count - 3).formatted())")
           .appFont(.customSystemFont(size: 16, weight: .medium, width: 60, relativeTo: .caption))
           .textScale(.secondary)
           .frame(width: 44, height: 44)

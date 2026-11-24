@@ -193,22 +193,22 @@ private struct SizeClassHorizontalPadding: ViewModifier {
 
 #Preview("Responsive Content") {
   VStack(spacing: 20) {
-    Text("Regular Content")
+    Text(verbatim: "Regular Content")
       .frame(maxWidth: .infinity)
       .padding()
       .background { Color.blue.opacity(0.2) }
     
-    Text("Responsive Content")
+    Text(verbatim: "Responsive Content")
       .responsiveContentWidth()
       .padding()
       .background { Color.green.opacity(0.2) }
     
-    Text("Custom Max Width")
+    Text(verbatim: "Custom Max Width")
       .responsiveContentWidth(maxWidth: 400)
       .padding()
       .background { Color.orange.opacity(0.2) }
     
-    Text("App Content")
+    Text(verbatim: "App Content")
       .responsiveAppContent()
       .padding()
       .background { Color.purple.opacity(0.2) }

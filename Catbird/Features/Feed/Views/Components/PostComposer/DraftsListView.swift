@@ -278,26 +278,37 @@ private struct DraftRow: View {
   private var badgeRow: some View {
     HStack(spacing: 10) {
       if draft.isReply {
-        DraftBadge(text: "Reply", systemImage: "arrowshape.turn.up.left")
+        DraftBadge(
+          text: LocalizedStringResource("Reply", comment: "Badge on a saved draft indicating it is a reply"),
+          systemImage: "arrowshape.turn.up.left"
+        )
       }
       if draft.isQuote {
-        DraftBadge(text: "Quote", systemImage: "quote.opening")
+        DraftBadge(
+          text: LocalizedStringResource("Quote", comment: "Badge on a saved draft indicating it quotes another post"),
+          systemImage: "quote.opening"
+        )
       }
       if draft.isThread {
         DraftBadge(
-          text: "Thread · \(draft.postCount) posts",
+          text: LocalizedStringResource("Thread · \(draft.postCount) posts", comment: "Badge on a saved draft indicating a multi-post thread; variable is number of posts"),
           systemImage: "text.line.first.and.arrowtriangle.forward"
         )
       }
       if draft.hasMedia && draft.thumbnailURLs.isEmpty && draft.remoteMediaDeviceName == nil {
         DraftBadge(
-          text: draft.hasVideo ? "Video" : "Media",
+          text: draft.hasVideo
+            ? LocalizedStringResource("Video", comment: "Badge on a saved draft indicating attached video")
+            : LocalizedStringResource("Media", comment: "Badge on a saved draft indicating attached photos"),
           systemImage: draft.hasVideo ? "video" : "photo"
         )
       }
       if let deviceName = draft.remoteMediaDeviceName {
-        DraftBadge(text: "Media on \(deviceName)", systemImage: "iphone.and.arrow.forward")
-          .foregroundStyle(.orange)
+        DraftBadge(
+          text: LocalizedStringResource("Media on \(deviceName)", comment: "Badge on a synced draft whose media lives on another device; variable is device name"),
+          systemImage: "iphone.and.arrow.forward"
+        )
+        .foregroundStyle(.orange)
       }
     }
   }
@@ -316,16 +327,20 @@ private struct DraftRow: View {
 }
 
 private struct DraftBadge: View {
-  let text: String
+  let text: LocalizedStringResource
   let systemImage: String
 
   var body: some View {
-    Label(text, systemImage: systemImage)
-      .appFont(AppTextRole.caption)
-      .labelStyle(.titleAndIcon)
-      .imageScale(.small)
-      .foregroundStyle(.secondary)
-      .lineLimit(1)
+    Label {
+      Text(text)
+    } icon: {
+      Image(systemName: systemImage)
+    }
+    .appFont(AppTextRole.caption)
+    .labelStyle(.titleAndIcon)
+    .imageScale(.small)
+    .foregroundStyle(.secondary)
+    .lineLimit(1)
   }
 }
 
@@ -360,7 +375,7 @@ private struct DraftThumbnail: View {
       .clipShape(.rect(cornerRadius: 12))
 
       if extraCount > 0 {
-        Text("+\(extraCount)")
+        Text(verbatim: "+\(extraCount.formatted(.number))")
           .appFont(AppTextRole.caption2)
           .bold()
           .foregroundStyle(.white)

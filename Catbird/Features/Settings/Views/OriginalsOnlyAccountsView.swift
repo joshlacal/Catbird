@@ -29,7 +29,7 @@ struct OriginalsOnlyAccountsView: View {
         .padding(.vertical, 4)
       }
 
-      Section("Tamed Accounts (\(sortedDIDs.count))") {
+      Section {
         if sortedDIDs.isEmpty {
           ContentUnavailableView(
             "No Accounts in Originals Only",
@@ -53,6 +53,8 @@ struct OriginalsOnlyAccountsView: View {
           }
           .onDelete(perform: removeOffsets)
         }
+      } header: {
+        Text("Tamed Accounts (\(sortedDIDs.count))", comment: "Section header showing count of accounts with reposts hidden.")
       }
 
       if !sortedDIDs.isEmpty {
@@ -85,7 +87,7 @@ struct OriginalsOnlyAccountsView: View {
       }
       Button("Cancel", role: .cancel) {}
     } message: {
-      Text("All \(sortedDIDs.count) accounts will show reposts in your feeds again.")
+      Text("All \(sortedDIDs.count) accounts will show reposts in your feeds again.", comment: "Confirmation dialog message showing how many accounts will have reposts restored.")
     }
   }
 

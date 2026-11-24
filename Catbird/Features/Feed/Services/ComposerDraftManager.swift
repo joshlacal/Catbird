@@ -235,7 +235,10 @@ final class ComposerDraftManager {
     guard snapshot.draft.hasRecoverableContent else { return nil }
     let model = try DraftPost.create(from: snapshot.draft, accountDID: snapshot.claim.accountDID)
     var state = DraftSyncState()
-    state.recoveryReason = "Recovered from an earlier composer session."
+    state.recoveryReason = String(
+      localized: "Recovered from an earlier composer session.",
+      comment: "Banner message shown when an unsaved post draft is recovered after an interruption"
+    )
     model.syncMetadata = try JSONEncoder().encode(state)
     context.insert(model)
     try context.save()
@@ -401,7 +404,10 @@ final class ComposerDraftManager {
   func deleteSavedDraft(_ draftId: UUID) {
     guard let accountDID = currentAccountDID, let persistence = draftPersistence else { return }
     guard Self.savedDraftClaims[SavedDraftClaimKey(accountDID: accountDID, id: draftId)] == nil else {
-      draftSyncIssue = "This draft is open in another composer. Close that editor before deleting it."
+      draftSyncIssue = String(
+        localized: "This draft is open in another composer. Close that editor before deleting it.",
+        comment: "Warning shown when attempting to delete a draft currently open in another window"
+      )
       return
     }
     do {

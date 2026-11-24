@@ -25,7 +25,10 @@ struct RepositoryDetailView: View {
                     errorView
                 }
             }
-            .navigationTitle(repository?.userHandle ?? "Repository")
+            .navigationTitle(
+                repository.map { Text(verbatim: $0.userHandle) }
+                    ?? Text("Repository", comment: "Fallback navigation title for the repository detail screen.")
+            )
             #if os(iOS)
             .toolbarTitleDisplayMode(.large)
             #endif
@@ -181,10 +184,16 @@ struct RepositoryDetailView: View {
             if let foundRepository = repositories.first {
                 repository = foundRepository
             } else {
-                errorMessage = "Repository not found"
+                errorMessage = String(
+                    localized: "Repository not found",
+                    comment: "Error shown when a parsed repository record cannot be found."
+                )
             }
         } catch {
-            errorMessage = "Failed to load repository: \(error.localizedDescription)"
+            errorMessage = String(
+                localized: "Failed to load repository: \(error.localizedDescription)",
+                comment: "Error shown when loading a repository record fails."
+            )
         }
 
         isLoading = false
@@ -206,11 +215,11 @@ private struct RepositoryOverviewView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(repository.userHandle)
+                            Text(verbatim: repository.userHandle)
                                 .font(.title)
                                 .fontWeight(.bold)
 
-                            Text(repository.userDID)
+                            Text(verbatim: repository.userDID)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
@@ -221,7 +230,7 @@ private struct RepositoryOverviewView: View {
                         StatusBadge(status: repository.parsingStatus)
                     }
 
-                    Text("Parsed \(repository.parsingAgeDescription)")
+                    Text("Parsed \(repository.parsingAgeDescription)", comment: "Relative time label showing when the repository backup was parsed, e.g. 'Parsed 2 hr. ago'.")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -233,21 +242,21 @@ private struct RepositoryOverviewView: View {
                 ], spacing: 16) {
                     StatCard(
                         title: "Posts",
-                        value: "\(repository.postCount)",
+                        value: repository.postCount.formatted(.number),
                         icon: "text.bubble.fill",
                         color: .blue
                     )
 
                     StatCard(
                         title: "Connections",
-                        value: "\(repository.connectionCount)",
+                        value: repository.connectionCount.formatted(.number),
                         icon: "person.2.fill",
                         color: .green
                     )
 
                     StatCard(
                         title: "Media Items",
-                        value: "\(repository.mediaCount)",
+                        value: repository.mediaCount.formatted(.number),
                         icon: "photo.fill",
                         color: .purple
                     )
@@ -269,11 +278,11 @@ private struct RepositoryOverviewView: View {
                         GridItem(.flexible()),
                         GridItem(.flexible())
                     ], spacing: 12) {
-                        InfoItem(label: "Total Records", value: "\(repository.totalRecordCount)")
-                        InfoItem(label: "Successfully Parsed", value: "\(repository.successfullyParsedCount)")
-                        InfoItem(label: "Failed Parsing", value: "\(repository.failedParseCount)")
-                        InfoItem(label: "Unknown Types", value: "\(repository.unknownRecordTypeCount)")
-                        InfoItem(label: "Confidence Score", value: String(format: "%.1f%%", repository.parsingConfidenceScore * 100))
+                        InfoItem(label: "Total Records", value: repository.totalRecordCount.formatted(.number))
+                        InfoItem(label: "Successfully Parsed", value: repository.successfullyParsedCount.formatted(.number))
+                        InfoItem(label: "Failed Parsing", value: repository.failedParseCount.formatted(.number))
+                        InfoItem(label: "Unknown Types", value: repository.unknownRecordTypeCount.formatted(.number))
+                        InfoItem(label: "Confidence Score", value: repository.parsingConfidenceScore.formatted(.percent.precision(.fractionLength(1))))
                         InfoItem(label: "Original Size", value: ByteCountFormatter.string(fromByteCount: repository.originalCarSize, countStyle: .file))
                     }
                 }
@@ -304,11 +313,11 @@ private struct RepositoryOverviewView: View {
                             .font(.headline)
 
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Commit: \(commit)")
+                            Text(verbatim: "Commit: \(commit)")
                                 .font(.system(.caption, design: .monospaced))
 
                             if let lastModified = repository.repositoryLastModified {
-                                Text("Last Modified: \(lastModified, style: .date)")
+                                Text("Last Modified: \(lastModified.formatted(date: .abbreviated, time: .omitted))", comment: "Label showing the last modified date of the repository.")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
@@ -326,7 +335,7 @@ private struct RepositoryOverviewView: View {
                             .font(.headline)
 
                         ScrollView(.horizontal) {
-                            Text(repository.parsingLogs)
+                            Text(verbatim: repository.parsingLogs)
                                 .font(.system(.caption, design: .monospaced))
                                 .padding()
                         }
@@ -406,7 +415,7 @@ private struct RepositoryDetailHeader: View {
 }
 
 private struct StatCard: View {
-    let title: String
+    let title: LocalizedStringResource
     let value: String
     let icon: String
     let color: Color
@@ -423,7 +432,7 @@ private struct StatCard: View {
             }
 
             HStack {
-                Text(value)
+                Text(verbatim: value)
                     .font(.title2)
                     .fontWeight(.bold)
                     .foregroundColor(color)
@@ -437,7 +446,7 @@ private struct StatCard: View {
 }
 
 private struct InfoItem: View {
-    let label: String
+    let label: LocalizedStringResource
     let value: String
 
     var body: some View {
@@ -445,7 +454,7 @@ private struct InfoItem: View {
             Text(label)
                 .font(.caption)
                 .foregroundColor(.secondary)
-            Text(value)
+            Text(verbatim: value)
                 .font(.body)
                 .fontWeight(.medium)
         }
@@ -533,7 +542,7 @@ private struct ContentBreakdownBar: View {
 
 private struct LegendItem: View {
     let color: Color
-    let label: String
+    let label: LocalizedStringResource
 
     var body: some View {
         HStack(spacing: 4) {
@@ -559,17 +568,17 @@ private enum DetailTab: String, CaseIterable {
     var displayName: String {
         switch self {
         case .overview:
-            return "Overview"
+            return String(localized: "Overview", comment: "Repository detail tab title for overview summary.")
         case .timeline:
-            return "Timeline"
+            return String(localized: "Timeline", comment: "Repository detail tab title for chronological post timeline.")
         case .connections:
-            return "Connections"
+            return String(localized: "Connections", comment: "Repository detail tab title for social connections.")
         case .media:
-            return "Media"
+            return String(localized: "Media", comment: "Repository detail tab title for media attachments.")
         case .search:
-            return "Search"
+            return String(localized: "Search", comment: "Repository detail tab title for universal record search.")
         case .diagnostics:
-            return "Diagnostics"
+            return String(localized: "Diagnostics", comment: "Repository detail tab title for parsing diagnostics.")
         }
     }
 

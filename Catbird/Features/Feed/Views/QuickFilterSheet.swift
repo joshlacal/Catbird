@@ -76,7 +76,7 @@ struct QuickFilterSheet: View {
           .foregroundStyle(isEnabled ? .white : .primary)
           .frame(width: 24)
         
-        Text(name)
+        Text(FeedFilter.localizedName(for: name))
           .font(.body)
           .foregroundStyle(isEnabled ? .white : .primary)
         
@@ -125,7 +125,7 @@ struct QuickFilterSheet: View {
           .foregroundStyle(isEnabled ? .white : .primary)
           .frame(width: 24)
         
-        Text(name)
+        Text(FeedFilter.localizedName(for: name))
           .font(.body)
           .foregroundStyle(isEnabled ? .white : .primary)
         

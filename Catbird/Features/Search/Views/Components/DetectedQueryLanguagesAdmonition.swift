@@ -14,6 +14,7 @@ public struct DetectedQueryLanguagesAdmonition: View {
   public let onSelectLanguage: (String) -> Void
 
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.locale) private var locale
   @Environment(AppState.self) private var appState
 
   public init(
@@ -55,7 +56,7 @@ public struct DetectedQueryLanguagesAdmonition: View {
           .font(.subheadline)
           .foregroundColor(.accentColor)
 
-        Text("Filter by detected language")
+        Text("Filter by detected language", comment: "Banner heading offering language filter pills for detected search query languages")
           .appFont(AppTextRole.subheadline)
           .foregroundColor(.primary)
       }
@@ -63,13 +64,14 @@ public struct DetectedQueryLanguagesAdmonition: View {
       ScrollView(.horizontal, showsIndicators: false) {
         HStack(spacing: 8) {
           ForEach(detectedLanguages, id: \.self) { langCode in
+            let langName = Self.localizedLanguageName(for: langCode, locale: locale)
             Button {
               onSelectLanguage(langCode)
             } label: {
               HStack(spacing: 4) {
                 Image(systemName: "globe")
                   .font(.caption2)
-                Text(Self.localizedLanguageName(for: langCode))
+                Text(langName)
                   .appFont(AppTextRole.caption)
               }
               .padding(.horizontal, 10)
@@ -79,7 +81,12 @@ public struct DetectedQueryLanguagesAdmonition: View {
               .clipShape(Capsule())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Filter by \(Self.localizedLanguageName(for: langCode))")
+            .accessibilityLabel(
+              Text(
+                "Filter by \(langName)",
+                comment: "Accessibility label for button that filters search results by a language — variable is the localized language name"
+              )
+            )
           }
         }
         .padding(.vertical, 2)

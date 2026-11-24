@@ -6,6 +6,7 @@ import NukeUI
 struct EnhancedFeedRowView: View {
     let feed: AppBskyFeedDefs.GeneratorView
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.locale) private var locale
     
     var body: some View {
         HStack(spacing: 12) {
@@ -40,7 +41,10 @@ struct EnhancedFeedRowView: View {
                     .appFont(AppTextRole.headline)
                     .lineLimit(1)
                 
-                    Text("By @\(feed.creator.handle)")
+                    Text(
+                        "By @\(feed.creator.handle.description)",
+                        comment: "Feed creator attribution in search results — variable is the creator's handle"
+                    )
                         .appFont(AppTextRole.subheadline)
                         .foregroundColor(.secondary)
                 
@@ -55,9 +59,23 @@ struct EnhancedFeedRowView: View {
                 // Stats
                 if let likeCount = feed.likeCount {
                     HStack(spacing: 12) {
-                        Label("\(formatCount(likeCount)) likes", systemImage: "heart")
-                            .appFont(AppTextRole.caption2)
-                            .foregroundColor(.secondary)
+                        Label {
+                            if likeCount >= 1_000 {
+                                Text(
+                                    "\(formatCount(likeCount)) likes",
+                                    comment: "Compact like count (e.g. 1.2K likes) on a custom feed in search results"
+                                )
+                            } else {
+                                Text(
+                                    "\(likeCount) likes",
+                                    comment: "Like count on a custom feed in search results"
+                                )
+                            }
+                        } icon: {
+                            Image(systemName: "heart")
+                        }
+                        .appFont(AppTextRole.caption2)
+                        .foregroundColor(.secondary)
                     }
                     .padding(.top, 2)
                 }
@@ -65,7 +83,7 @@ struct EnhancedFeedRowView: View {
             
             Spacer()
             
-            Image(systemName: "chevron.right")
+            Image(systemName: "chevron.forward")
                 .appFont(AppTextRole.footnote)
                 .foregroundColor(.secondary)
         }
@@ -75,15 +93,7 @@ struct EnhancedFeedRowView: View {
     
     // Format count for display
     private func formatCount(_ count: Int) -> String {
-        if count >= 1_000_000 {
-            let formatted = Double(count) / 1_000_000.0
-            return String(format: "%.1fM", formatted)
-        } else if count >= 1_000 {
-            let formatted = Double(count) / 1_000.0
-            return String(format: "%.1fK", formatted)
-        } else {
-            return "\(count)"
-        }
+        count.formatted(.number.notation(.compactName).locale(locale))
     }
 }
 

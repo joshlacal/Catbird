@@ -226,11 +226,11 @@ public enum CircleMediaError: Error, LocalizedError, Equatable {
   public var errorDescription: String? {
     switch self {
     case .invalidImage:
-      return "The Circle media could not be decoded as an image."
+      return String(localized: "The Circle media could not be decoded as an image.", comment: "Error when downloaded Circle media bytes cannot be decoded as an image.")
     case .serviceUnavailable:
-      return "The Circle media service is unavailable."
+      return String(localized: "The Circle media service is unavailable.", comment: "Error when the Circle media service cannot be reached.")
     case .decryptionFailed:
-      return "The Circle media could not be decrypted."
+      return String(localized: "The Circle media could not be decrypted.", comment: "Error when encrypted Circle media fails decryption.")
     }
   }
 }

@@ -6,25 +6,58 @@ import Foundation
 
 enum ModerationPresentation {
   /// Shown when a moderated surface has no more specific cause to name.
-  static let fallbackTitle = "Content Warning"
+  static var fallbackTitle: String {
+    String(localized: "Content Warning", comment: "Generic moderation banner title when content has a warning.")
+  }
 
-  private static let builtinStrings: [String: LabelDisplayStrings] = {
+  private static var builtinStrings: [String: LabelDisplayStrings] {
     func entry(_ identifier: String, _ name: String, _ description: String) -> (String, LabelDisplayStrings) {
-      (identifier, LabelDisplayStrings(lang: "en", name: name, description: description))
+      let lang = Bundle.main.preferredLocalizations.first ?? "en"
+      return (identifier, LabelDisplayStrings(lang: lang, name: name, description: description))
     }
     return Dictionary(uniqueKeysWithValues: [
-      entry("!hide", "Content Blocked", "This content has been hidden by the moderators."),
-      entry("!warn", "Content Warning", "This content has received a general warning from moderators."),
       entry(
-        "!no-unauthenticated", "Sign-in Required",
-        "This user has requested that their content only be shown to signed-in users."),
-      entry("porn", "Adult Content", "Explicit sexual images."),
-      entry("sexual", "Sexually Suggestive", "Does not include nudity."),
-      entry("nudity", "Non-sexual Nudity", "E.g. artistic nudes."),
-      entry("graphic-media", "Graphic Media", "Explicit or potentially disturbing media."),
-      entry("gore", "Graphic Media", "Explicit or potentially disturbing media."),
+        "!hide",
+        String(localized: "Content Blocked", comment: "Moderation label title when moderators have blocked content."),
+        String(localized: "This content has been hidden by the moderators.", comment: "Moderation label description when content was hidden by moderators.")
+      ),
+      entry(
+        "!warn",
+        String(localized: "Content Warning", comment: "Generic moderation label title when moderators issued a warning."),
+        String(localized: "This content has received a general warning from moderators.", comment: "Moderation label description for a general moderator warning.")
+      ),
+      entry(
+        "!no-unauthenticated",
+        String(localized: "Sign-in Required", comment: "Moderation label title when content requires signing in to view."),
+        String(localized: "This user has requested that their content only be shown to signed-in users.", comment: "Moderation label description when an author restricts content to signed-in viewers.")
+      ),
+      entry(
+        "porn",
+        String(localized: "Adult Content", comment: "Moderation label title for explicit adult content."),
+        String(localized: "Explicit sexual images.", comment: "Moderation label description for explicit sexual images.")
+      ),
+      entry(
+        "sexual",
+        String(localized: "Sexually Suggestive", comment: "Moderation label title for sexually suggestive content."),
+        String(localized: "Does not include nudity.", comment: "Moderation label description for sexually suggestive content without nudity.")
+      ),
+      entry(
+        "nudity",
+        String(localized: "Non-sexual Nudity", comment: "Moderation label title for non-sexual nudity."),
+        String(localized: "E.g. artistic nudes.", comment: "Moderation label description for non-sexual nudity.")
+      ),
+      entry(
+        "graphic-media",
+        String(localized: "Graphic Media", comment: "Moderation label title for graphic or disturbing media."),
+        String(localized: "Explicit or potentially disturbing media.", comment: "Moderation label description for graphic media.")
+      ),
+      entry(
+        "gore",
+        String(localized: "Graphic Media", comment: "Moderation label title for graphic or disturbing media."),
+        String(localized: "Explicit or potentially disturbing media.", comment: "Moderation label description for graphic media.")
+      ),
     ])
-  }()
+  }
 
   // MARK: - Strings
 
@@ -52,7 +85,14 @@ enum ModerationPresentation {
     }
     let identifier: String = definition.identifier
     let language: String = languages.first ?? "en"
-    return LabelDisplayStrings(lang: language, name: identifier, description: "Labeled \"\(identifier)\"")
+    return LabelDisplayStrings(
+      lang: language,
+      name: identifier,
+      description: String(
+        localized: "Labeled “\(identifier)”",
+        comment: "Fallback description for a custom moderation label — variable is the raw label identifier."
+      )
+    )
   }
 
   /// The first published locale matching a device language, in device order,
@@ -89,7 +129,7 @@ enum ModerationPresentation {
     if cause.definition.definedBy == nil,
       cause.definition.identifier == "porn" || cause.definition.identifier == "sexual"
     {
-      return "Adult Content"
+      return String(localized: "Adult Content", comment: "Moderation cover title for adult or sexually suggestive content.")
     }
     return name(for: cause.definition, preferredLanguages: preferredLanguages)
   }

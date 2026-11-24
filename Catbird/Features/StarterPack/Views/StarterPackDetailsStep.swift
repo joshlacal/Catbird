@@ -17,10 +17,10 @@ struct StarterPackDetailsStep: View {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("Name")
+                        Text("Name", comment: "Field label for starter pack name.")
                             .appFont(AppTextRole.headline)
                         Spacer()
-                        Text("\(draft.trimmedName.count)/\(StarterPackDraft.maxNameLength)")
+                        Text(verbatim: "\(draft.trimmedName.count.formatted(.number))/\(StarterPackDraft.maxNameLength.formatted(.number))")
                             .appFont(AppTextRole.caption)
                             .foregroundColor(draft.trimmedName.count > StarterPackDraft.maxNameLength ? .red : .secondary)
                     }
@@ -51,10 +51,10 @@ struct StarterPackDetailsStep: View {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("Description")
+                        Text("Description", comment: "Field label for starter pack description.")
                             .appFont(AppTextRole.headline)
                         Spacer()
-                        Text("\(draft.description.count)/\(StarterPackDraft.maxDescriptionLength)")
+                        Text(verbatim: "\(draft.description.count.formatted(.number))/\(StarterPackDraft.maxDescriptionLength.formatted(.number))")
                             .appFont(AppTextRole.caption)
                             .foregroundColor(draft.description.count > StarterPackDraft.maxDescriptionLength ? .red : .secondary)
                     }

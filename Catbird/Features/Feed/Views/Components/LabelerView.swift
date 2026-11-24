@@ -49,7 +49,7 @@ struct LabelerView: View {
                         .appFont(AppTextRole.headline)
                         .fontWeight(.semibold)
                     
-                    Text("@\(labeler.creator.handle)")
+                    Text(verbatim: "@\(labeler.creator.handle)")
                         .appFont(AppTextRole.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -129,7 +129,7 @@ struct LabelerView: View {
                     .foregroundStyle(isLiked ? .red : .primary)
                 
                 if let likeCount = labeler.likeCount, likeCount > 0 {
-                    Text("\(likeCount)")
+                    Text(likeCount, format: .number)
                         .foregroundStyle(isLiked ? .red : .primary)
                 }
             }
@@ -179,7 +179,7 @@ struct LabelerDetailedView: View {
                         .appFont(AppTextRole.headline)
                         .fontWeight(.semibold)
                     
-                    Text("@\(labeler.creator.handle)")
+                    Text(verbatim: "@\(labeler.creator.handle)")
                         .appFont(AppTextRole.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -313,7 +313,7 @@ struct LabelerDetailedView: View {
                     .foregroundStyle(isLiked ? .red : .primary)
                 
                 if let likeCount = labeler.likeCount, likeCount > 0 {
-                    Text("\(likeCount)")
+                    Text(likeCount, format: .number)
                         .foregroundStyle(isLiked ? .red : .primary)
                 }
             }

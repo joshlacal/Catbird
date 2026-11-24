@@ -31,16 +31,19 @@ public final class SceneOnboardingViewModel {
 
     public var title: String {
       switch self {
-      case .explorer: "Explore Scenes"
-      case .calibration: "Taste Duels"
-      case .preview: "Future Feed"
-      case .lineup: "Starting Lineup"
-      case .celebration: "Ready to Fly"
+      case .explorer: String(localized: "Explore Scenes", comment: "Scene onboarding step 1 title.")
+      case .calibration: String(localized: "Taste Duels", comment: "Scene onboarding step 2 title.")
+      case .preview: String(localized: "Future Feed", comment: "Scene onboarding step 3 title.")
+      case .lineup: String(localized: "Starting Lineup", comment: "Scene onboarding step 4 title.")
+      case .celebration: String(localized: "Ready to Fly", comment: "Scene onboarding step 5 title.")
       }
     }
 
     public var shortNumberLabel: String {
-      "Step \(rawValue + 1) of \(Self.allCases.count)"
+      String(
+        localized: "Step \(rawValue + 1) of \(Self.allCases.count)",
+        comment: "Progress step indicator in scene onboarding — %1$lld is current step number, %2$lld is total steps."
+      )
     }
   }
 
@@ -285,37 +288,99 @@ public final class SceneOnboardingViewModel {
   /// many accounts in those scenes were left out because the viewer already follows them.
   public var lineupSummaryLine: String {
     let scenes = activeLineupTally.sceneCount
-    var line: String
-    switch scenes {
-    case 0: line = "Switch accounts on below to follow them."
-    case 1: line = "Picked from 1 scene."
-    default: line = "Picked from \(scenes) scenes, in the order you chose them."
+    if alreadyFollowedInLineupScenes <= 0 {
+      switch scenes {
+      case 0:
+        return String(
+          localized: "Switch accounts on below to follow them.",
+          comment: "Summary above onboarding lineup when no accounts are currently enabled."
+        )
+      case 1:
+        return String(
+          localized: "Picked from 1 scene.",
+          comment: "Summary above onboarding lineup when accounts come from a single chosen scene."
+        )
+      default:
+        return String(
+          localized: "Picked from \(scenes) scenes, in the order you chose them.",
+          comment: "Summary above onboarding lineup when accounts come from multiple chosen scenes — variable is scene count."
+        )
+      }
+    } else {
+      switch scenes {
+      case 0:
+        return String(
+          localized: "Switch accounts on below to follow them. \(alreadyFollowedInLineupScenes) accounts you already follow there are left out.",
+          comment: "Summary above onboarding lineup when no accounts are enabled and some already-followed accounts were omitted — variable is omitted account count."
+        )
+      case 1:
+        return String(
+          localized: "Picked from 1 scene. \(alreadyFollowedInLineupScenes) accounts you already follow there are left out.",
+          comment: "Summary above onboarding lineup for 1 scene with already-followed accounts omitted — variable is omitted account count."
+        )
+      default:
+        return String(
+          localized: "Picked from \(scenes) scenes, in the order you chose them. \(alreadyFollowedInLineupScenes) accounts you already follow there are left out.",
+          comment: "Summary above onboarding lineup for multiple scenes with already-followed accounts omitted — %1$lld is scene count, %2$lld is omitted account count."
+        )
+      }
     }
-    switch alreadyFollowedInLineupScenes {
-    case 0: break
-    case 1: line += " 1 account you already follow there is left out."
-    default: line += " \(alreadyFollowedInLineupScenes) accounts you already follow there are left out."
-    }
-    return line
   }
 
   /// The celebration line once the lineup is committed, stating how many accounts were followed.
   public var celebrationSummaryLine: String {
     guard let receipt = commitReceipt else {
-      return "Tailored to the scenes you chose."
+      return String(
+        localized: "Tailored to the scenes you chose.",
+        comment: "Default celebration subtitle in scene onboarding before commit receipt is available."
+      )
     }
     switch receipt.followedCount {
-    case 0: return "Your feeds are set up for the scenes you chose."
-    case 1: return "You now follow 1 new voice from the scenes you chose."
-    default: return "You now follow \(receipt.followedCount) new voices from the scenes you chose."
+    case 0:
+      return String(
+        localized: "Your feeds are set up for the scenes you chose.",
+        comment: "Celebration subtitle when onboarding saved feeds without following new accounts."
+      )
+    default:
+      return String(
+        localized: "You now follow \(receipt.followedCount) new voices from the scenes you chose.",
+        comment: "Celebration subtitle stating how many new accounts were followed — variable is followed count."
+      )
     }
   }
 
   /// "1 Voice" or "N Voices", with an optional word before the noun ("12 Vetted Voices").
   public nonisolated static func voiceCount(_ count: Int, describedAs adjective: String? = nil) -> String {
-    let noun = count == 1 ? "Voice" : "Voices"
-    guard let adjective else { return "\(count) \(noun)" }
-    return "\(count) \(adjective) \(noun)"
+    guard let adjective else {
+      return String(
+        localized: "\(count) Voices",
+        comment: "Count of community voices in onboarding — variable is account count."
+      )
+    }
+    if adjective == "Vetted" {
+      return String(
+        localized: "\(count) Vetted Voices",
+        comment: "Hero headline count of vetted community voices in onboarding lineup — variable is account count."
+      )
+    }
+    return String(
+      localized: "\(count) \(adjective) Voices",
+      comment: "Count of community voices with descriptor — %1$lld is count, %2$@ is descriptor."
+    )
+  }
+
+  private static var maxScenesBannerMessage: String {
+    String(
+      localized: "You can pick up to \(maxSelectedCommunities) scenes at once.",
+      comment: "Validation banner when user reaches maximum selected scenes in onboarding — variable is max scene count."
+    )
+  }
+
+  private static var maxPinnedBannerMessage: String {
+    String(
+      localized: "You can pin up to \(maxPinnedAuthors) voices.",
+      comment: "Validation banner when user reaches maximum pinned authors in onboarding — variable is max pinned author count."
+    )
   }
 
   public var activeOriginalsOnlyCount: Int {
@@ -458,7 +523,10 @@ public final class SceneOnboardingViewModel {
       if mode == .newAccountOnboarding {
         self.shouldFallbackToLegacySuggested = true
       } else {
-        self.errorBannerMessage = "Couldn’t load community scenes right now. Try again."
+        self.errorBannerMessage = String(
+          localized: "Couldn’t load community scenes right now. Try again.",
+          comment: "Error banner when community scene catalog fails to load."
+        )
       }
     }
   }
@@ -487,12 +555,12 @@ public final class SceneOnboardingViewModel {
     if selectionWeights[cid] != nil {
       selectionWeights.removeValue(forKey: cid)
       orderedSelectedCommunityIds.removeAll { $0 == cid }
-      if errorBannerMessage?.contains("up to \(Self.maxSelectedCommunities)") == true {
+      if errorBannerMessage == Self.maxScenesBannerMessage {
         errorBannerMessage = nil
       }
     } else {
       guard orderedSelectedCommunityIds.count < Self.maxSelectedCommunities else {
-        errorBannerMessage = "You can pick up to \(Self.maxSelectedCommunities) scenes at once."
+        errorBannerMessage = Self.maxScenesBannerMessage
         return
       }
       selectionWeights[cid] = 1
@@ -507,7 +575,7 @@ public final class SceneOnboardingViewModel {
     let current = selectionWeights[cid] ?? 0
     if current == 0 {
       guard orderedSelectedCommunityIds.count < Self.maxSelectedCommunities else {
-        errorBannerMessage = "You can pick up to \(Self.maxSelectedCommunities) scenes at once."
+        errorBannerMessage = Self.maxScenesBannerMessage
         return
       }
       selectionWeights[cid] = 2
@@ -522,7 +590,7 @@ public final class SceneOnboardingViewModel {
   public func removeSelection(communityId: Int) {
     selectionWeights.removeValue(forKey: communityId)
     orderedSelectedCommunityIds.removeAll { $0 == communityId }
-    if errorBannerMessage?.contains("up to \(Self.maxSelectedCommunities)") == true {
+    if errorBannerMessage == Self.maxScenesBannerMessage {
       errorBannerMessage = nil
     }
   }
@@ -793,12 +861,12 @@ public final class SceneOnboardingViewModel {
     if pinnedDIDs.contains(did) {
       pinnedDIDs.remove(did)
       orderedPinnedDIDs.removeAll { $0 == did }
-      if errorBannerMessage?.contains("up to \(Self.maxPinnedAuthors)") == true {
+      if errorBannerMessage == Self.maxPinnedBannerMessage {
         errorBannerMessage = nil
       }
     } else {
       guard pinnedDIDs.count < Self.maxPinnedAuthors else {
-        errorBannerMessage = "You can pin up to \(Self.maxPinnedAuthors) voices."
+        errorBannerMessage = Self.maxPinnedBannerMessage
         return
       }
       pinnedDIDs.insert(did)
@@ -904,7 +972,10 @@ public final class SceneOnboardingViewModel {
       }
     } catch {
       logger.error("Failed to solve starting lineup: \(error.localizedDescription)")
-      errorBannerMessage = "Couldn’t assemble your starting lineup. Try again."
+      errorBannerMessage = String(
+        localized: "Couldn’t assemble your starting lineup. Try again.",
+        comment: "Error banner when solving the onboarding starting lineup fails."
+      )
     }
   }
 
@@ -944,7 +1015,7 @@ public final class SceneOnboardingViewModel {
     rememberCommunity(neighbor)
     if selectionWeights[neighbor.communityId] == nil {
       guard orderedSelectedCommunityIds.count < Self.maxSelectedCommunities else {
-        errorBannerMessage = "You can pick up to \(Self.maxSelectedCommunities) scenes at once."
+        errorBannerMessage = Self.maxScenesBannerMessage
         return
       }
       selectionWeights[neighbor.communityId] = 1

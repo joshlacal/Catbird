@@ -18,7 +18,10 @@ import UniformTypeIdentifiers
 @available(anyAppleOS 27.0, *)
 @AppIntent(schema: .messages.draftMessage)
 struct CatbirdDraftMessageSchemaIntent {
-  static var title: LocalizedStringResource = "Draft Catbird Message"
+  static var title: LocalizedStringResource = LocalizedStringResource(
+    "Draft Catbird Message",
+    comment: "Messages App Schema intent title for drafting an encrypted Catbird chat message."
+  )
   static var supportedModes: IntentModes { .foreground }
 
   @Parameter(title: "Destination")
@@ -75,7 +78,11 @@ struct CatbirdDraftMessageSchemaIntent {
         && (manager.lifecycle.userDID == nil || manager.lifecycle.userDID == draft.accountDID)
     }
     let accountChanged = IntentError.serviceUnavailable(
-      "Your account changed while preparing the draft. Please try again.")
+      LocalizedStringResource(
+        "Your account changed while preparing the draft. Please try again.",
+        comment: "Error when the active Catbird account changes mid-intent before a chat draft is stored."
+      )
+    )
     try Task.checkCancellation()
     guard await accountIsCurrent() else { throw accountChanged }
 
@@ -98,12 +105,20 @@ struct CatbirdDraftMessageSchemaIntent {
         conversationID = convoId
       case .recipientDraft(var request):
         guard !request.submitted else {
-          throw IntentError.invalidParameter("A saved request is still resolving. Open Catbird to retry or cancel it.")
+          throw IntentError.invalidParameter(
+            LocalizedStringResource(
+              "A saved request is still resolving. Open Catbird to retry or cancel it.",
+              comment: "Error when an outgoing encrypted chat request is already in flight."
+            )
+          )
         }
         request.text = draftText
         MLSDirectComposeDraftStore.requestPresentation(request)
-        return .result(dialog: Self.dialog(
-          "Draft started in Catbird.", droppedUnsupportedContent: droppedUnsupportedContent))
+        return .result(
+          dialog: Self.startedInCatbirdDialog(
+            droppedUnsupportedContent: droppedUnsupportedContent
+          )
+        )
       }
     } else {
       conversationID = nil
@@ -118,7 +133,11 @@ struct CatbirdDraftMessageSchemaIntent {
     }
 
     let accountChangedAfterRetaining = IntentError.serviceUnavailable(
-      "Your account changed while preparing the draft. Its text has been retained in Catbird.")
+      LocalizedStringResource(
+        "Your account changed while preparing the draft. Its text has been retained in Catbird.",
+        comment: "Error when the active Catbird account changes after saving a chat draft durably."
+      )
+    )
     let result = try await MainActor.run {
       try Task.checkCancellation()
       guard accountIsCurrent() else { throw accountChangedAfterRetaining }
@@ -136,33 +155,93 @@ struct CatbirdDraftMessageSchemaIntent {
         })
     }
 
-    let status: LocalizedStringResource
-    switch result {
-    case .delivered:
-      status = conversationID == nil
-        ? "Pick a conversation in Catbird to start your draft."
-        : "Draft started in Catbird."
-    case .queued, .duplicate:
-      status = "Your draft is waiting for its Catbird window to become available."
-    case .dropped:
-      status = "Catbird couldn't open the intended window. Your draft text has been retained."
+    return .result(
+      dialog: Self.dialog(
+        for: result,
+        hasConversation: conversationID != nil,
+        droppedUnsupportedContent: droppedUnsupportedContent
+      )
+    )
+  }
+
+  private static func startedInCatbirdDialog(droppedUnsupportedContent: Bool) -> IntentDialog {
+    guard droppedUnsupportedContent else {
+      return IntentDialog(
+        LocalizedStringResource(
+          "Draft started in Catbird.",
+          comment: "Spoken confirmation when a chat draft opens in the target Catbird conversation."
+        )
+      )
     }
-    return .result(dialog: Self.dialog(status, droppedUnsupportedContent: droppedUnsupportedContent))
+    return IntentDialog(
+      LocalizedStringResource(
+        "Draft started in Catbird. Attachments, audio, locations, and scheduling aren't supported yet — the text was carried over.",
+        comment: "Spoken confirmation when a chat draft opens in Catbird and unsupported attachments were omitted."
+      )
+    )
   }
 
   private static func dialog(
-    _ status: LocalizedStringResource, droppedUnsupportedContent: Bool
+    for result: SceneRouteCoordinator.DeliveryResult,
+    hasConversation: Bool,
+    droppedUnsupportedContent: Bool
   ) -> IntentDialog {
-    guard droppedUnsupportedContent else { return IntentDialog(status) }
-    return IntentDialog(
-      "\(status) Attachments, audio, locations, and scheduling aren't supported yet — the text was carried over.")
+    switch (result, hasConversation, droppedUnsupportedContent) {
+    case (.delivered(_), false, false):
+      return IntentDialog(
+        LocalizedStringResource(
+          "Pick a conversation in Catbird to start your draft.",
+          comment: "Spoken confirmation when a chat draft opens Catbird without a specific conversation selected."
+        )
+      )
+    case (.delivered(_), false, true):
+      return IntentDialog(
+        LocalizedStringResource(
+          "Pick a conversation in Catbird to start your draft. Attachments, audio, locations, and scheduling aren't supported yet — the text was carried over.",
+          comment: "Spoken confirmation when a chat draft opens Catbird without a conversation and unsupported attachments were omitted."
+        )
+      )
+    case (.delivered(_), true, _):
+      return startedInCatbirdDialog(droppedUnsupportedContent: droppedUnsupportedContent)
+    case (.queued, _, false), (.duplicate, _, false):
+      return IntentDialog(
+        LocalizedStringResource(
+          "Your draft is waiting for its Catbird window to become available.",
+          comment: "Spoken status when a chat draft is queued waiting for the target app scene."
+        )
+      )
+    case (.queued, _, true), (.duplicate, _, true):
+      return IntentDialog(
+        LocalizedStringResource(
+          "Your draft is waiting for its Catbird window to become available. Attachments, audio, locations, and scheduling aren't supported yet — the text was carried over.",
+          comment: "Spoken status when a chat draft is queued for its window and unsupported attachments were omitted."
+        )
+      )
+    case (.dropped(_), _, false):
+      return IntentDialog(
+        LocalizedStringResource(
+          "Catbird couldn't open the intended window. Your draft text has been retained.",
+          comment: "Spoken status when the target scene could not open, confirming the draft text was saved."
+        )
+      )
+    case (.dropped(_), _, true):
+      return IntentDialog(
+        LocalizedStringResource(
+          "Catbird couldn't open the intended window. Your draft text has been retained. Attachments, audio, locations, and scheduling aren't supported yet — the text was carried over.",
+          comment: "Spoken status when the target scene could not open and unsupported attachments were omitted."
+        )
+      )
+    }
   }
 }
 
 @available(anyAppleOS 27.0, *)
 @AppIntent(schema: .messages.sendMessage)
 struct CatbirdSendMessageSchemaIntent {
-  static var title: LocalizedStringResource = "Send Catbird Message"
+  static var title: LocalizedStringResource = LocalizedStringResource(
+    "Send Catbird Message",
+    comment: "Messages App Schema intent title for sending an encrypted Catbird chat message."
+  )
 
   @Parameter(title: "Destination")
   var destination: CatbirdMessagesDestination
@@ -190,7 +269,12 @@ struct CatbirdSendMessageSchemaIntent {
 
   func perform() async throws -> some IntentResult & ReturnsValue<[CatbirdMessagesMessageEntity]> & ProvidesDialog {
     guard attachments.isEmpty, audioMessage == nil, locations.isEmpty, scheduledDate == nil else {
-      throw IntentError.invalidParameter("Catbird Messages App Schema currently supports text only.")
+      throw IntentError.invalidParameter(
+        LocalizedStringResource(
+          "Catbird Messages App Schema currently supports text only.",
+          comment: "Error spoken by Siri when attempting to send unsupported attachment types via Catbird chat."
+        )
+      )
     }
 
     let text = try MessagesSchemaRuntime.text(from: content ?? AttributedString(""))
@@ -212,7 +296,12 @@ struct CatbirdSendMessageSchemaIntent {
       sentAt = Date(timeIntervalSince1970: Double(row.createdAtMs) / 1_000.0)
     case .recipientDraft(var draft):
       guard !draft.submitted || draft.text == text else {
-        throw IntentError.invalidParameter("A different saved request is still resolving. Open Catbird to retry or cancel it.")
+        throw IntentError.invalidParameter(
+          LocalizedStringResource(
+            "A different saved request is still resolving. Open Catbird to retry or cancel it.",
+            comment: "Error when another chat request to the same recipient is already pending."
+          )
+        )
       }
       draft.text = text
       draft.submitted = true
@@ -227,8 +316,23 @@ struct CatbirdSendMessageSchemaIntent {
         recipientDID: draft.recipientDID,
         text: text
       )
-      if let notice = outcome.delivery.notice {
-        throw IntentError.invalidParameter(notice)
+      switch outcome.delivery {
+      case .sentWithRequest, .sentAsMessage:
+        break
+      case .earlierRequestWaiting:
+        throw IntentError.invalidParameter(
+          LocalizedStringResource(
+            "You’ve already sent this person a request. You can send more messages once they accept it.",
+            comment: "Error when trying to send an MLS chat message while an outgoing request is still awaiting acceptance."
+          )
+        )
+      case .theirRequestWaiting:
+        throw IntentError.invalidParameter(
+          LocalizedStringResource(
+            "This person has sent you a request. Accept it in Requests to reply.",
+            comment: "Error when trying to send an MLS chat message while an incoming chat request from that person awaits acceptance."
+          )
+        )
       }
       finalConvoId = outcome.conversationID
       sentMessageID = outcome.messageID ?? UUID().uuidString.lowercased()
@@ -255,8 +359,13 @@ struct CatbirdSendMessageSchemaIntent {
     }
     let convoModel = directory.conversations.first { $0.conversationID == finalConvoId }
     let convoTitle = convoModel.map { directory.title(for: $0) }
-      ?? recipients.map(\.displayName).joined(separator: ", ")
-    let preview = AttributedString("MLS Chat")
+      ?? recipients.map(\.displayName).formatted(.list(type: .and, width: .narrow))
+    let preview = AttributedString(
+      String(
+        localized: "MLS Chat",
+        comment: "Preview label for an encrypted MLS chat conversation."
+      )
+    )
 
     let convoEntity = CatbirdMessagesConversationEntity(
       id: finalConvoId,
@@ -290,14 +399,25 @@ struct CatbirdSendMessageSchemaIntent {
       notificationIdentifier: nil
     )
 
-    return .result(value: [entity], dialog: "Sent.")
+    return .result(
+      value: [entity],
+      dialog: IntentDialog(
+        LocalizedStringResource(
+          "Sent.",
+          comment: "Spoken confirmation after sending an encrypted Catbird chat message."
+        )
+      )
+    )
   }
 }
 
 @available(anyAppleOS 27.0, *)
 @AppIntent(schema: .messages.editSentMessage)
 struct CatbirdEditSentMessageSchemaIntent {
-  static var title: LocalizedStringResource = "Edit Catbird Message"
+  static var title: LocalizedStringResource = LocalizedStringResource(
+    "Edit Catbird Message",
+    comment: "Messages App Schema intent title for editing a previously sent Catbird chat message."
+  )
 
   @Parameter(title: "Message")
   var message: CatbirdMessagesMessageEntity
@@ -317,17 +437,32 @@ struct CatbirdEditSentMessageSchemaIntent {
       newText: editedText
     ).encodeToJSON()
     guard let payloadJSON = String(data: payloadData, encoding: .utf8) else {
-      throw IntentError.serviceUnavailable("Could not encode message edit payload.")
+      throw IntentError.serviceUnavailable(
+        LocalizedStringResource(
+          "Could not encode message edit payload.",
+          comment: "Error when encoding an edited chat message fails."
+        )
+      )
     }
     _ = try await coordinator.sendMessage(conversationId: conversationID, text: payloadJSON)
-    return .result(dialog: "Updated message.")
+    return .result(
+      dialog: IntentDialog(
+        LocalizedStringResource(
+          "Updated message.",
+          comment: "Spoken confirmation after editing a sent Catbird chat message."
+        )
+      )
+    )
   }
 }
 
 @available(anyAppleOS 27.0, *)
 @AppIntent(schema: .messages.unsendMessage)
 struct CatbirdUnsendMessageSchemaIntent {
-  static var title: LocalizedStringResource = "Unsend Catbird Message"
+  static var title: LocalizedStringResource = LocalizedStringResource(
+    "Unsend Catbird Message",
+    comment: "Messages App Schema intent title for unsending a Catbird chat message."
+  )
 
   @Parameter(title: "Message")
   var message: CatbirdMessagesMessageEntity
@@ -342,14 +477,24 @@ struct CatbirdUnsendMessageSchemaIntent {
       conversationId: conversationID,
       messageId: message.id
     )
-    return .result(dialog: "Unsent message.")
+    return .result(
+      dialog: IntentDialog(
+        LocalizedStringResource(
+          "Unsent message.",
+          comment: "Spoken confirmation after unsending a Catbird chat message."
+        )
+      )
+    )
   }
 }
 
 @available(anyAppleOS 27.0, *)
 @AppIntent(schema: .messages.setMessageReadStatus)
 struct CatbirdSetMessageReadStatusSchemaIntent {
-  static var title: LocalizedStringResource = "Set Catbird Message Read Status"
+  static var title: LocalizedStringResource = LocalizedStringResource(
+    "Set Catbird Message Read Status",
+    comment: "Messages App Schema intent title for marking a Catbird chat message read or unread."
+  )
 
   @Parameter(title: "Message")
   var message: CatbirdMessagesMessageEntity
@@ -379,7 +524,20 @@ struct CatbirdSetMessageReadStatusSchemaIntent {
       }
     }
 
-    return .result(dialog: isRead ? "Marked read." : "Marked unread.")
+    let dialog = isRead
+      ? IntentDialog(
+          LocalizedStringResource(
+            "Marked read.",
+            comment: "Spoken confirmation after marking a Catbird chat message as read."
+          )
+        )
+      : IntentDialog(
+          LocalizedStringResource(
+            "Marked unread.",
+            comment: "Spoken confirmation after marking a Catbird chat message as unread."
+          )
+        )
+    return .result(dialog: dialog)
   }
 }
 

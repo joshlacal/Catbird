@@ -213,7 +213,7 @@ final class FeedActionBarView: UIView {
     likeButton.addAction(UIAction { [weak self] _ in self?.actions?.toggleLike() }, for: .primaryActionTriggered)
 
     shareButton.accessibilityIdentifier = "shareButton"
-    shareButton.accessibilityLabel = "Share post"
+    shareButton.accessibilityLabel = String(localized: "Share post", comment: "Accessibility label for the Share post button")
     shareButton.contentAlignment = .trailing
     shareButton.showsMenuAsPrimaryAction = true
     shareButton.menu = UIMenu(children: [
@@ -265,21 +265,19 @@ final class FeedActionBarView: UIView {
       iconName: "bubble.left", count: text(new.replyCount, counts?.reply), color: .secondaryLabel,
       fonts: new.fonts, animated: false)
     replyButton.isEnabled = !new.isReplyDisabled
-    replyButton.accessibilityLabel = Self.countedLabel(
-      "Reply", count: new.replyCount, singular: "reply", plural: "replies")
+    replyButton.accessibilityLabel = Self.replyAccessibilityLabel(count: new.replyCount)
 
     repostButton.configure(
       iconName: "arrow.2.squarepath", count: text(new.repostCount, counts?.repost),
       color: new.isReposted ? .systemGreen : .secondaryLabel, fonts: new.fonts, animated: false)
-    repostButton.accessibilityLabel = Self.countedLabel(
-      new.isReposted ? "Remove Repost" : "Repost or Quote Post",
-      count: new.repostCount, singular: "repost", plural: "reposts")
+    repostButton.accessibilityLabel = Self.repostAccessibilityLabel(
+      isReposted: new.isReposted, count: new.repostCount)
 
     likeButton.configure(
       iconName: new.isLiked ? "heart.fill" : "heart", count: text(new.likeCount, counts?.like),
       color: new.isLiked ? .systemRed : .secondaryLabel, fonts: new.fonts, animated: animates)
-    likeButton.accessibilityLabel = Self.countedLabel(
-      new.isLiked ? "Unlike" : "Like", count: new.likeCount, singular: "like", plural: "likes")
+    likeButton.accessibilityLabel = Self.likeAccessibilityLabel(
+      isLiked: new.isLiked, count: new.likeCount)
     if animates, old?.isLiked == false, new.isLiked {
       likeButton.bounceIcon()
     }
@@ -296,19 +294,26 @@ final class FeedActionBarView: UIView {
   override func layoutSubviews() {
     super.layoutSubviews()
     let height = bounds.height
+    let isRTL = effectiveUserInterfaceLayoutDirection == .rightToLeft
     let shareWidth = shareButton.minimumWidth
-    let shareX = bounds.width - Self.trailingInset - shareWidth
+    let shareX = isRTL ? Self.trailingInset : bounds.width - Self.trailingInset - shareWidth
     shareButton.frame = CGRect(
       x: shareX, y: (height - shareButton.minimumHeight) / 2,
       width: shareWidth, height: shareButton.minimumHeight)
 
     // Reply, repost and like each take an equal leading-aligned slot of what is left.
     let slots = [replyButton, repostButton, likeButton]
-    let available = shareX - Self.spacing - Self.leadingInset - Self.spacing * CGFloat(slots.count - 1)
+    let available = bounds.width - Self.trailingInset - shareWidth - Self.spacing - Self.leadingInset
+      - Self.spacing * CGFloat(slots.count - 1)
     let slotWidth = max(0, available / CGFloat(slots.count))
     for (index, button) in slots.enumerated() {
-      let x = Self.leadingInset + CGFloat(index) * (slotWidth + Self.spacing)
       let width = min(slotWidth, button.fittingWidth)
+      let x: CGFloat
+      if isRTL {
+        x = bounds.width - Self.leadingInset - CGFloat(index) * (slotWidth + Self.spacing) - width
+      } else {
+        x = Self.leadingInset + CGFloat(index) * (slotWidth + Self.spacing)
+      }
       button.frame = CGRect(
         x: x, y: (height - button.minimumHeight) / 2, width: width, height: button.minimumHeight)
     }
@@ -318,11 +323,18 @@ final class FeedActionBarView: UIView {
     guard let state else { return [] }
     return [
       UIAction(
-        title: state.isReposted ? "Remove Repost" : "Repost", systemImage: "arrow.2.squarepath"
+        title: state.isReposted
+          ? String(localized: "Remove Repost", comment: "Menu action to undo reposting a post")
+          : String(localized: "Repost", comment: "Menu action verb to repost a post"),
+        systemImage: "arrow.2.squarepath"
       ) { [weak self] in
         self?.actions?.toggleRepost()
       },
-      UIAction(title: "Quote Post", systemImage: "quote.bubble", isEnabled: !state.isQuoteDisabled) {
+      UIAction(
+        title: String(localized: "Quote Post", comment: "Menu action to quote a post"),
+        systemImage: "quote.bubble",
+        isEnabled: !state.isQuoteDisabled
+      ) {
         [weak self] in
         self?.actions?.quote()
       },
@@ -333,27 +345,63 @@ final class FeedActionBarView: UIView {
     guard let state else { return [] }
     return [
       UIAction(
-        title: "Send via Chat", systemImage: "bubble.left.and.bubble.right",
-        isEnabled: state.canSendViaChat, identifier: "shareToBlueskyChat"
+        title: String(localized: "Send via Chat", comment: "Share menu action to send a post in Bluesky Chat"),
+        systemImage: "bubble.left.and.bubble.right",
+        isEnabled: state.canSendViaChat,
+        identifier: "shareToBlueskyChat"
       ) { [weak self] in
         self?.actions?.sendViaChat()
       },
       UIAction(
-        title: "Copy Link", systemImage: "link", isEnabled: state.canCopyLink,
+        title: String(localized: "Copy Link", comment: "Share menu action to copy a post URL"),
+        systemImage: "link",
+        isEnabled: state.canCopyLink,
         identifier: "copyPostLink"
       ) { [weak self] in
         self?.actions?.copyLink()
       },
-      UIAction(title: "More…", systemImage: "square.and.arrow.up", identifier: "morePostSharing") {
+      UIAction(
+        title: String(localized: "More…", comment: "Share menu action opening the system share sheet"),
+        systemImage: "square.and.arrow.up",
+        identifier: "morePostSharing"
+      ) {
         [weak self] in
         self?.actions?.moreSharing()
       },
     ]
   }
 
-  /// VoiceOver label such as "Like, 3 likes".
-  private static func countedLabel(_ action: String, count: Int, singular: String, plural: String) -> String {
-    "\(action), \(count) \(count == 1 ? singular : plural)"
+  private static func replyAccessibilityLabel(count: Int) -> String {
+    String(
+      localized: "Reply, \(count) replies",
+      comment: "Accessibility label for the Reply button — variable is the number of replies"
+    )
+  }
+
+  private static func repostAccessibilityLabel(isReposted: Bool, count: Int) -> String {
+    if isReposted {
+      return String(
+        localized: "Remove Repost, \(count) reposts",
+        comment: "Accessibility label for the Repost button when already reposted — variable is the number of reposts"
+      )
+    }
+    return String(
+      localized: "Repost or Quote Post, \(count) reposts",
+      comment: "Accessibility label for the Repost menu button — variable is the number of reposts"
+    )
+  }
+
+  private static func likeAccessibilityLabel(isLiked: Bool, count: Int) -> String {
+    if isLiked {
+      return String(
+        localized: "Unlike, \(count) likes",
+        comment: "Accessibility label for the Like button when already liked — variable is the number of likes"
+      )
+    }
+    return String(
+      localized: "Like, \(count) likes",
+      comment: "Accessibility label for the Like button — variable is the number of likes"
+    )
   }
 }
 
@@ -496,12 +544,22 @@ final class FeedActionBarButton: UIButton {
     let iconSize = icon.intrinsicContentSize
     let countSize = self.countSize
     let contentWidth = iconSize.width + (hasCount ? Self.iconSpacing + countSize.width : 0)
-    var x = contentAlignment == .leading ? 0 : bounds.width - contentWidth
-    icon.frame = CGRect(
-      x: x, y: (bounds.height - iconSize.height) / 2, width: iconSize.width, height: iconSize.height)
-    x += iconSize.width + Self.iconSpacing
-    countLabel.frame = CGRect(
-      x: x, y: (bounds.height - countSize.height) / 2, width: countSize.width, height: countSize.height)
+    let isRTL = effectiveUserInterfaceLayoutDirection == .rightToLeft
+    let alignsLeft = (contentAlignment == .leading) != isRTL
+    let startX = alignsLeft ? 0 : bounds.width - contentWidth
+    if isRTL {
+      let iconX = startX + contentWidth - iconSize.width
+      icon.frame = CGRect(
+        x: iconX, y: (bounds.height - iconSize.height) / 2, width: iconSize.width, height: iconSize.height)
+      countLabel.frame = CGRect(
+        x: startX, y: (bounds.height - countSize.height) / 2, width: countSize.width, height: countSize.height)
+    } else {
+      icon.frame = CGRect(
+        x: startX, y: (bounds.height - iconSize.height) / 2, width: iconSize.width, height: iconSize.height)
+      countLabel.frame = CGRect(
+        x: startX + iconSize.width + Self.iconSpacing,
+        y: (bounds.height - countSize.height) / 2, width: countSize.width, height: countSize.height)
+    }
   }
 }
 

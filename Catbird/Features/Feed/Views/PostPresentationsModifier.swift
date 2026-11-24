@@ -82,7 +82,10 @@ struct PostPresentationsModifier: ViewModifier {
               let handle = postState.currentPostBox.value.author.handle.description
               LabelsOnMeView(
                 labels: postState.allPostLabels,
-                targetDescription: "Post by @\(handle)",
+                targetDescription: String(
+                  localized: "Post by @\(handle)",
+                  comment: "Target description when viewing labels on a post — variable is the author's handle"
+                ),
                 viewerDID: appState.userDID,
                 reportingService: reportingService
               )
@@ -302,7 +305,10 @@ enum PostThreadSummarizer {
     state.canRetryThreadSummary = false
 
     guard appState.atProtoClient != nil else {
-      state.threadSummaryError = "Sign in to summarize threads."
+      state.threadSummaryError = String(
+        localized: "Sign in to summarize threads.",
+        comment: "Error shown when attempting to summarize a thread while signed out"
+      )
       state.isThreadSummaryLoading = false
       state.canRetryThreadSummary = false
       return

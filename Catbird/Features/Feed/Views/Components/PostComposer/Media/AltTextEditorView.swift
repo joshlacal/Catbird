@@ -139,7 +139,7 @@ struct AltTextEditorView: View {
                         }
 
                     // Character count
-                    Text("\(remainingChars) characters remaining")
+                    Text("\(remainingChars) characters remaining", comment: "Remaining character count in media alt text editor")
                         .appFont(AppTextRole.caption)
                         .foregroundStyle(remainingChars < 50 ? .orange : .secondary)
                         .padding(.trailing, 4)
@@ -183,9 +183,11 @@ struct AltTextEditorView: View {
                 #endif
 
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
+                    Button {
                         onSave(editedText, imageId)
                         dismiss()
+                    } label: {
+                        Text("Save", comment: "Button to save media alt text description")
                     }
                     .disabled(isGeneratingAltText)
                 }
@@ -216,7 +218,11 @@ struct AltTextEditorView: View {
             .alert("Couldn’t Generate Alt Text", isPresented: $showingErrorAlert) {
                 Button("OK", role: .cancel) {}
             } message: {
-                Text(altTextError ?? "Failed to generate alt text.")
+                if let altTextError {
+                    Text(altTextError)
+                } else {
+                    Text("Failed to generate alt text.")
+                }
             }
         }
     }
@@ -299,13 +305,13 @@ enum AltTextGeneratorError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidImage:
-            return "This image can’t be described automatically."
+            return String(localized: "This image can’t be described automatically.", comment: "Error when an image cannot be processed for automatic alt text generation")
         case .modelUnavailable(let reason):
             return reason
         case .unsupportedPlatform:
-            return "Generating descriptions requires iOS 26 or later."
+            return String(localized: "Generating descriptions requires iOS 26 or later.", comment: "Error when device OS does not support on-device alt text generation")
         case .generationFailed:
-            return "Couldn’t generate a description. Try again or write one yourself."
+            return String(localized: "Couldn’t generate a description. Try again or write one yourself.", comment: "Error when automatic alt text generation fails")
         }
     }
 }
@@ -348,13 +354,21 @@ public final class AltTextGeneratorService: Sendable {
         guard case .available = model.availability else {
             switch model.availability {
             case .unavailable(.appleIntelligenceNotEnabled):
-                throw AltTextGeneratorError.modelUnavailable("Turn on Apple Intelligence in Settings to generate descriptions.")
+                throw AltTextGeneratorError.modelUnavailable(
+                    String(localized: "Turn on Apple Intelligence in Settings to generate descriptions.", comment: "Error when Apple Intelligence is turned off in system Settings")
+                )
             case .unavailable(.deviceNotEligible):
-                throw AltTextGeneratorError.modelUnavailable("This device doesn’t support Apple Intelligence.")
+                throw AltTextGeneratorError.modelUnavailable(
+                    String(localized: "This device doesn’t support Apple Intelligence.", comment: "Error when device hardware does not support Apple Intelligence")
+                )
             case .unavailable(.modelNotReady):
-                throw AltTextGeneratorError.modelUnavailable("Apple Intelligence is still getting ready. Try again later.")
+                throw AltTextGeneratorError.modelUnavailable(
+                    String(localized: "Apple Intelligence is still getting ready. Try again later.", comment: "Error when on-device Apple Intelligence model is still downloading or preparing")
+                )
             default:
-                throw AltTextGeneratorError.modelUnavailable("Apple Intelligence isn’t available right now.")
+                throw AltTextGeneratorError.modelUnavailable(
+                    String(localized: "Apple Intelligence isn’t available right now.", comment: "Fallback error when Apple Intelligence is unavailable")
+                )
             }
         }
 
@@ -396,7 +410,9 @@ public final class AltTextGeneratorService: Sendable {
         let response = try await session.respond(to: Prompt(promptText), options: options)
         let cleaned = Self.cleanAltText(response.content)
         guard !cleaned.isEmpty else {
-            throw AltTextGeneratorError.generationFailed("No description was generated.")
+            throw AltTextGeneratorError.generationFailed(
+                String(localized: "No description was generated.", comment: "Error when AI alt text model returned an empty response")
+            )
         }
         return cleaned
     }

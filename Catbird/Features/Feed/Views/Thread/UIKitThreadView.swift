@@ -121,7 +121,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
     let label = UILabel()
     label.translatesAutoresizingMaskIntoConstraints = false
-    label.text = "Loading thread…"
+    label.text = String(localized: "Loading thread…", comment: "Status message shown while loading a conversation thread")
     label.textAlignment = .center
     label.font = UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body)
 
@@ -651,7 +651,10 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
       if !loaded {
         appState.toastManager.show(
-          ToastItem(message: "Couldn’t load more replies. Try again.", icon: "exclamationmark.triangle")
+          ToastItem(
+            message: String(localized: "Couldn’t load more replies. Try again.", comment: "Error toast when loading hidden replies in a thread fails"),
+            icon: "exclamationmark.triangle"
+          )
         )
       }
 
@@ -878,8 +881,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       let anchorValue = threadData.thread.first(where: { $0.depth == 0 })?.value
       if case .appBskyUnspeccedDefsThreadItemNoUnauthenticated = anchorValue {
         configuration.image = UIImage(systemName: "lock")
-        configuration.text = "Post Unavailable"
-        configuration.secondaryText = "The author has limited this post to signed-in users."
+        configuration.text = String(localized: "Post Unavailable", comment: "Empty state title when a post cannot be viewed")
+        configuration.secondaryText = String(localized: "The author has limited this post to signed-in users.", comment: "Empty state message when a post requires signing in")
       } else if let anchorValue, let placeholder = CircleThreadOpening.placeholder(in: anchorValue) {
         let copy = CircleEncryptedStatusRow.copy(for: placeholder.state, ownerHandle: placeholder.ownerHandle)
         configuration.image = UIImage(systemName: CircleEncryptedStatusRow.iconName(for: placeholder.state))
@@ -887,8 +890,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         configuration.secondaryText = copy.detail
       } else {
         configuration.image = UIImage(systemName: "trash")
-        configuration.text = "Post Not Found"
-        configuration.secondaryText = "This post may have been deleted."
+        configuration.text = String(localized: "Post Not Found", comment: "Empty state title when a post no longer exists")
+        configuration.secondaryText = String(localized: "This post may have been deleted.", comment: "Empty state message when a post may have been deleted")
       }
     } else {
       let error = threadManager?.error
@@ -898,18 +901,18 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       switch error.map(Self.unavailableKind(of:)) ?? .other {
       case .notFound:
         configuration.image = UIImage(systemName: "trash")
-        configuration.text = "Post Not Found"
-        configuration.secondaryText = "This post may have been deleted."
+        configuration.text = String(localized: "Post Not Found", comment: "Empty state title when a post no longer exists")
+        configuration.secondaryText = String(localized: "This post may have been deleted.", comment: "Empty state message when a post may have been deleted")
       case .notAllowed:
         configuration.image = UIImage(systemName: "eye.slash")
-        configuration.text = "Post Unavailable"
-        configuration.secondaryText = "This post isn’t available."
+        configuration.text = String(localized: "Post Unavailable", comment: "Empty state title when a post cannot be viewed")
+        configuration.secondaryText = String(localized: "This post isn’t available.", comment: "Empty state message when access to a post is restricted")
       case let kind:
         configuration.image = UIImage(systemName: kind == .offline ? "wifi.exclamationmark" : "exclamationmark.triangle")
-        configuration.text = "Couldn’t Load Post"
+        configuration.text = String(localized: "Couldn’t Load Post", comment: "Empty state title when loading a thread fails")
         configuration.secondaryText = LoadFailureCopy.suggestion(for: kind)
         var button = UIButton.Configuration.filled()
-        button.title = "Try Again"
+        button.title = String(localized: "Try Again", comment: "Button to retry loading a failed thread")
         configuration.button = button
         configuration.buttonProperties.primaryAction = UIAction { [weak self] _ in
           self?.retryAfterLoadFailure()

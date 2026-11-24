@@ -40,8 +40,8 @@ struct TasteCalibrationBeatView: View {
           Task { await viewModel.skipCalibrationDuels() }
         } label: {
           HStack(spacing: 4) {
-            Text("Skip to Preview")
-            Image(systemName: "arrow.right")
+            Text("Skip to Preview", comment: "Button to skip taste duels and jump to timeline preview.")
+            Image(systemName: "arrow.forward")
           }
           .font(.caption.weight(.semibold))
           .foregroundStyle(.secondary)
@@ -67,7 +67,7 @@ struct TasteCalibrationBeatView: View {
 
         HStack(spacing: 8) {
           PaceOptionChip(
-            title: "Calm",
+            title: LocalizedStringResource("Calm", comment: "Pace option label for a relaxed daily feed rhythm."),
             subtitle: viewModel.paceSubtitle(for: .value_calm),
             symbol: "leaf.fill",
             isSelected: viewModel.pace == .value_calm,
@@ -76,7 +76,7 @@ struct TasteCalibrationBeatView: View {
           .accessibilityIdentifier("intel.pace.calm")
 
           PaceOptionChip(
-            title: "Balanced",
+            title: LocalizedStringResource("Balanced", comment: "Pace option label for a balanced daily feed rhythm."),
             subtitle: viewModel.paceSubtitle(for: .value_balanced),
             symbol: "sparkles",
             isSelected: viewModel.pace == .value_balanced,
@@ -85,7 +85,7 @@ struct TasteCalibrationBeatView: View {
           .accessibilityIdentifier("intel.pace.balanced")
 
           PaceOptionChip(
-            title: "Lively",
+            title: LocalizedStringResource("Lively", comment: "Pace option label for an active daily feed rhythm."),
             subtitle: viewModel.paceSubtitle(for: .value_lively),
             symbol: "bolt.fill",
             isSelected: viewModel.pace == .value_lively,
@@ -149,10 +149,14 @@ struct TasteCalibrationBeatView: View {
     } else if let duel = viewModel.activeDuelCard {
       VStack(alignment: .leading, spacing: 14) {
         HStack {
-          Label(
-            "Taste Duel \(viewModel.activeDuelIndex + 1) of \(viewModel.calibrationCards.count)",
-            systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right.fill"
-          )
+          Label {
+            Text(
+              "Taste Duel \(viewModel.activeDuelIndex + 1) of \(viewModel.calibrationCards.count)",
+              comment: "Progress label for taste calibration duel — %1$lld is current duel number, %2$lld is total duels."
+            )
+          } icon: {
+            Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right.fill")
+          }
           .font(.caption.weight(.bold))
           .foregroundStyle(Color.accentColor)
 
@@ -237,7 +241,7 @@ struct TasteCalibrationBeatView: View {
       if viewModel.activeDuelCard != nil {
         HStack(spacing: 8) {
           DuelChoiceButton(
-            title: "More A",
+            title: LocalizedStringResource("More A", comment: "Taste duel choice button preferring Option A."),
             symbol: "a.circle.fill",
             prominent: true,
             action: { Task { await viewModel.answerCurrentDuel(.value_a) } }
@@ -245,7 +249,7 @@ struct TasteCalibrationBeatView: View {
           .accessibilityIdentifier("intel.duel.choiceA")
 
           DuelChoiceButton(
-            title: "More B",
+            title: LocalizedStringResource("More B", comment: "Taste duel choice button preferring Option B."),
             symbol: "b.circle.fill",
             prominent: true,
             action: { Task { await viewModel.answerCurrentDuel(.value_b) } }
@@ -255,7 +259,7 @@ struct TasteCalibrationBeatView: View {
 
         HStack(spacing: 8) {
           DuelChoiceButton(
-            title: "Both Vibes!",
+            title: LocalizedStringResource("Both Vibes!", comment: "Taste duel choice button selecting both Option A and Option B."),
             symbol: "plus.magnifyingglass",
             prominent: false,
             action: { Task { await viewModel.answerCurrentDuel(.value_both) } }
@@ -263,7 +267,7 @@ struct TasteCalibrationBeatView: View {
           .accessibilityIdentifier("intel.duel.choiceBoth")
 
           DuelChoiceButton(
-            title: "Neither",
+            title: LocalizedStringResource("Neither", comment: "Taste duel choice button rejecting both options."),
             symbol: "xmark.circle",
             prominent: false,
             action: { Task { await viewModel.answerCurrentDuel(.value_neither) } }
@@ -275,9 +279,9 @@ struct TasteCalibrationBeatView: View {
           Task { await viewModel.advanceToPreview() }
         } label: {
           HStack(spacing: 8) {
-            Text("Preview My Future Feed")
+            Text("Preview My Future Feed", comment: "Button to advance from taste calibration to timeline preview.")
               .font(.headline)
-            Image(systemName: "arrow.right.circle.fill")
+            Image(systemName: "arrow.forward.circle.fill")
               .font(.headline)
           }
           .foregroundStyle(.white)
@@ -308,15 +312,21 @@ struct TasteCalibrationBeatView: View {
   static func duelKindSubtitle(for kind: String) -> String {
     switch kind {
     case "collision_trap", "ambiguity_split", "trap":
-      "Quick Clarification · Disambiguates lookalike search terms so only the real scene enters your feed."
+      String(
+        localized: "Quick Clarification · Disambiguates lookalike search terms so only the real scene enters your feed.",
+        comment: "Explanation shown under a lookalike-term taste duel prompt."
+      )
     default:
-      "Tunes the relative weight between neighboring sub-communities."
+      String(
+        localized: "Tunes the relative weight between neighboring sub-communities.",
+        comment: "Explanation shown under an adjacent-community taste duel prompt."
+      )
     }
   }
 }
 
 private struct PaceOptionChip: View {
-  let title: String
+  let title: LocalizedStringResource
   let subtitle: String
   let symbol: String
   let isSelected: Bool
@@ -359,7 +369,7 @@ private struct DuelOptionCardView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       HStack(alignment: .top, spacing: 8) {
-        Text(badge)
+        Text(verbatim: badge)
           .font(.subheadline.weight(.heavy))
           .foregroundStyle(.white)
           .frame(width: 26, height: 26)
@@ -403,7 +413,7 @@ private struct DuelOptionCardView: View {
                 Text(post.authorDisplayName)
                   .font(.caption.weight(.semibold))
                   .lineLimit(1)
-                Text("@\(post.authorHandle)")
+                Text(verbatim: "@\(post.authorHandle)")
                   .font(.caption2)
                   .foregroundStyle(.secondary)
                   .lineLimit(1)
@@ -427,7 +437,7 @@ private struct DuelOptionCardView: View {
 
       Button(action: onPickThis) {
         HStack(spacing: 6) {
-          Text("Choose Option \(badge)")
+          Text("Choose Option \(badge)", comment: "Button to select option A or B in a taste duel — variable is letter badge A or B.")
             .font(.caption.weight(.semibold))
           Image(systemName: "hand.thumbsup.fill")
             .font(.caption2)
@@ -453,7 +463,7 @@ private struct DuelOptionCardView: View {
 }
 
 private struct DuelChoiceButton: View {
-  let title: String
+  let title: LocalizedStringResource
   let symbol: String
   let prominent: Bool
   let action: () -> Void

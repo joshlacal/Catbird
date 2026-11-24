@@ -43,6 +43,7 @@ struct LinkEditingOverlay: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel(Text("Edit link", comment: "Accessibility label for tappable link overlay in post composer"))
         .overlay(
             // Visual feedback for tappable link
             RoundedRectangle(cornerRadius: 4)

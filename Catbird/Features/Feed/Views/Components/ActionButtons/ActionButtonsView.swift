@@ -298,7 +298,7 @@ struct ActionButtonsView: View {
         handleReplyTap()
       }
       .accessibilityIdentifier("replyButton")
-        .accessibilityLabel(countedLabel("Reply", count: interactionState.replyCount, singular: "reply", plural: "replies"))
+        .accessibilityLabel(replyAccessibilityLabel)
       .disabled((postBox.value.viewer?.replyDisabled ?? false) || !viewModel.capabilities.canReply)
       // Subtle glass and mark as the matched transition source for this post
       .padding(.vertical, isBig ? 3 : 2)
@@ -325,9 +325,7 @@ struct ActionButtonsView: View {
       }
       .disabled(!viewModel.capabilities.canLike)
       .accessibilityIdentifier("likeButton")
-      .accessibilityLabel(countedLabel(
-        interactionState.isLiked ? "Unlike" : "Like",
-        count: interactionState.likeCount, singular: "like", plural: "likes"))
+      .accessibilityLabel(likeAccessibilityLabel)
       .frame(maxWidth: .infinity, alignment: .leading)
 
       if viewModel.capabilities.canPublicShare {
@@ -392,18 +390,45 @@ struct ActionButtonsView: View {
   }
 
   private var repostActionTitle: String {
-    interactionState.isReposted ? "Remove Repost" : "Repost"
+    interactionState.isReposted
+      ? String(localized: "Remove Repost", comment: "Menu action to undo reposting a post")
+      : String(localized: "Repost", comment: "Menu action verb to repost a post")
+  }
+
+  private var replyAccessibilityLabel: String {
+    let count = interactionState.replyCount
+    return String(
+      localized: "Reply, \(count) replies",
+      comment: "Accessibility label for the Reply button — variable is the number of replies"
+    )
   }
 
   private var repostAccessibilityLabel: String {
-    countedLabel(
-      interactionState.isReposted ? "Remove Repost" : "Repost or Quote Post",
-      count: interactionState.repostCount, singular: "repost", plural: "reposts")
+    let count = interactionState.repostCount
+    if interactionState.isReposted {
+      return String(
+        localized: "Remove Repost, \(count) reposts",
+        comment: "Accessibility label for the Repost button when already reposted — variable is the number of reposts"
+      )
+    }
+    return String(
+      localized: "Repost or Quote Post, \(count) reposts",
+      comment: "Accessibility label for the Repost menu button — variable is the number of reposts"
+    )
   }
 
-  /// VoiceOver label such as "Like, 3 likes".
-  private func countedLabel(_ action: String, count: Int, singular: String, plural: String) -> String {
-    "\(action), \(count) \(count == 1 ? singular : plural)"
+  private var likeAccessibilityLabel: String {
+    let count = interactionState.likeCount
+    if interactionState.isLiked {
+      return String(
+        localized: "Unlike, \(count) likes",
+        comment: "Accessibility label for the Like button when already liked — variable is the number of likes"
+      )
+    }
+    return String(
+      localized: "Like, \(count) likes",
+      comment: "Accessibility label for the Like button — variable is the number of likes"
+    )
   }
 
   private func showFailureToast(for error: Error, action: String) {
@@ -711,7 +736,12 @@ struct PostShareDestination: Identifiable {
     NSPasteboard.general.writeObjects([url as NSURL])
     #endif
     PlatformHaptics.light()
-    appState.toastManager.show(ToastItem(message: "Link copied", icon: "link"))
+    appState.toastManager.show(
+      ToastItem(
+        message: String(localized: "Link copied", comment: "Toast shown after copying a post link to the clipboard"),
+        icon: "link"
+      )
+    )
   }
 }
 

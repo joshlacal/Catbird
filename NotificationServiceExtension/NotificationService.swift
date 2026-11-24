@@ -59,7 +59,10 @@ class NotificationService: UNNotificationServiceExtension {
     let content = UNMutableNotificationContent()
     content.title = "Catbird"
     content.subtitle = ""
-    content.body = "New activity"
+    content.body = String(
+      localized: "New activity",
+      comment: "Generic notification body shown when push notification details are hidden."
+    )
     content.sound = nil
     content.badge = nil
     content.interruptionLevel = .passive
@@ -84,7 +87,10 @@ class NotificationService: UNNotificationServiceExtension {
   {
     let content = UNMutableNotificationContent()
     content.title = "Catbird"
-    content.body = "New activity"
+    content.body = String(
+      localized: "New activity",
+      comment: "Generic notification body shown when push notification details are hidden."
+    )
     content.sound = nil
     content.interruptionLevel = .passive
     content.threadIdentifier = "catbird-unsupported"
@@ -246,9 +252,17 @@ class NotificationService: UNNotificationServiceExtension {
     if let senderDid, let cached = await ProfileCacheDatabase.shared.read(did: senderDid) {
       content.title = cached.displayName ?? cached.handle
     } else if content.title.isEmpty {
-      content.title = "New Message"
+      content.title = String(
+        localized: "New Message",
+        comment: "Fallback notification title for an incoming chat message when sender profile is not cached."
+      )
     }
-    content.body = (messageText?.isEmpty == false) ? messageText! : "Sent you a message"
+    content.body = (messageText?.isEmpty == false)
+      ? messageText!
+      : String(
+        localized: "Sent you a message",
+        comment: "Fallback notification body when a chat message contains no text preview."
+      )
     if let convoId { content.threadIdentifier = "chat:\(convoId)" }
     content.categoryIdentifier = "CHAT_MESSAGE"
 
@@ -306,7 +320,9 @@ class NotificationService: UNNotificationServiceExtension {
   }
 
   private static func applyFallback(to content: UNMutableNotificationContent, wake: PushWakePayload) {
-    content.title = wake.kind.contains("request") ? "Message Request" : "Catbird"
+    content.title = wake.kind.contains("request")
+      ? String(localized: "Message Request", comment: "Notification title for an incoming chat message request.")
+      : "Catbird"
     content.body = MLSPushExtensionProcessor.genericFallbackBody
     content.threadIdentifier = "mls-\(wake.conversationId)"
     content.categoryIdentifier = "MLS_MESSAGE"
@@ -366,7 +382,10 @@ class NotificationService: UNNotificationServiceExtension {
     let content = UNMutableNotificationContent()
     content.title = preview.groupTitle ?? "Catbird"
     content.subtitle = ""
-    content.body = "Synced message from your other device"
+    content.body = String(
+      localized: "Synced message from your other device",
+      comment: "Passive notification body when an encrypted message was sent from another device on the same account."
+    )
     content.sound = nil
     content.badge = nil
     content.interruptionLevel = .passive

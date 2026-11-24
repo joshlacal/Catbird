@@ -13,6 +13,7 @@ import UniformTypeIdentifiers
 /// Sheet for importing, validating, previewing, and attaching a WebVTT caption file to a video.
 public struct VideoCaptionEditorView: View {
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.locale) private var locale
 
   public let initialCaption: VideoCaption?
   public let onSave: (VideoCaption) -> Void
@@ -26,8 +27,6 @@ public struct VideoCaptionEditorView: View {
   @State private var showingFileImporter: Bool = false
   @State private var errorMessage: String? = nil
 
-  private let availableLanguages: [LanguageCodeContainer]
-
   public init(
     caption: VideoCaption?,
     initialLanguage: LanguageCodeContainer? = nil,
@@ -37,7 +36,6 @@ public struct VideoCaptionEditorView: View {
     self.initialCaption = caption
     self.onSave = onSave
     self.onRemove = onRemove
-    self.availableLanguages = getAvailableLanguages()
 
     let defaultLang: LanguageCodeContainer
     if let captionLang = caption?.lang {
@@ -68,10 +66,10 @@ public struct VideoCaptionEditorView: View {
         // MARK: - Language Section
         Section(header: Text("Caption Language")) {
           Picker("Language", selection: $selectedLanguage) {
-            ForEach(availableLanguages, id: \.self) { lang in
+            ForEach(getAvailableLanguages(in: locale), id: \.self) { lang in
               let langCode = lang.lang.languageCode?.identifier ?? lang.lang.minimalIdentifier
-              let localized = Locale.current.localizedString(forLanguageCode: langCode) ?? lang.lang.minimalIdentifier
-              Text("\(localized) (\(lang.lang.minimalIdentifier))")
+              let localized = locale.localizedString(forLanguageCode: langCode) ?? lang.lang.minimalIdentifier
+              Text(verbatim: "\(localized) (\(lang.lang.minimalIdentifier))")
                 .tag(lang)
             }
           }
@@ -93,11 +91,11 @@ public struct VideoCaptionEditorView: View {
               }
 
               HStack(spacing: 12) {
-                Text("\(byteCount) bytes / \(VideoCaption.maxByteSize) max")
+                Text("\(byteCount) bytes / \(VideoCaption.maxByteSize) max", comment: "WebVTT caption file size vs maximum bytes; first variable is current bytes, second is max bytes")
                   .font(.caption)
                   .foregroundStyle(byteCount > VideoCaption.maxByteSize ? .red : .secondary)
 
-                Text("\(characterCount) chars")
+                Text("\(characterCount) chars", comment: "Character count of imported WebVTT caption file")
                   .font(.caption)
                   .foregroundStyle(characterCount > VideoCaption.maxCharacterLength ? .red : .secondary)
               }
@@ -105,7 +103,10 @@ public struct VideoCaptionEditorView: View {
               if !vttContent.isEmpty {
                 DisclosureGroup("Preview Content") {
                   ScrollView {
-                    Text(vttContent.prefix(500) + (vttContent.count > 500 ? "\n…" : ""))
+                    let previewSnippet = vttContent.count > 500
+                      ? "\(vttContent.prefix(500))\n…"
+                      : vttContent
+                    Text(verbatim: previewSnippet)
                       .font(.system(.caption, design: .monospaced))
                       .frame(maxWidth: .infinity, alignment: .leading)
                       .padding(8)

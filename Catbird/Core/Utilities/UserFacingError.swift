@@ -44,15 +44,48 @@ enum UserFacingError {
   /// Returns `nil` for cancellations, which should not be reported to the user.
   static func message(for error: Error, action: String) -> String? {
     switch kind(of: error) {
-    case .cancelled: return nil
-    case .offline: return "Couldn’t \(action). Check your connection and try again."
-    case .timedOut: return "Couldn’t \(action) because the server took too long. Try again."
-    case .rateLimited: return "Couldn’t \(action) right now. Wait a moment and try again."
-    case .notFound: return "Couldn’t \(action). It may have been deleted."
-    case .notAllowed: return "Couldn’t \(action). You don’t have permission to do that."
-    case .signInRequired: return "Couldn’t \(action). Sign in again and try again."
-    case .server: return "Couldn’t \(action) because of a server problem. Try again later."
-    case .other: return "Couldn’t \(action). Try again."
+    case .cancelled:
+      return nil
+    case .offline:
+      return String(
+        localized: "Couldn’t \(action). Check your connection and try again.",
+        comment: "Offline error sentence — variable is the attempted action (e.g., 'load this post')."
+      )
+    case .timedOut:
+      return String(
+        localized: "Couldn’t \(action) because the server took too long. Try again.",
+        comment: "Timeout error sentence — variable is the attempted action."
+      )
+    case .rateLimited:
+      return String(
+        localized: "Couldn’t \(action) right now. Wait a moment and try again.",
+        comment: "Rate-limited error sentence — variable is the attempted action."
+      )
+    case .notFound:
+      return String(
+        localized: "Couldn’t \(action). It may have been deleted.",
+        comment: "Not-found error sentence — variable is the attempted action."
+      )
+    case .notAllowed:
+      return String(
+        localized: "Couldn’t \(action). You don’t have permission to do that.",
+        comment: "Permission-denied error sentence — variable is the attempted action."
+      )
+    case .signInRequired:
+      return String(
+        localized: "Couldn’t \(action). Sign in again and try again.",
+        comment: "Reauthentication-required error sentence — variable is the attempted action."
+      )
+    case .server:
+      return String(
+        localized: "Couldn’t \(action) because of a server problem. Try again later.",
+        comment: "Server error sentence — variable is the attempted action."
+      )
+    case .other:
+      return String(
+        localized: "Couldn’t \(action). Try again.",
+        comment: "Generic failure sentence — variable is the attempted action."
+      )
     }
   }
 

@@ -74,28 +74,45 @@ struct CircleEncryptedStatusRow: View {
     case updateRequired
     /// This device's key store could not be read right now (I3).
     case unavailable
+
+    var title: String {
+      String(localized: "Encrypted post", comment: "Placeholder row title for an end-to-end encrypted Circle post.")
+    }
   }
 
   /// Title and detail for `state` (shared by feed rows and thread placeholders).
   static func copy(for state: State, ownerHandle: String?) -> (title: String, detail: String) {
+    let title = state.title
     switch state {
     case .opening:
-      return ("Encrypted post", "Opening…")
+      return (title, String(localized: "Opening…", comment: "Status detail while decrypting an encrypted Circle post."))
     case .waiting:
-      return ("Encrypted post", "Waiting…")
+      return (title, String(localized: "Waiting…", comment: "Status detail while waiting for encryption services or author epoch to open a Circle post."))
     case .postedBeforeJoined:
-      return ("Encrypted post", "Posted before you joined")
+      return (title, String(localized: "Posted before you joined", comment: "Status detail when an encrypted Circle post was sealed before this member gained key access."))
     case .waitingForKey:
       if let ownerHandle {
-        return ("Encrypted post", "Waiting for @\(ownerHandle) to refresh your access.")
+        return (
+          title,
+          String(
+            localized: "Waiting for @\(ownerHandle) to refresh your access.",
+            comment: "Status detail when waiting for the Circle owner to wrap a new key — %1$@ is the owner's handle (without @)."
+          )
+        )
       }
-      return ("Encrypted post", "Waiting for the Circle owner to refresh your access.")
+      return (
+        title,
+        String(
+          localized: "Waiting for the Circle owner to refresh your access.",
+          comment: "Status detail when waiting for the Circle owner to wrap a new key and their handle is not yet known."
+        )
+      )
     case .unverifiable:
-      return ("Encrypted post", "Couldn’t verify this post’s author")
+      return (title, String(localized: "Couldn’t verify this post’s author", comment: "Status detail when an encrypted Circle post's signature or author epoch fails verification."))
     case .updateRequired:
-      return ("Encrypted post", "Update Catbird to view this post")
+      return (title, String(localized: "Update Catbird to view this post", comment: "Status detail when a Circle post uses an unknown newer format requiring an app update."))
     case .unavailable:
-      return ("Encrypted post", "Unavailable on this device right now")
+      return (title, String(localized: "Unavailable on this device right now", comment: "Status detail when the device keychain is unavailable so the Circle post cannot be decrypted."))
     }
   }
 

@@ -17,13 +17,27 @@ struct EnhancedFollowButton: View {
     @State private var isLoading = false
     private let logger = Logger(subsystem: "blue.catbird", category: "EnhancedFollowButton")
     
+    private var buttonTitle: LocalizedStringResource {
+        if isFollowing {
+            return LocalizedStringResource(
+                "Following",
+                comment: "Button label indicating the user is currently following this account"
+            )
+        } else {
+            return LocalizedStringResource(
+                "Follow",
+                comment: "Button action to follow an account"
+            )
+        }
+    }
+
     var body: some View {
         Button {
             Task {
                 await toggleFollow()
             }
         } label: {
-            Text(isFollowing ? "Following" : "Follow")
+            Text(buttonTitle)
                 .appFont(AppTextRole.subheadline)
                 .fontWeight(.semibold)
                 .foregroundColor(isFollowing ? .primary : .white)

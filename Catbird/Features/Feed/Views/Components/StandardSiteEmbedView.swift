@@ -111,7 +111,10 @@ struct StandardSiteEmbedView: View {
             Text(date, format: .dateTime.month(.abbreviated).day().year())
           }
           if let minutes = card.readingMinutes {
-            Text("\(minutes) min read")
+            Text(
+              "\(minutes) min read",
+              comment: "Estimated reading time badge on a post — variable is the number of minutes"
+            )
           }
         }
         .appFont(AppTextRole.caption)
@@ -164,8 +167,17 @@ struct StandardSiteEmbedView: View {
         .background(buttonBackground, in: RoundedRectangle(cornerRadius: 8))
       }
       .buttonStyle(.plain)
-      .accessibilityLabel(Text(card.publisher.map { "Subscribe to \(card.publicationTitle) on \($0)" }
-        ?? "View publication: \(card.publicationTitle)"))
+      .accessibilityLabel(
+        card.publisher.map { publisher in
+          Text(
+            "Subscribe to \(card.publicationTitle) on \(publisher)",
+            comment: "Accessibility label for standard site subscribe button — first variable is publication title, second is publisher platform"
+          )
+        } ?? Text(
+          "View publication: \(card.publicationTitle)",
+          comment: "Accessibility label for standard site publication button — variable is publication title"
+        )
+      )
     }
     .padding(12)
   }
@@ -189,7 +201,9 @@ struct StandardSiteEmbedView: View {
 
   private var metadata: some View {
     VStack(alignment: .leading, spacing: 2) {
-      if let handle = card.authorHandle { Text("by @\(handle)") }
+      if let handle = card.authorHandle {
+        Text("by @\(handle)", comment: "Publication owner attribution — variable is the author's handle")
+      }
       if let domain = card.displayDomain { Text(domain) }
     }
     .appFont(AppTextRole.caption)
@@ -204,20 +218,42 @@ struct StandardSiteEmbedView: View {
     return color(colors.background)
   }
 
-  private var articleAccessibilityValue: Text {
-    var value = Text(card.external.description)
-    if let date = card.external.createdAt?.date {
-      value = value + Text(". ") + Text(date, format: .dateTime.month(.abbreviated).day().year())
+  private var articleAccessibilityValue: String {
+    var parts: [String] = []
+    if !card.external.description.isEmpty {
+      parts.append(card.external.description)
     }
-    if let minutes = card.readingMinutes { value = value + Text(". \(minutes) min read") }
-    return value
+    if let date = card.external.createdAt?.date {
+      parts.append(date.formatted(.dateTime.month(.abbreviated).day().year()))
+    }
+    if let minutes = card.readingMinutes {
+      parts.append(
+        String(
+          localized: "\(minutes) min read",
+          comment: "Estimated reading time badge on a post — variable is the number of minutes"
+        )
+      )
+    }
+    return parts.formatted()
   }
 
-  private var publicationAccessibilityValue: Text {
-    var value = Text(card.isPublicationOnly ? card.external.description : "")
-    if let handle = card.authorHandle { value = value + Text(". by @\(handle)") }
-    if let domain = card.displayDomain { value = value + Text(". \(domain)") }
-    return value
+  private var publicationAccessibilityValue: String {
+    var parts: [String] = []
+    if card.isPublicationOnly && !card.external.description.isEmpty {
+      parts.append(card.external.description)
+    }
+    if let handle = card.authorHandle {
+      parts.append(
+        String(
+          localized: "by @\(handle)",
+          comment: "Publication owner attribution — variable is the author's handle"
+        )
+      )
+    }
+    if let domain = card.displayDomain {
+      parts.append(domain)
+    }
+    return parts.formatted()
   }
 
   private var buttonForeground: Color {

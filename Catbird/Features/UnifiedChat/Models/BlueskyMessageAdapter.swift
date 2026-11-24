@@ -152,7 +152,10 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
 
   var text: String {
     if isSystemGroup, let events = systemGroupEvents {
-      return "\(events.count) chat updates"
+      return String(
+        localized: "\(events.count) chat updates",
+        comment: "Summary pill for grouped system events in a chat conversation. %lld is the number of updates."
+      )
     }
     if let event = systemEvent {
       return event.messageText
@@ -189,7 +192,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
         kind: .deleted,
         referencedMessageID: nil,
         senderDisplayName: nil,
-        previewText: "Deleted message",
+        previewText: String(localized: "Deleted message", comment: "Reply preview placeholder when the referenced message was deleted"),
         isTappable: false
       )
     case .chatBskyConvoDefsMessageBeforeUserJoinedGroupView:
@@ -197,15 +200,16 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
         kind: .beforeUserJoined,
         referencedMessageID: nil,
         senderDisplayName: nil,
-        previewText: "Message sent before you joined",
+        previewText: String(localized: "Message sent before you joined", comment: "Reply preview placeholder when the referenced message was sent before joining the group"),
         isTappable: false
       )
     case .unexpected:
+      let unsupported = String(localized: "Unsupported message", comment: "Placeholder for a chat message with an unsupported schema")
       return UnifiedMessageReplyContext(
-        kind: .unexpected("Unsupported message"),
+        kind: .unexpected(unsupported),
         referencedMessageID: nil,
         senderDisplayName: nil,
-        previewText: "Unsupported message",
+        previewText: unsupported,
         isTappable: false
       )
     }
@@ -336,9 +340,9 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
         if let displayName = profile.displayName, !displayName.isEmpty {
           return displayName
         }
-        return "@" + profile.handle.description
+        return "@\(profile.handle.description)"
       }
-      return "Someone"
+      return String(localized: "Someone", comment: "Fallback name when a chat participant's profile is unavailable")
     }
 
     switch systemMessageView.data {
@@ -346,8 +350,8 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
       let memberName = name(for: data.member.did)
       let roleStr = data.role.rawValue
       let text = roleStr == "admin"
-        ? "\(memberName) was added as an admin"
-        : "\(memberName) was added to the group"
+        ? String(localized: "\(memberName) was added as an admin", comment: "System message when a member is added to a group as admin. %@ is the member's name.")
+        : String(localized: "\(memberName) was added to the group", comment: "System message when a member is added to a group. %@ is the member's name.")
       return UnifiedSystemEvent(
         id: id,
         kind: .memberAdded(memberDID: data.member.did.didString(), role: roleStr),
@@ -362,8 +366,8 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
       let memberName = name(for: data.member.did)
       let removerName = name(for: data.removedBy.did)
       let text = data.member.did == data.removedBy.did
-        ? "\(memberName) left the group"
-        : "\(removerName) removed \(memberName)"
+        ? String(localized: "\(memberName) left the group", comment: "System message when a member leaves a group chat. %@ is the member's name.")
+        : String(localized: "\(removerName) removed \(memberName)", comment: "System message when one member removes another from a group. %1$@ is the remover's name, %2$@ is the removed member's name.")
       return UnifiedSystemEvent(
         id: id,
         kind: .memberRemoved(memberDID: data.member.did.didString(), removedByDID: data.removedBy.did.didString()),
@@ -383,7 +387,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
         id: id,
         kind: .memberJoined(memberDID: data.member.did.didString(), role: data.role.rawValue),
         sentAt: sentAt,
-        messageText: "\(memberName) joined the group",
+        messageText: String(localized: "\(memberName) joined the group", comment: "System message when a member joins a group chat. %@ is the member's name."),
         iconName: "person.badge.plus",
         referencedDIDs: [data.member.did.didString()],
         referencedNames: [data.member.did.didString(): memberName]
@@ -395,7 +399,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
         id: id,
         kind: .memberLeave(memberDID: data.member.did.didString()),
         sentAt: sentAt,
-        messageText: "\(memberName) left the group",
+        messageText: String(localized: "\(memberName) left the group"),
         iconName: "person.badge.minus",
         referencedDIDs: [data.member.did.didString()],
         referencedNames: [data.member.did.didString(): memberName]
@@ -407,7 +411,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
         id: id,
         kind: .convoLocked(byDID: data.lockedBy.did.didString()),
         sentAt: sentAt,
-        messageText: "\(lockerName) locked the chat",
+        messageText: String(localized: "\(lockerName) locked the chat", comment: "System message when an admin locks a group chat. %@ is the admin's name."),
         iconName: "lock.fill",
         referencedDIDs: [data.lockedBy.did.didString()],
         referencedNames: [data.lockedBy.did.didString(): lockerName]
@@ -419,7 +423,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
         id: id,
         kind: .convoUnlocked(byDID: data.unlockedBy.did.didString()),
         sentAt: sentAt,
-        messageText: "\(unlockerName) unlocked the chat",
+        messageText: String(localized: "\(unlockerName) unlocked the chat", comment: "System message when an admin unlocks a group chat. %@ is the admin's name."),
         iconName: "lock.open.fill",
         referencedDIDs: [data.unlockedBy.did.didString()],
         referencedNames: [data.unlockedBy.did.didString(): unlockerName]
@@ -431,7 +435,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
         id: id,
         kind: .convoEnded(byDID: data.lockedBy.did.didString()),
         sentAt: sentAt,
-        messageText: "\(enderName) ended the chat",
+        messageText: String(localized: "\(enderName) ended the chat", comment: "System message when an admin permanently closes a group chat. %@ is the admin's name."),
         iconName: "lock.slash.fill",
         referencedDIDs: [data.lockedBy.did.didString()],
         referencedNames: [data.lockedBy.did.didString(): enderName]
@@ -440,9 +444,9 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
     case .chatBskyConvoDefsSystemMessageDataEditGroup(let data):
       let text: String
       if let newName = data.newName, !newName.isEmpty {
-        text = "Group name changed to “\(newName)”"
+        text = String(localized: "Group name changed to “\(newName)”", comment: "System message when a group chat is renamed. %@ is the new group name.")
       } else {
-        text = "Group name was updated"
+        text = String(localized: "Group name was updated", comment: "System message when a group chat name is cleared or updated")
       }
       return UnifiedSystemEvent(
         id: id,
@@ -459,7 +463,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
         id: id,
         kind: .joinLinkCreated,
         sentAt: sentAt,
-        messageText: "Invite link created",
+        messageText: String(localized: "Invite link created", comment: "System message when a group invite link is created"),
         iconName: "link.badge.plus"
       )
 
@@ -468,7 +472,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
         id: id,
         kind: .joinLinkEdited,
         sentAt: sentAt,
-        messageText: "Invite link updated",
+        messageText: String(localized: "Invite link updated", comment: "System message when a group invite link is modified"),
         iconName: "link"
       )
 
@@ -477,7 +481,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
         id: id,
         kind: .joinLinkEnabled,
         sentAt: sentAt,
-        messageText: "Invite link enabled",
+        messageText: String(localized: "Invite link enabled", comment: "System message when a group invite link is enabled"),
         iconName: "link"
       )
 
@@ -486,16 +490,17 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
         id: id,
         kind: .joinLinkDisabled,
         sentAt: sentAt,
-        messageText: "Invite link disabled",
+        messageText: String(localized: "Invite link disabled", comment: "System message when a group invite link is disabled"),
         iconName: "link"
       )
 
     case .unexpected:
+      let chatUpdated = String(localized: "Chat updated", comment: "Fallback system message when an unrecognized group chat event occurs")
       return UnifiedSystemEvent(
         id: id,
-        kind: .generic("Chat updated"),
+        kind: .generic(chatUpdated),
         sentAt: sentAt,
-        messageText: "Chat updated",
+        messageText: chatUpdated,
         iconName: "info.circle"
       )
     }

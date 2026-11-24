@@ -81,7 +81,11 @@ public struct ExploreInterestsCard: View {
         HStack(spacing: 4) {
           Image(systemName: "slider.horizontal.3")
             .font(.caption)
-          Text(userInterests.isEmpty ? "Add Interests" : "Edit Interests")
+          Text(
+            userInterests.isEmpty
+              ? LocalizedStringResource("Add Interests", comment: "Button to choose interests when none are selected")
+              : LocalizedStringResource("Edit Interests", comment: "Button to edit selected user interests")
+          )
             .appFont(AppTextRole.caption)
         }
         .padding(.horizontal, 12)

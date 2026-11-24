@@ -55,8 +55,10 @@ struct LabelsOnMeView: View {
             ContentUnavailableView("No Active Labels", systemImage: "tag", description: Text("There are no active labels to show."))
           }
         } else {
-          Section("Active Labels (\(activeLabels.count))") {
+          Section {
             ForEach(activeLabels) { label in labelRow(for: label) }
+          } header: {
+            Text("Active Labels (\(activeLabels.count))", comment: "Section header showing count of active moderation labels.")
           }
         }
       }
@@ -164,7 +166,7 @@ struct LabelsOnMeView: View {
       return
     } catch {
       guard isCurrentViewer else { return }
-      metadataError = "Label names could not be loaded. Label identifiers and issuing services are shown below."
+      metadataError = String(localized: "Label names could not be loaded. Label identifiers and issuing services are shown below.", comment: "Error when labeler metadata cannot be fetched.")
     }
   }
 }
@@ -188,15 +190,15 @@ private struct AppealLabelSheet: View {
         Form {
           Section("Label Details") {
             Text(info.name).font(.headline)
-            Text("Issued by \(info.issuer)").font(.subheadline)
-            Text("Applies to: \(label.subjectSummary.lowercased())").font(.caption)
+            Text("Issued by \(info.issuer)", comment: "Labeler attribution — variable is the issuing service name or handle.").font(.subheadline)
+            Text("Applies to: \(label.subjectSummary)", comment: "Target of a moderation label — variable is localized subject type (Profile, Whole account, Post, or Content).").font(.caption)
           }
           Section {
             TextField("Explain why this label was applied in error", text: $appealDetails, axis: .vertical)
               .lineLimit(4...8)
               .focused($isAppealReasonFocused)
               .accessibilityIdentifier("appealReason")
-            Text("\(appealDetails.count)/300 characters").font(.caption).foregroundStyle(.secondary)
+            Text("\(appealDetails.count)/300 characters", comment: "Character count indicator for moderation appeal reason — variable is typed character count.").font(.caption).foregroundStyle(.secondary)
           } header: { Text("Reason for Appeal") } footer: {
             Text("Your appeal will be sent to the service that issued this label.")
           }
@@ -255,10 +257,10 @@ private extension ComAtprotoLabelDefs.Label {
   /// What the label is attached to, in plain words.
   var subjectSummary: String {
     let subjectURI = uri.uriString()
-    if subjectURI.hasSuffix("/app.bsky.actor.profile/self") { return "Profile" }
-    if cid == nil { return "Whole account" }
-    if subjectURI.contains("/app.bsky.feed.post/") { return "Post" }
-    return "Content"
+    if subjectURI.hasSuffix("/app.bsky.actor.profile/self") { return String(localized: "Profile", comment: "Moderation label target type.") }
+    if cid == nil { return String(localized: "Whole account", comment: "Moderation label target type.") }
+    if subjectURI.contains("/app.bsky.feed.post/") { return String(localized: "Post", comment: "Moderation label target type.") }
+    return String(localized: "Content", comment: "Moderation label target type.")
   }
 }
 

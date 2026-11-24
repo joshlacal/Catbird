@@ -65,7 +65,7 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     }
   }
 
-  var placeholderText: String = "Message" {
+  var placeholderText: String = String(localized: "Message") {
     didSet { placeholderLabel.text = placeholderText }
   }
 
@@ -152,17 +152,17 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     config.contentInsets = .zero
     let button = UIButton(configuration: config)
     button.translatesAutoresizingMaskIntoConstraints = false
-    button.accessibilityLabel = "Add attachment"
+    button.accessibilityLabel = String(localized: "Add attachment", comment: "Accessibility label for the chat composer attachment menu button")
     button.menu = UIMenu(children: [
-      UIAction(title: "Send Image", image: UIImage(systemName: "photo")) { [weak self] _ in
+      UIAction(title: String(localized: "Send Image", comment: "Chat attachment menu action to pick and send an image"), image: UIImage(systemName: "photo")) { [weak self] _ in
         guard let self else { return }
         self.delegate?.composerDidTapPhoto(self)
       },
-      UIAction(title: "Add GIF", image: UIImage(systemName: "photo.on.rectangle")) { [weak self] _ in
+      UIAction(title: String(localized: "Add GIF", comment: "Chat attachment menu action to pick and send a GIF"), image: UIImage(systemName: "photo.on.rectangle")) { [weak self] _ in
         guard let self else { return }
         self.delegate?.composerDidTapGif(self)
       },
-      UIAction(title: "Share Post", image: UIImage(systemName: "text.bubble")) { [weak self] _ in
+      UIAction(title: String(localized: "Share Post", comment: "Chat attachment menu action to share a Bluesky post"), image: UIImage(systemName: "text.bubble")) { [weak self] _ in
         guard let self else { return }
         self.delegate?.composerDidTapSharePost(self)
       },
@@ -187,7 +187,7 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
 
   private let placeholderLabel: UILabel = {
     let label = UILabel()
-    label.text = "Message"
+    label.text = String(localized: "Message")
     label.font = .systemFont(ofSize: 17)
     label.textColor = .placeholderText
     label.translatesAutoresizingMaskIntoConstraints = false
@@ -207,7 +207,7 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     config.contentInsets = .zero
     let button = UIButton(configuration: config)
     button.translatesAutoresizingMaskIntoConstraints = false
-    button.accessibilityLabel = "Send message"
+    button.accessibilityLabel = String(localized: "Send message", comment: "Accessibility label for the send message button")
     return button
   }()
 
@@ -223,7 +223,7 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     config.contentInsets = .zero
     let button = UIButton(configuration: config)
     button.translatesAutoresizingMaskIntoConstraints = false
-    button.accessibilityLabel = "Record voice message"
+    button.accessibilityLabel = String(localized: "Record voice message", comment: "Accessibility label for the voice recording button")
     return button
   }()
 
@@ -237,7 +237,7 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     stack.backgroundColor = .secondarySystemBackground
     stack.layer.cornerRadius = 8
     stack.layer.cornerCurve = .continuous
-    stack.layoutMargins = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+    stack.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
     stack.isLayoutMarginsRelativeArrangement = true
     return stack
   }()
@@ -259,7 +259,7 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     stack.backgroundColor = .secondarySystemBackground
     stack.layer.cornerRadius = 8
     stack.layer.cornerCurve = .continuous
-    stack.layoutMargins = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+    stack.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
     stack.isLayoutMarginsRelativeArrangement = true
     return stack
   }()
@@ -268,7 +268,7 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     let label = UILabel()
     label.font = .systemFont(ofSize: 14, weight: UIFont.Weight.medium)
     label.textColor = .secondaryLabel
-    label.text = "Editing Message"
+    label.text = String(localized: "Editing Message", comment: "Banner label above the chat composer when editing a sent message")
     label.setContentHuggingPriority(.defaultLow, for: .horizontal)
     return label
   }()
@@ -279,7 +279,7 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     config.baseForegroundColor = .tertiaryLabel
     config.contentInsets = .zero
     let button = UIButton(configuration: config)
-    button.accessibilityLabel = "Cancel edit"
+    button.accessibilityLabel = String(localized: "Cancel edit", comment: "Accessibility label for button canceling message edit mode")
     button.addTarget(self, action: #selector(editCancelTapped), for: .touchUpInside)
     NSLayoutConstraint.activate([
       button.widthAnchor.constraint(equalToConstant: 24),
@@ -306,7 +306,7 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     let label = UILabel()
     label.font = .systemFont(ofSize: 14, weight: UIFont.Weight.medium)
     label.textColor = .secondaryLabel
-    label.text = "Photo attached"
+    label.text = String(localized: "Photo attached", comment: "Label in chat composer when an image is attached")
     label.translatesAutoresizingMaskIntoConstraints = false
     label.setContentHuggingPriority(.defaultLow, for: .horizontal)
     return label
@@ -322,7 +322,7 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     config.contentInsets = .zero
     let button = UIButton(configuration: config)
     button.translatesAutoresizingMaskIntoConstraints = false
-    button.accessibilityLabel = "Remove attachment"
+    button.accessibilityLabel = String(localized: "Remove attachment", comment: "Accessibility label for button removing a staged attachment")
     button.addTarget(self, action: #selector(embedDismissTapped), for: .touchUpInside)
     NSLayoutConstraint.activate([
       button.widthAnchor.constraint(equalToConstant: 24),
@@ -353,7 +353,7 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     config.contentInsets = .zero
     let button = UIButton(configuration: config)
     button.translatesAutoresizingMaskIntoConstraints = false
-    button.accessibilityLabel = "Cancel recording"
+    button.accessibilityLabel = String(localized: "Cancel recording", comment: "Accessibility label for button canceling voice recording")
     button.addTarget(self, action: #selector(recordingCancelTapped), for: .touchUpInside)
     NSLayoutConstraint.activate([
       button.widthAnchor.constraint(equalToConstant: 30),
@@ -378,7 +378,7 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     let label = UILabel()
     label.font = .monospacedDigitSystemFont(ofSize: 15, weight: .regular)
     label.textColor = .label
-    label.text = "0:00"
+    label.text = Duration.zero.formatted(.time(pattern: .minuteSecond))
     label.translatesAutoresizingMaskIntoConstraints = false
     return label
   }()
@@ -406,7 +406,7 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     config.contentInsets = .zero
     let button = UIButton(configuration: config)
     button.translatesAutoresizingMaskIntoConstraints = false
-    button.accessibilityLabel = "Stop recording"
+    button.accessibilityLabel = String(localized: "Stop recording", comment: "Accessibility label for button stopping voice recording")
     button.addTarget(self, action: #selector(recordingStopTapped), for: .touchUpInside)
     button.isHidden = true
     NSLayoutConstraint.activate([
@@ -438,7 +438,7 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     config.contentInsets = .zero
     let button = UIButton(configuration: config)
     button.translatesAutoresizingMaskIntoConstraints = false
-    button.accessibilityLabel = "Discard recording"
+    button.accessibilityLabel = String(localized: "Discard recording", comment: "Accessibility label for button discarding a recorded voice preview")
     button.addTarget(self, action: #selector(previewDiscardTapped), for: .touchUpInside)
     NSLayoutConstraint.activate([
       button.widthAnchor.constraint(equalToConstant: 30),
@@ -459,7 +459,7 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     config.background.cornerRadius = 14
     let button = UIButton(configuration: config)
     button.translatesAutoresizingMaskIntoConstraints = false
-    button.accessibilityLabel = "Play preview"
+    button.accessibilityLabel = String(localized: "Play preview", comment: "Accessibility label for button playing a recorded voice preview")
     button.addTarget(self, action: #selector(previewPlayTapped), for: .touchUpInside)
     NSLayoutConstraint.activate([
       button.widthAnchor.constraint(equalToConstant: 28),
@@ -481,7 +481,7 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     let label = UILabel()
     label.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
     label.textColor = .secondaryLabel
-    label.text = "0:00"
+    label.text = Duration.zero.formatted(.time(pattern: .minuteSecond))
     label.translatesAutoresizingMaskIntoConstraints = false
     label.setContentHuggingPriority(.required, for: .horizontal)
     label.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -500,7 +500,7 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     config.contentInsets = .zero
     let button = UIButton(configuration: config)
     button.translatesAutoresizingMaskIntoConstraints = false
-    button.accessibilityLabel = "Send voice message"
+    button.accessibilityLabel = String(localized: "Send voice message", comment: "Accessibility label for button sending a recorded voice message")
     button.addTarget(self, action: #selector(previewSendTapped), for: .touchUpInside)
     NSLayoutConstraint.activate([
       button.widthAnchor.constraint(equalToConstant: 30),
@@ -783,9 +783,15 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
         self.recordingLockIcon.alpha = locked ? 1 : 0
       }
       if locked {
-        UIAccessibility.post(notification: .announcement, argument: "Recording locked")
+        UIAccessibility.post(
+          notification: .announcement,
+          argument: String(localized: "Recording locked", comment: "VoiceOver announcement when voice recording is locked hands-free")
+        )
       } else {
-        UIAccessibility.post(notification: .announcement, argument: "Recording")
+        UIAccessibility.post(
+          notification: .announcement,
+          argument: String(localized: "Recording", comment: "VoiceOver announcement when voice recording starts")
+        )
       }
       startPulseAnimation()
     } else {
@@ -793,11 +799,13 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     }
   }
 
+  private static func formattedMediaDuration(_ duration: TimeInterval) -> String {
+    Duration.seconds(max(0, Int(duration))).formatted(.time(pattern: .minuteSecond))
+  }
+
   /// Called by the parent to update the recording duration display.
   func updateRecordingDuration(_ duration: TimeInterval) {
-    let minutes = Int(duration) / 60
-    let seconds = Int(duration) % 60
-    recordingDurationLabel.text = String(format: "%d:%02d", minutes, seconds)
+    recordingDurationLabel.text = Self.formattedMediaDuration(duration)
   }
 
   /// Load a WAV file for preview playback.
@@ -910,9 +918,7 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
   // MARK: - Preview Playback
 
   private func configurePreview(duration: TimeInterval, waveform: [Float]) {
-    let minutes = Int(duration) / 60
-    let seconds = Int(duration) % 60
-    previewDurationLabel.text = String(format: "%d:%02d", minutes, seconds)
+    previewDurationLabel.text = Self.formattedMediaDuration(duration)
     previewWaveformView.setWaveform(waveform, progress: 0)
     updatePreviewPlayButton(playing: false)
   }
@@ -945,7 +951,9 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
       withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .medium)
     )
     previewPlayButton.configuration = config
-    previewPlayButton.accessibilityLabel = playing ? "Pause preview" : "Play preview"
+    previewPlayButton.accessibilityLabel = playing
+      ? String(localized: "Pause preview", comment: "Accessibility label to pause voice recording preview")
+      : String(localized: "Play preview")
   }
 
   private func startPreviewDisplayLink() {
@@ -968,18 +976,14 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
       let progress = player.duration > 0 ? player.currentTime / player.duration : 0
       previewWaveformView.setProgress(Float(progress))
       let remaining = player.duration - player.currentTime
-      let m = Int(remaining) / 60
-      let s = Int(remaining) % 60
-      previewDurationLabel.text = String(format: "%d:%02d", m, s)
+      previewDurationLabel.text = Self.formattedMediaDuration(remaining)
     } else if isPreviewPlaying {
       isPreviewPlaying = false
       updatePreviewPlayButton(playing: false)
       stopPreviewDisplayLink()
       previewWaveformView.setProgress(0)
       if let dur = previewPlayer?.duration {
-        let m = Int(dur) / 60
-        let s = Int(dur) % 60
-        previewDurationLabel.text = String(format: "%d:%02d", m, s)
+        previewDurationLabel.text = Self.formattedMediaDuration(dur)
       }
     }
   }
@@ -1049,12 +1053,16 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
   private func updateEditModeView() {
     editModeHeaderContainer.isHidden = !isEditMode
     attachButton.superview?.isHidden = isEditMode
-    placeholderLabel.text = isEditMode ? "Edit message" : placeholderText
+    placeholderLabel.text = isEditMode
+      ? String(localized: "Edit message", comment: "Placeholder text in chat composer when editing a message")
+      : placeholderText
 
     var config = sendButton.configuration
     config?.image = UIImage(systemName: isEditMode ? "checkmark" : "arrow.up")
     sendButton.configuration = config
-    sendButton.accessibilityLabel = isEditMode ? "Confirm edit" : "Send message"
+    sendButton.accessibilityLabel = isEditMode
+      ? String(localized: "Confirm edit", comment: "Accessibility label for button saving an edited message")
+      : String(localized: "Send message")
 
     if !isEditMode {
       textView.text = ""

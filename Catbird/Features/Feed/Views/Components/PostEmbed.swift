@@ -51,7 +51,10 @@ struct PostVideoEmbedContent: View {
           .padding(8)
       }
       .accessibilityElement(children: .ignore)
-      .accessibilityLabel(video.alt.flatMap { $0.isEmpty ? nil : $0 } ?? "Video preview")
+      .accessibilityLabel(
+        video.alt.flatMap { $0.isEmpty ? nil : $0 }
+          ?? String(localized: "Video preview", comment: "Fallback accessibility label for an embedded video preview without alt text")
+      )
     } else if let player = ModernVideoPlayerView(bskyVideo: video, postID: postID) {
       player.frame(maxWidth: .infinity)
     } else {

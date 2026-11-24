@@ -35,11 +35,20 @@ final class ActivitySubscriptionService {
     var errorDescription: String? {
       switch self {
       case .clientUnavailable:
-        return "You’re signed out. Sign in again to manage activity alerts."
+        return String(
+          localized: "You’re signed out. Sign in again to manage activity alerts.",
+          comment: "Error message when managing activity alerts while signed out"
+        )
       case .invalidResponse:
-        return "Couldn’t reach Bluesky. Try again."
+        return String(
+          localized: "Couldn’t reach Bluesky. Try again.",
+          comment: "Error message when the activity subscriptions API returns an unexpected status"
+        )
       case .profileLookupFailed:
-        return "Couldn’t load this profile. Try again."
+        return String(
+          localized: "Couldn’t load this profile. Try again.",
+          comment: "Error message when fetching a subscribed user's profile fails"
+        )
       }
     }
   }

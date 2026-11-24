@@ -14,20 +14,20 @@ enum LiveStatusError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .notAuthenticated:
-            return "Not authenticated"
+            return String(localized: "Not authenticated", comment: "Error when attempting to manage live status without being signed in")
         case .invalidStreamURL(let msg):
             return msg
         case .missingStreamURL:
-            return "Missing stream URL"
+            return String(localized: "Missing stream URL", comment: "Error when a live status update has no stream URL")
         case .concurrentModification:
-            return "Status was modified from another device. Please review and try again."
+            return String(localized: "Status was modified from another device. Please review and try again.", comment: "Error when live status record changed concurrently on another device")
         case .unauthorized:
-            return "Live status updates are not authorized for this account."
+            return String(localized: "Live status updates are not authorized for this account.", comment: "Error when account lacks permission to update live status")
         case .requestFailed(let code, let message):
             if let message = message, !message.isEmpty {
-                return "Request failed (\(code)): \(message)"
+                return String(localized: "Request failed (\(code)): \(message)", comment: "Error with HTTP status code and server message when updating live status")
             }
-            return "Request failed with HTTP \(code)"
+            return String(localized: "Request failed with HTTP \(code)", comment: "Error with HTTP status code when updating live status")
         }
     }
 }
@@ -105,31 +105,28 @@ final class LiveStatusManager {
         guard let url = URL(string: urlString.trimmingCharacters(in: .whitespacesAndNewlines)),
               let scheme = url.scheme?.lowercased(),
               let host = url.host?.lowercased() else {
-            return (false, "Please enter a valid URL", nil)
+            return (false, String(localized: "Please enter a valid URL", comment: "Validation error when live stream URL is malformed"), nil)
         }
 
         guard scheme == "https" else {
-            return (false, "Only HTTPS stream links are allowed", nil)
+            return (false, String(localized: "Only HTTPS stream links are allowed", comment: "Validation error when live stream URL does not use HTTPS"), nil)
         }
 
         let apex = sanitizeLiveHost(host)
         guard allowedApexDomains.contains(apex) else {
-            return (false, "Host '\(host)' is not in the allowed live streaming hosts", apex)
+            return (false, String(localized: "Host '\(host)' is not in the allowed live streaming hosts", comment: "Validation error when live stream URL domain is not on the allowlist"), apex)
         }
 
         return (true, nil, apex)
     }
 
-    static func displayDuration(minutes: Int) -> String {
+    static func displayDuration(minutes: Int, locale: Locale = .current) -> String {
         let hours = minutes / 60
         let remainingMinutes = minutes % 60
-        if hours > 0 && remainingMinutes > 0 {
-            return "\(hours)h \(remainingMinutes)m"
-        } else if hours > 0 {
-            return "\(hours) \(hours == 1 ? "hour" : "hours")"
-        } else {
-            return "\(minutes) minutes"
-        }
+        let width: Duration.UnitsFormatStyle.UnitWidth = (hours > 0 && remainingMinutes > 0) ? .narrow : .wide
+        return Duration.seconds(minutes * 60).formatted(
+            Duration.UnitsFormatStyle(allowedUnits: [.hours, .minutes], width: width).locale(locale)
+        )
     }
 
     private func isInvalidSwapError(_ error: Error) -> Bool {
@@ -151,13 +148,14 @@ final class LiveStatusManager {
     /// Builds the external embed for a live stream URL. When the URL card
     /// service is unavailable the embed falls back to the apex domain title.
     private func makeLiveEmbed(from card: URLCardResponse?, urlString: String, apexDomain: String?) -> AppBskyActorStatus.AppBskyActorStatusEmbedUnion {
+        let fallbackTitle = String(localized: "Live Stream", comment: "Fallback title for a live stream embed")
         let title: String
         let description: String
         if let card {
-            title = card.title.isEmpty ? (apexDomain ?? "Live Stream") : card.title
+            title = card.title.isEmpty ? (apexDomain ?? fallbackTitle) : card.title
             description = card.description
         } else {
-            title = apexDomain ?? "Live Stream"
+            title = apexDomain ?? fallbackTitle
             description = ""
         }
         return .appBskyEmbedExternal(AppBskyEmbedExternal(external: AppBskyEmbedExternal.External(
@@ -231,7 +229,9 @@ final class LiveStatusManager {
 
         let validation = Self.validateStreamURL(streamURL.absoluteString)
         guard validation.isValid else {
-            throw LiveStatusError.invalidStreamURL(validation.error ?? "Invalid stream URL")
+            throw LiveStatusError.invalidStreamURL(
+                validation.error ?? String(localized: "Invalid stream URL", comment: "Fallback error when live stream URL fails validation")
+            )
         }
 
         isPublishing = true
@@ -304,7 +304,9 @@ final class LiveStatusManager {
 
         let validation = Self.validateStreamURL(finalURL.absoluteString)
         guard validation.isValid else {
-            throw LiveStatusError.invalidStreamURL(validation.error ?? "Invalid stream URL")
+            throw LiveStatusError.invalidStreamURL(
+                validation.error ?? String(localized: "Invalid stream URL", comment: "Fallback error when live stream URL fails validation")
+            )
         }
 
         var embedUnion = current?.embed

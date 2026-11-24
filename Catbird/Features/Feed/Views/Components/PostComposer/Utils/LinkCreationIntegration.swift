@@ -225,12 +225,12 @@ extension PostComposerViewModel: LinkCreationDelegate {
     func getLinkContextMenuActions(for linkFacet: RichTextFacetUtils.LinkFacet) -> [LinkContextMenuAction] {
         return [
             LinkContextMenuAction(
-                title: "Edit Link",
+                title: String(localized: "Edit Link", comment: "Context menu action to edit an inline link"),
                 systemImage: "pencil",
                 action: { self.requestLinkEdit(for: linkFacet) }
             ),
             LinkContextMenuAction(
-                title: "Copy Link",
+                title: String(localized: "Copy Link", comment: "Context menu action to copy a link URL"),
                 systemImage: "doc.on.doc",
                 action: { 
                     #if os(iOS)
@@ -241,7 +241,7 @@ extension PostComposerViewModel: LinkCreationDelegate {
                 }
             ),
             LinkContextMenuAction(
-                title: "Remove Link",
+                title: String(localized: "Remove Link", comment: "Context menu action to remove link formatting from text"),
                 systemImage: "trash",
                 isDestructive: true,
                 action: { self.requestLinkRemoval(for: linkFacet) }

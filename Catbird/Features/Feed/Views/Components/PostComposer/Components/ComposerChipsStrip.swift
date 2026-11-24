@@ -21,6 +21,7 @@ struct ComposerChipsStrip: View {
   let onEditLabels: () -> Void
   /// Reply settings only apply to the first post of a thread, so replies hide them.
   let showsInteractionSettings: Bool
+  @Environment(\.locale) private var locale
 
   init(
     outlineTags: [String],
@@ -108,14 +109,20 @@ struct ComposerChipsStrip: View {
       ScrollView(.horizontal) {
         HStack(spacing: 6) {
           ForEach(outlineTags, id: \.self) { tag in
-            removableChip(text: "#\(tag)", accessibilityLabel: "Hashtag \(tag)") {
+            removableChip(
+              text: "#\(tag)",
+              accessibilityLabel: String(localized: "Hashtag \(tag)", comment: "Accessibility label for hashtag chip in post composer")
+            ) {
               onRemoveTag(tag)
             }
           }
 
           ForEach(selectedLanguages, id: \.self) { language in
-            let displayName = Self.languageDisplayName(language)
-            removableChip(text: displayName, accessibilityLabel: "Language \(displayName)") {
+            let displayName = Self.languageDisplayName(language, locale: locale)
+            removableChip(
+              text: displayName,
+              accessibilityLabel: String(localized: "Language \(displayName)", comment: "Accessibility label for selected language chip in post composer")
+            ) {
               onToggleLanguage(language)
             }
           }
@@ -125,13 +132,16 @@ struct ComposerChipsStrip: View {
             tappableChip(
               text: summary,
               systemImage: "bubble.left.and.bubble.right",
-              accessibilityLabel: "Interaction settings: \(summary)",
+              accessibilityLabel: String(localized: "Interaction settings: \(summary)", comment: "Accessibility label for reply and quote settings chip in post composer"),
               action: onEditInteractionSettings
             )
           }
 
           if !selectedLabels.isEmpty {
-            let labelsText = "\(selectedLabels.count) label\(selectedLabels.count == 1 ? "" : "s")"
+            let labelsText = String(
+              localized: "\(selectedLabels.count) labels",
+              comment: "Chip showing number of content warning labels selected on a post"
+            )
             tappableChip(
               text: labelsText,
               systemImage: "exclamationmark.triangle",
@@ -141,11 +151,12 @@ struct ComposerChipsStrip: View {
           }
 
           if showsLanguageSuggestion, let suggestedLanguage {
+            let suggestedDisplayName = Self.languageDisplayName(suggestedLanguage, locale: locale)
             Button(action: onApplySuggestedLanguage) {
               HStack(spacing: 4) {
                 Image(systemName: "wand.and.stars")
                   .appFont(AppTextRole.caption2)
-                Text("Detected: \(Self.languageDisplayName(suggestedLanguage))")
+                Text("Detected: \(suggestedDisplayName)", comment: "Suggested post language chip; variable is localized language name")
                   .appFont(AppTextRole.caption)
                   .fontWeight(.medium)
               }
@@ -157,7 +168,7 @@ struct ComposerChipsStrip: View {
               .clipShape(Capsule())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Set language to \(Self.languageDisplayName(suggestedLanguage))")
+            .accessibilityLabel(Text("Set language to \(suggestedDisplayName)", comment: "Accessibility label for suggested post language chip"))
           }
         }
         .padding(.horizontal, 1)
@@ -181,7 +192,7 @@ struct ComposerChipsStrip: View {
           .foregroundStyle(.secondary)
           .contentShape(Rectangle().inset(by: -6))
       }
-      .accessibilityLabel("Remove \(accessibilityLabel)")
+      .accessibilityLabel(Text("Remove \(accessibilityLabel)", comment: "Accessibility label for button that removes a composer chip"))
     }
     .padding(.horizontal, 10)
     .padding(.vertical, 5)
@@ -217,21 +228,35 @@ struct ComposerChipsStrip: View {
     .accessibilityHint("Opens the editor")
   }
 
-  static func languageDisplayName(_ language: LanguageCodeContainer) -> String {
-    Locale.current.localizedString(
+  static func languageDisplayName(_ language: LanguageCodeContainer, locale: Locale = .current) -> String {
+    locale.localizedString(
       forLanguageCode: language.lang.languageCode?.identifier ?? ""
     ) ?? language.lang.minimalIdentifier
   }
 
   static func threadgateSummary(_ settings: ThreadgateSettings) -> String {
-    if settings.allowEverybody { return "Anyone" }
-    if settings.allowNobody { return "Nobody" }
+    if settings.allowEverybody {
+      return String(localized: "Anyone", comment: "Reply restriction summary allowing everyone to reply")
+    }
+    if settings.allowNobody {
+      return String(localized: "Nobody", comment: "Reply restriction summary disabling replies")
+    }
 
     var parts: [String] = []
-    if settings.allowMentioned { parts.append("Mentioned") }
-    if settings.allowFollowing { parts.append("Following") }
-    if settings.allowFollowers { parts.append("Followers") }
-    if settings.allowLists { parts.append("Lists") }
-    return parts.isEmpty ? "Custom" : parts.joined(separator: ", ")
+    if settings.allowMentioned {
+      parts.append(String(localized: "Mentioned", comment: "Reply restriction summary item for mentioned users"))
+    }
+    if settings.allowFollowing {
+      parts.append(String(localized: "Following", comment: "Reply restriction summary item for accounts the author follows"))
+    }
+    if settings.allowFollowers {
+      parts.append(String(localized: "Followers", comment: "Reply restriction summary item for the author's followers"))
+    }
+    if settings.allowLists {
+      parts.append(String(localized: "Lists", comment: "Reply restriction summary item for selected user lists"))
+    }
+    return parts.isEmpty
+      ? String(localized: "Custom", comment: "Reply restriction summary when custom rules apply")
+      : parts.formatted(.list(type: .and, width: .narrow))
   }
 }

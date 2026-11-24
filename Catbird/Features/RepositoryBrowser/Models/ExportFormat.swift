@@ -19,11 +19,20 @@ enum ExportFormat: String, CaseIterable {
     var description: String {
         switch self {
         case .json:
-            return "Machine-readable JSON format with full data structure"
+            return String(
+                localized: "Machine-readable JSON format with full data structure",
+                comment: "Description of the JSON repository export format."
+            )
         case .csv:
-            return "Spreadsheet-compatible CSV with privacy safeguards"
+            return String(
+                localized: "Spreadsheet-compatible CSV with privacy safeguards",
+                comment: "Description of the CSV repository export format."
+            )
         case .html:
-            return "Human-readable HTML report with experimental warnings"
+            return String(
+                localized: "Human-readable HTML report with experimental warnings",
+                comment: "Description of the HTML repository export report format."
+            )
         }
     }
 

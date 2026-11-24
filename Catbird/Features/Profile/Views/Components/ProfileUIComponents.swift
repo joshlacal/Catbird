@@ -20,7 +20,7 @@ struct ProfileTabSelector: View {
         Picker("Profile sections", selection: $selectedTab) {
             ForEach(sections, id: \.self) { section in
                 if section == .more {
-                    Text("More")
+                    Text("More", comment: "Profile tab title for additional profile sections (Likes, Lists, Starter Packs, Feeds).")
                         .tag(ProfileTab.more)
                 } else {
                     Text(section.title).tag(section)

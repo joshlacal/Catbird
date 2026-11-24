@@ -67,7 +67,10 @@ public struct ContextualSuggestedFollowsSheet: View {
                             .foregroundColor(.secondary)
                         Text("No Suggestions Right Now")
                             .appFont(AppTextRole.headline)
-                        Text("There are no other suggested follows for @\(actorHandle) right now.")
+                        Text(
+                            "There are no other suggested follows for @\(actorHandle) right now.",
+                            comment: "Empty state when no similar accounts are available — %1$@ is the user's handle (without @)."
+                        )
                             .appFont(AppTextRole.subheadline)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
@@ -101,7 +104,10 @@ public struct ContextualSuggestedFollowsSheet: View {
     
     private var suggestionsList: some View {
         List {
-            Section(header: Text("People similar to @\(actorHandle)")) {
+            Section(header: Text(
+                "People similar to @\(actorHandle)",
+                comment: "Section header for suggested follows — %1$@ is the user's handle (without @)."
+            )) {
                 ForEach(suggestions, id: \.did) { profile in
                     suggestionRow(profile: profile)
                 }
@@ -122,13 +128,13 @@ public struct ContextualSuggestedFollowsSheet: View {
                         did: profile.did.didString(), labels: profile.labels)
                     
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(profile.displayName ?? "@\(profile.handle)")
+                        Text(verbatim: profile.displayName ?? "@\(profile.handle)")
                             .appFont(AppTextRole.subheadline)
                             .fontWeight(.semibold)
                             .foregroundColor(.primary)
                             .lineLimit(1)
                         
-                        Text("@\(profile.handle)")
+                        Text(verbatim: "@\(profile.handle)")
                             .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                             .lineLimit(1)

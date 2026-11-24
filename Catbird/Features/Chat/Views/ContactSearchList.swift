@@ -117,9 +117,16 @@ struct ContactSearchList: View {
   private var selectedChipsView: some View {
     VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
       HStack {
-        Label("Selected (\(selectedDIDs.count))", systemImage: "person.fill.checkmark")
-          .designCaption()
-          .foregroundColor(.secondary)
+        Label {
+          Text(
+            "Selected (\(selectedDIDs.count))",
+            comment: "Count of selected contacts in group member picker (%lld = selected count)"
+          )
+        } icon: {
+          Image(systemName: "person.fill.checkmark")
+        }
+        .designCaption()
+        .foregroundColor(.secondary)
         Spacer()
         Button("Clear") {
           withAnimation(.spring(response: 0.3)) {
@@ -176,8 +183,11 @@ struct ContactSearchList: View {
 
   @ViewBuilder
   private var noResultsRow: some View {
-    EmptyStateRow(icon: "magnifyingglass", message: "No results")
-      .listRowSeparator(.hidden)
+    EmptyStateRow(
+      icon: "magnifyingglass",
+      message: String(localized: "No results", comment: "Empty state when contact search returns no matches")
+    )
+    .listRowSeparator(.hidden)
   }
 
   @ViewBuilder
@@ -272,7 +282,9 @@ struct ContactSearchList: View {
         isSelected: selectedDIDs.contains(participant.id),
         isMLSAvailable: isAvailable,
         showsEncryptionBadge: showMLSStatus,
-        unavailableLabel: showMLSStatus ? "Encrypted chat not available yet" : "Can’t be added"
+        unavailableLabel: showMLSStatus
+          ? String(localized: "Encrypted chat not available yet", comment: "Subtitle when a contact does not support encrypted chat yet")
+          : String(localized: "Can’t be added", comment: "Subtitle when a contact cannot be added to a Bluesky group")
       ) {
         if isAvailable { toggleParticipant(participant) }
       }
@@ -293,18 +305,24 @@ struct ContactSearchList: View {
         AsyncProfileImage(url: participant.avatarURL, size: DesignTokens.Size.avatarMD)
         VStack(alignment: .leading, spacing: 4) {
           if let displayName = participant.displayName {
-            Text(displayName)
+            Text(verbatim: displayName)
               .designCallout()
               .foregroundColor(.primary)
               .lineLimit(1)
           }
-          Text("@\(participant.handle)")
+          Text(verbatim: "@\(participant.handle)")
             .designCaption()
             .foregroundColor(.secondary)
             .lineLimit(1)
-          Text(isChecking ? "Checking encrypted chat…" : "Couldn’t check encrypted chat")
-            .designCaption()
-            .foregroundColor(.secondary)
+          Group {
+            if isChecking {
+              Text("Checking encrypted chat…")
+            } else {
+              Text("Couldn’t check encrypted chat")
+            }
+          }
+          .designCaption()
+          .foregroundColor(.secondary)
         }
         Spacer()
         if isChecking {
@@ -318,7 +336,11 @@ struct ContactSearchList: View {
     }
     .buttonStyle(.plain)
     .disabled(isChecking)
-    .accessibilityHint(isChecking ? "" : "Checks whether this person can use encrypted chat")
+    .accessibilityHint(
+      isChecking
+        ? Text(verbatim: "")
+        : Text("Checks whether this person can use encrypted chat")
+    )
     .task(id: "\(appState.userDID):\(participant.id)") {
       if availabilityCoordinator.availability[participant.id] == nil {
         requestMLSAvailabilityCheck(for: [participant.id], prioritize: true)
@@ -404,7 +426,10 @@ struct ContactSearchList: View {
     let accountDID = appState.userDID
     guard isCurrentSearch(query: query, generation: generation, accountDID: accountDID) else { return }
     guard let client = appState.atProtoClient else {
-      searchError = "Sign in to search for people."
+      searchError = String(
+        localized: "Sign in to search for people.",
+        comment: "Error message when attempting to search contacts while signed out"
+      )
       return
     }
 
@@ -475,12 +500,18 @@ struct ContactSearchList: View {
       if actors.isEmpty {
         if let typeaheadError {
           logger.error("Contact search failed: \(typeaheadError.localizedDescription)")
-          searchError = UserFacingError.message(for: typeaheadError, action: "search right now")
+          searchError = UserFacingError.message(
+            for: typeaheadError,
+            action: String(localized: "search right now", comment: "Action phrase when contact search fails")
+          )
           return
         }
         if let typeaheadCode, !(200..<300).contains(typeaheadCode) {
           logger.error("Contact search failed: HTTP \(typeaheadCode)")
-          searchError = "Couldn’t search right now. Try again."
+          searchError = String(
+            localized: "Couldn’t search right now. Try again.",
+            comment: "Error message when contact search returns an HTTP error"
+          )
           return
         }
       }
@@ -537,7 +568,10 @@ struct ContactSearchList: View {
       guard isCurrentSearch(query: query, generation: generation, accountDID: accountDID) else { return }
       if searchResults.isEmpty && mlsSearchResults.isEmpty {
         logger.error("Contact search failed: \(error.localizedDescription)")
-        searchError = UserFacingError.message(for: error, action: "search right now")
+        searchError = UserFacingError.message(
+          for: error,
+          action: String(localized: "search right now", comment: "Action phrase when contact search fails")
+        )
       }
     }
   }

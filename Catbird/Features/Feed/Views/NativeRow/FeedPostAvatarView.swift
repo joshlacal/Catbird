@@ -51,7 +51,10 @@ final class FeedPostAvatarView: UIView {
   // MARK: - Loading
 
   func configure(url: URL?, pointSize: CGFloat, scale: CGFloat, accessibilityName: String) {
-    accessibilityLabel = "\(accessibilityName), view profile"
+    accessibilityLabel = String(
+      localized: "\(accessibilityName), view profile",
+      comment: "VoiceOver label for a post author's avatar button — variable is the author's display name or handle."
+    )
     resetImage()
     let token = currentRequestToken
     guard let request = ImageRequestFactory.avatar(url, pointSize: pointSize, scale: scale) else {

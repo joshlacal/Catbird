@@ -63,14 +63,59 @@ struct SettingsDestinationView: View {
 
 struct SettingsLink: View {
     let screen: SettingsScreenID
-    var title: String? = nil
-    var summary: String? = nil
+    private let customTitleText: LocalizedStringKey?
+    private let customTitleString: String?
+    private let summaryKey: LocalizedStringKey?
+    private let summaryString: String?
     let systemImage: String
     let family: SettingsIconFamily
     var control: SettingsControlID? = nil
+
+    init(
+        screen: SettingsScreenID,
+        summary: LocalizedStringKey? = nil,
+        systemImage: String,
+        family: SettingsIconFamily,
+        control: SettingsControlID? = nil
+    ) {
+        self.screen = screen
+        self.customTitleText = nil
+        self.customTitleString = nil
+        self.summaryKey = summary
+        self.summaryString = nil
+        self.systemImage = systemImage
+        self.family = family
+        self.control = control
+    }
+
+    @_disfavoredOverload
+    init(
+        screen: SettingsScreenID,
+        title: String? = nil,
+        summary: String? = nil,
+        systemImage: String,
+        family: SettingsIconFamily,
+        control: SettingsControlID? = nil
+    ) {
+        self.screen = screen
+        self.customTitleText = nil
+        self.customTitleString = title
+        self.summaryKey = nil
+        self.summaryString = summary
+        self.systemImage = systemImage
+        self.family = family
+        self.control = control
+    }
+
     var body: some View {
         NavigationLink(value: SettingsTarget(screen: screen, control: control)) {
-            SettingsNavigationRow(title: title ?? screen.title, summary: summary, systemImage: systemImage, family: family)
+            if let customTitleText {
+                SettingsNavigationRow(title: customTitleText, summary: summaryKey, systemImage: systemImage, family: family)
+            } else if let summaryKey, customTitleString == nil {
+                SettingsNavigationRow(title: screen.title, summary: summaryKey, systemImage: systemImage, family: family)
+            } else {
+                SettingsNavigationRow(title: customTitleString ?? screen.title, summary: summaryString, systemImage: systemImage, family: family)
+            }
         }
     }
 }

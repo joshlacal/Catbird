@@ -14,13 +14,13 @@ enum ChatMessageMenuAction: Equatable {
   var title: String {
     switch self {
     case .reaction(let emoji): emoji
-    case .moreReactions: "More Reactions"
-    case .reply: "Reply"
-    case .copy: "Copy"
-    case .deleteForMe: "Delete for Me"
-    case .report: "Report"
-    case .edit: "Edit"
-    case .unsend: "Unsend"
+    case .moreReactions: String(localized: "More Reactions", comment: "Context menu action to open the full emoji reaction picker")
+    case .reply: String(localized: "Reply", comment: "Context menu action to reply to a chat message")
+    case .copy: String(localized: "Copy", comment: "Context menu action to copy message text")
+    case .deleteForMe: String(localized: "Delete for Me", comment: "Context menu action to delete a chat message locally")
+    case .report: String(localized: "Report", comment: "Context menu action to report a chat message")
+    case .edit: String(localized: "Edit", comment: "Context menu action to edit a sent chat message")
+    case .unsend: String(localized: "Unsend")
     }
   }
 

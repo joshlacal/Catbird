@@ -22,8 +22,10 @@ extension PostComposerViewModel {
       let context = mediaLoadContext()
       guard ownsMediaLoad(context) else { return }
       guard videoItem == nil, selectedGif == nil else {
-        alertItem = AlertItem(title: "One Kind of Media per Post",
-          message: "Remove the existing video or GIF before adding images.")
+        alertItem = AlertItem(
+          title: String(localized: "One Kind of Media per Post", comment: "Alert title when mixing incompatible media types on a post"),
+          message: String(localized: "Remove the existing video or GIF before adding images.", comment: "Alert message instructing user to remove existing video or GIF before adding images")
+        )
         return
       }
       let availableSlots = max(0, maxImagesAllowed - mediaItems.count)
@@ -120,8 +122,10 @@ extension PostComposerViewModel {
         if isDataAnimatedGIF(data) {
           mediaItems[currentIndex].isGifConversion = true
           guard mediaItems.count == 1, videoItem == nil, selectedGif == nil else {
-            alertItem = AlertItem(title: "GIF Needs Its Own Post",
-              message: "An animated GIF becomes a video. Remove the other attachments before retrying this GIF.")
+            alertItem = AlertItem(
+              title: String(localized: "GIF Needs Its Own Post", comment: "Alert title when attaching an animated GIF while other media is present"),
+              message: String(localized: "An animated GIF becomes a video. Remove the other attachments before retrying this GIF.", comment: "Alert message explaining animated GIF conversion requires removing other attachments")
+            )
             return
           }
           let url = try await attempt.value { try await Self.convertGIFToVideo(data) }
@@ -158,9 +162,12 @@ extension PostComposerViewModel {
         guard ownsMediaPreviewLoad(attempt, for: id, context: context),
               mediaItems.contains(where: { $0.id == id }) else { return }
         let message = error is MediaPreviewLoadError
-          ? "Preview preparation timed out. The attachment is still here. Retry when it is available on this device."
-          : "Retry this attachment or remove it before posting."
-        alertItem = AlertItem(title: "Couldn’t Load Image", message: message)
+          ? String(localized: "Preview preparation timed out. The attachment is still here. Retry when it is available on this device.", comment: "Alert message when loading media preview from Photos or iCloud times out")
+          : String(localized: "Retry this attachment or remove it before posting.", comment: "Alert message when loading an image attachment fails")
+        alertItem = AlertItem(
+          title: String(localized: "Couldn’t Load Image", comment: "Alert title when an attached image fails to load"),
+          message: message
+        )
       }
     }
 
@@ -241,7 +248,7 @@ extension PostComposerViewModel {
             }
             self.finishImageEdit(
                 id: id, original: original, result: cropped, draftFile: draftFile,
-                context: context, failureTitle: "Couldn’t Crop Photo"
+                context: context, failureTitle: String(localized: "Couldn’t Crop Photo", comment: "Alert title when cropping a photo to square fails")
             )
         }
     }
@@ -320,7 +327,7 @@ extension PostComposerViewModel {
             }
             self.finishImageEdit(
                 id: id, original: original, result: edited, draftFile: draftFile,
-                context: context, failureTitle: "Couldn’t Save Edit"
+                context: context, failureTitle: String(localized: "Couldn’t Save Edit", comment: "Alert title when saving photo edits fails")
             )
         }
     }
@@ -392,7 +399,10 @@ extension PostComposerViewModel {
             // Removed, or newer bytes won, while the edit ran.
             releaseUnusedDraftImageFile(draftFile)
             if result == nil, found {
-                alertItem = AlertItem(title: failureTitle, message: "The photo is unchanged. Try again.")
+                alertItem = AlertItem(
+                    title: failureTitle,
+                    message: String(localized: "The photo is unchanged. Try again.", comment: "Alert message when photo crop or edit fails without altering the original photo")
+                )
             }
         }
     }
@@ -432,7 +442,11 @@ extension PostComposerViewModel {
             
             guard let asset = asset else {
                 logger.error("ERROR: Could not create AVAsset")
-                rejectVideo(videoItem, title: "Couldn’t Load Video", message: "This video couldn’t be loaded. Try again.")
+                rejectVideo(
+                    videoItem,
+                    title: String(localized: "Couldn’t Load Video", comment: "Alert title when an attached video fails to load"),
+                    message: String(localized: "This video couldn’t be loaded. Try again.", comment: "Alert message when an attached video fails to load")
+                )
                 return
             }
 
@@ -440,13 +454,21 @@ extension PostComposerViewModel {
             if let videoURL,
                let fileSize = (try? FileManager.default.attributesOfItem(atPath: videoURL.path))?[.size] as? NSNumber,
                fileSize.int64Value > Self.maxVideoFileSize {
-                rejectVideo(videoItem, title: "Video Too Large", message: VideoUploadPolicy.sizeMessage)
+                rejectVideo(
+                    videoItem,
+                    title: String(localized: "Video Too Large", comment: "Alert title when selected video exceeds maximum file size"),
+                    message: VideoUploadPolicy.sizeMessage
+                )
                 return
             }
             let duration = try await attempt.value { try await asset.load(.duration) }
             guard self.videoItem?.id == videoItem.id, ownsMediaPreviewLoad(attempt, for: videoItem.id, context: context) else { return }
             if CMTimeGetSeconds(duration) > Self.maxVideoDurationSeconds {
-                rejectVideo(videoItem, title: "Video Too Long", message: VideoUploadPolicy.durationMessage)
+                rejectVideo(
+                    videoItem,
+                    title: String(localized: "Video Too Long", comment: "Alert title when selected video exceeds maximum duration"),
+                    message: VideoUploadPolicy.durationMessage
+                )
                 return
             }
             
@@ -490,9 +512,13 @@ extension PostComposerViewModel {
             guard self.videoItem?.id == videoItem.id, ownsMediaPreviewLoad(attempt, for: videoItem.id, context: context) else { return }
             logger.error("ERROR: Failed to load video thumbnail: \(error)")
             let message = error is MediaPreviewLoadError
-              ? "Preview preparation timed out. The attachment is still here. Retry when it is available on this device."
-              : "This video couldn’t be loaded. Try again."
-            rejectVideo(videoItem, title: "Couldn’t Load Video", message: message)
+              ? String(localized: "Preview preparation timed out. The attachment is still here. Retry when it is available on this device.", comment: "Alert message when loading media preview from Photos or iCloud times out")
+              : String(localized: "This video couldn’t be loaded. Try again.", comment: "Alert message when an attached video fails to load")
+            rejectVideo(
+                videoItem,
+                title: String(localized: "Couldn’t Load Video", comment: "Alert title when an attached video fails to load"),
+                message: message
+            )
         }
     }
 

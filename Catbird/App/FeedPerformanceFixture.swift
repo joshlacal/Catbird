@@ -48,10 +48,19 @@ struct FeedPerformanceFixture: View {
     Group {
       switch phase {
       case .preparing:
-        ProgressView("Preparing feed performance fixture")
+        ProgressView {
+          Text(verbatim: "Preparing feed performance fixture")
+        }
       case .failed(let message):
-        ContentUnavailableView("Feed performance fixture failed", systemImage: "exclamationmark.triangle",
-          description: Text(message))
+        ContentUnavailableView {
+          Label {
+            Text(verbatim: "Feed performance fixture failed")
+          } icon: {
+            Image(systemName: "exclamationmark.triangle")
+          }
+        } description: {
+          Text(verbatim: message)
+        }
           .accessibilityIdentifier("feedperf.fixture.failure")
       case .ready(let world):
         SceneNavigationHost(appState: world.appState, appStateManager: .shared, context: world.context) {
@@ -86,7 +95,7 @@ private struct FeedPerformanceFeedHost: View {
       let tabPath = world.context.navigationManager.pathBinding(for: 0)
       NavigationStack(path: tabPath) {
         feed(tabPath)
-          .navigationTitle("Following")
+          .navigationTitle(Text(verbatim: "Following"))
           .toolbarTitleDisplayMode(.large)
           .navigationDestination(for: NavigationDestination.self) { destination in
             NavigationHandler.viewForDestination(

@@ -144,7 +144,7 @@ struct CircleManagementView: View {
       VStack(alignment: .leading, spacing: 4) {
         Text(circle.name)
           .font(.headline)
-        Text("Owner: \(circle.owner.didString())")
+        Text("Owner: \(circle.owner.didString())", comment: "Circle owner metadata label — %1$@ is the owner's DID.")
           .font(.caption)
           .foregroundStyle(.secondary)
       }
@@ -171,21 +171,22 @@ struct CircleManagementView: View {
 
   @ViewBuilder
   private func membersSection(vm: CircleManagementViewModel) -> some View {
-    Section("Members (\(vm.members.count)/150)") {
+    Section {
       if vm.members.isEmpty {
         Text("No additional members yet.")
           .font(.subheadline)
           .foregroundStyle(.secondary)
       } else {
         ForEach(vm.members, id: \.self) { did in
+          let memberDisplay = memberProfiles[did.didString()].map { $0.displayName ?? "@\($0.handle)" } ?? did.didString()
           HStack(spacing: 12) {
             if let profile = memberProfiles[did.didString()] {
               AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 36)
               VStack(alignment: .leading, spacing: 2) {
-                Text(profile.displayName ?? "@\(profile.handle)")
+                Text(verbatim: profile.displayName ?? "@\(profile.handle)")
                   .font(.subheadline.weight(.medium))
                   .lineLimit(1)
-                Text("@\(profile.handle)")
+                Text(verbatim: "@\(profile.handle)")
                   .font(.caption)
                   .foregroundStyle(.secondary)
                   .lineLimit(1)
@@ -193,7 +194,7 @@ struct CircleManagementView: View {
             } else {
               Image(systemName: "person.circle")
                 .foregroundStyle(.secondary)
-              Text(did.didString())
+              Text(verbatim: did.didString())
                 .font(.subheadline)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -207,7 +208,15 @@ struct CircleManagementView: View {
             }
             if let permissions = vm.memberPermissions.first(where: { $0.did == did }),
                !permissions.read || !permissions.write {
-              Text(permissions.read ? "Read only" : (permissions.write ? "Write only" : "No access"))
+              Group {
+                if permissions.read {
+                  Text("Read only", comment: "Member permission badge indicating read-only access in a Circle.")
+                } else if permissions.write {
+                  Text("Write only", comment: "Member permission badge indicating write-only access in a Circle.")
+                } else {
+                  Text("No access", comment: "Member permission badge indicating no access in a Circle.")
+                }
+              }
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
@@ -219,7 +228,10 @@ struct CircleManagementView: View {
                 .foregroundStyle(.red)
             }
             .buttonStyle(.borderless)
-            .accessibilityLabel("Remove member \(memberProfiles[did.didString()].map { $0.displayName ?? "@\($0.handle)" } ?? did.didString())")
+            .accessibilityLabel(Text(
+              "Remove member \(memberDisplay)",
+              comment: "Accessibility label for button to remove a member from a Circle — %1$@ is the member's name, @handle, or DID."
+            ))
             .accessibilityHint("Removes member from this Circle")
           }
         }
@@ -248,6 +260,11 @@ struct CircleManagementView: View {
         .disabled(vm.state == .submitting)
         .accessibilityLabel(CircleManagementCopy.retryNow)
       }
+    } header: {
+      Text(
+        "Members (\(vm.members.count)/150)",
+        comment: "Section header showing current Circle member count out of maximum 150 — %1$lld is the current member count."
+      )
     }
   }
 
@@ -431,7 +448,14 @@ struct CircleManagementView: View {
     case .activationFailed(let message):
       Section {
         VStack(alignment: .leading, spacing: 8) {
-          Label("AppView activation failed: \(message)", systemImage: "exclamationmark.triangle.fill")
+          Label {
+            Text(
+              "AppView activation failed: \(message)",
+              comment: "Error message when Circle AppView activation fails — %1$@ is the failure reason."
+            )
+          } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+          }
             .foregroundStyle(.orange)
             .font(.subheadline)
           Button("Retry Activation") {

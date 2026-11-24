@@ -16,25 +16,39 @@ enum FeedDiscoveryCategory: String, CaseIterable, Identifiable, Hashable, Sendab
 
   var title: String {
     switch self {
-    case .art: "Art & Photo"
-    case .science: "Science & Nature"
-    case .news: "News & Politics"
-    case .sports: "Sports"
-    case .dev: "Tech & Dev"
-    case .games: "Games"
-    case .books: "Books & Culture"
+    case .art:
+      String(localized: "Art & Photo", comment: "Feed discovery category full title")
+    case .science:
+      String(localized: "Science & Nature", comment: "Feed discovery category full title")
+    case .news:
+      String(localized: "News & Politics", comment: "Feed discovery category full title")
+    case .sports:
+      String(localized: "Sports", comment: "Feed discovery category full title")
+    case .dev:
+      String(localized: "Tech & Dev", comment: "Feed discovery category full title")
+    case .games:
+      String(localized: "Games", comment: "Feed discovery category full title")
+    case .books:
+      String(localized: "Books & Culture", comment: "Feed discovery category full title")
     }
   }
 
   var shortTitle: String {
     switch self {
-    case .art: "Art"
-    case .science: "Science"
-    case .news: "News"
-    case .sports: "Sports"
-    case .dev: "Dev"
-    case .games: "Games"
-    case .books: "Books"
+    case .art:
+      String(localized: "Art", comment: "Compact chip title for the Art & Photo feed category")
+    case .science:
+      String(localized: "Science", comment: "Compact chip title for the Science & Nature feed category")
+    case .news:
+      String(localized: "News", comment: "Compact chip title for the News & Politics feed category")
+    case .sports:
+      String(localized: "Sports", comment: "Compact chip title for the Sports feed category")
+    case .dev:
+      String(localized: "Dev", comment: "Compact chip title for the Tech & Dev feed category")
+    case .games:
+      String(localized: "Games", comment: "Compact chip title for the Games feed category")
+    case .books:
+      String(localized: "Books", comment: "Compact chip title for the Books & Culture feed category")
     }
   }
 

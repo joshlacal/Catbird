@@ -9,9 +9,12 @@ enum FeedShelfDestination: Hashable {
 
   var title: String {
     switch self {
-    case .popular: "Popular on Bluesky"
-    case .followLiked: "Liked by People You Follow"
-    case .category(let category): category.title
+    case .popular:
+      String(localized: "Popular on Bluesky", comment: "Feed discovery shelf title for popular community feeds")
+    case .followLiked:
+      String(localized: "Liked by People You Follow", comment: "Feed discovery shelf title showing feeds liked by followed accounts")
+    case .category(let category):
+      category.title
     }
   }
 }

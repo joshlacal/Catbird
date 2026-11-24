@@ -16,27 +16,27 @@ enum ReportCategory: String, CaseIterable, Identifiable {
     
     var title: String {
         switch self {
-        case .misleading: return "Misleading, Spam, or Scams"
-        case .harassment: return "Harassment & Hate"
-        case .violence: return "Violence & Physical Harm"
-        case .sexual: return "Adult & Sexual Content"
-        case .childSafety: return "Child Safety"
-        case .selfHarm: return "Self-Harm & Eating Disorders"
-        case .ruleBreaking: return "Rule Breaking & Security"
-        case .other: return "Other Issue"
+        case .misleading: return String(localized: "Misleading, Spam, or Scams", comment: "Moderation report category title.")
+        case .harassment: return String(localized: "Harassment & Hate", comment: "Moderation report category title.")
+        case .violence: return String(localized: "Violence & Physical Harm", comment: "Moderation report category title.")
+        case .sexual: return String(localized: "Adult & Sexual Content", comment: "Moderation report category title.")
+        case .childSafety: return String(localized: "Child Safety", comment: "Moderation report category title.")
+        case .selfHarm: return String(localized: "Self-Harm & Eating Disorders", comment: "Moderation report category title.")
+        case .ruleBreaking: return String(localized: "Rule Breaking & Security", comment: "Moderation report category title.")
+        case .other: return String(localized: "Other Issue", comment: "Moderation report category title.")
         }
     }
     
     var subtitle: String {
         switch self {
-        case .misleading: return "Spam, bots, fake accounts, or impersonation"
-        case .harassment: return "Bullying, hate speech, threats, or doxxing"
-        case .violence: return "Graphic violence, threats, or violent extremism"
-        case .sexual: return "Nudity, sexual activity, or non-consensual content"
-        case .childSafety: return "Child exploitation, grooming, or abuse (Bluesky Official)"
-        case .selfHarm: return "Suicide, self-injury, or eating disorder promotion"
-        case .ruleBreaking: return "Malware, prohibited goods, or ban evasion"
-        case .other: return "Any other reason not listed above"
+        case .misleading: return String(localized: "Spam, bots, fake accounts, or impersonation", comment: "Moderation report category subtitle.")
+        case .harassment: return String(localized: "Bullying, hate speech, threats, or doxxing", comment: "Moderation report category subtitle.")
+        case .violence: return String(localized: "Graphic violence, threats, or violent extremism", comment: "Moderation report category subtitle.")
+        case .sexual: return String(localized: "Nudity, sexual activity, or non-consensual content", comment: "Moderation report category subtitle.")
+        case .childSafety: return String(localized: "Child exploitation, grooming, or abuse (Bluesky Official)", comment: "Moderation report category subtitle.")
+        case .selfHarm: return String(localized: "Suicide, self-injury, or eating disorder promotion", comment: "Moderation report category subtitle.")
+        case .ruleBreaking: return String(localized: "Malware, prohibited goods, or ban evasion", comment: "Moderation report category subtitle.")
+        case .other: return String(localized: "Any other reason not listed above", comment: "Moderation report category subtitle.")
         }
     }
     
@@ -70,66 +70,66 @@ enum ReportCategory: String, CaseIterable, Identifiable {
         switch self {
         case .misleading:
             return [
-                (.toolsozonereportdefsreasonmisleadingspam, "Spam", "Excessive unwanted posts, mentions, or automated junk"),
-                (.toolsozonereportdefsreasonmisleadingbot, "Bot Account", "Automated account operating without disclosure or maliciously"),
-                (.toolsozonereportdefsreasonmisleadingimpersonation, "Impersonation", "Pretending to be another person or organization"),
-                (.toolsozonereportdefsreasonmisleadingscam, "Scam or Fraud", "Financial scams, phishing, or deceptive links"),
-                (.toolsozonereportdefsreasonmisleadingelections, "Election Misinformation", "False voting dates, polling info, or suppression"),
-                (.toolsozonereportdefsreasonmisleadingother, "Other Misleading Behavior", "Other deceptive behavior")
+                (.toolsozonereportdefsreasonmisleadingspam, String(localized: "Spam", comment: "Moderation report reason."), String(localized: "Excessive unwanted posts, mentions, or automated junk", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonmisleadingbot, String(localized: "Bot Account", comment: "Moderation report reason."), String(localized: "Automated account operating without disclosure or maliciously", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonmisleadingimpersonation, String(localized: "Impersonation", comment: "Moderation report reason."), String(localized: "Pretending to be another person or organization", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonmisleadingscam, String(localized: "Scam or Fraud", comment: "Moderation report reason."), String(localized: "Financial scams, phishing, or deceptive links", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonmisleadingelections, String(localized: "Election Misinformation", comment: "Moderation report reason."), String(localized: "False voting dates, polling info, or suppression", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonmisleadingother, String(localized: "Other Misleading Behavior", comment: "Moderation report reason."), String(localized: "Other deceptive behavior", comment: "Moderation report reason description."))
             ]
         case .harassment:
             return [
-                (.toolsozonereportdefsreasonharassmenttargeted, "Targeted Harassment", "Persistent bullying, stalking, or targeted abuse"),
-                (.toolsozonereportdefsreasonharassmenthatespeech, "Hate Speech", "Attacks based on protected identity, race, religion, gender"),
-                (.toolsozonereportdefsreasonharassmentdoxxing, "Doxxing / Private Info", "Posting private personal information without consent"),
-                (.toolsozonereportdefsreasonharassmenttroll, "Trolling / Incitement", "Inciting mob harassment or coordinated bad-faith attacks"),
-                (.toolsozonereportdefsreasonharassmentother, "Other Harassment", "Other forms of harassment")
+                (.toolsozonereportdefsreasonharassmenttargeted, String(localized: "Targeted Harassment", comment: "Moderation report reason."), String(localized: "Persistent bullying, stalking, or targeted abuse", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonharassmenthatespeech, String(localized: "Hate Speech", comment: "Moderation report reason."), String(localized: "Attacks based on protected identity, race, religion, gender", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonharassmentdoxxing, String(localized: "Doxxing / Private Info", comment: "Moderation report reason."), String(localized: "Posting private personal information without consent", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonharassmenttroll, String(localized: "Trolling / Incitement", comment: "Moderation report reason."), String(localized: "Inciting mob harassment or coordinated bad-faith attacks", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonharassmentother, String(localized: "Other Harassment", comment: "Moderation report reason."), String(localized: "Other forms of harassment", comment: "Moderation report reason description."))
             ]
         case .violence:
             return [
-                (.toolsozonereportdefsreasonviolencethreats, "Threats of Violence", "Statements expressing intent to inflict serious harm"),
-                (.toolsozonereportdefsreasonviolencegraphiccontent, "Graphic Violence or Gore", "Depictions of severe injury, bloodshed, or death"),
-                (.toolsozonereportdefsreasonviolenceglorification, "Glorification of Violence", "Praising or celebrating violent acts"),
-                (.toolsozonereportdefsreasonviolenceextremistcontent, "Violent Extremism / Terrorism", "Promotion of violent extremist groups (Bluesky Official)"),
-                (.toolsozonereportdefsreasonviolencetrafficking, "Human Trafficking", "Trafficking or forced labor"),
-                (.toolsozonereportdefsreasonviolenceanimal, "Animal Cruelty", "Abuse or harm directed toward animals"),
-                (.toolsozonereportdefsreasonviolenceother, "Other Violence", "Other violent or threatening content")
+                (.toolsozonereportdefsreasonviolencethreats, String(localized: "Threats of Violence", comment: "Moderation report reason."), String(localized: "Statements expressing intent to inflict serious harm", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonviolencegraphiccontent, String(localized: "Graphic Violence or Gore", comment: "Moderation report reason."), String(localized: "Depictions of severe injury, bloodshed, or death", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonviolenceglorification, String(localized: "Glorification of Violence", comment: "Moderation report reason."), String(localized: "Praising or celebrating violent acts", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonviolenceextremistcontent, String(localized: "Violent Extremism / Terrorism", comment: "Moderation report reason."), String(localized: "Promotion of violent extremist groups (Bluesky Official)", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonviolencetrafficking, String(localized: "Human Trafficking", comment: "Moderation report reason."), String(localized: "Trafficking or forced labor", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonviolenceanimal, String(localized: "Animal Cruelty", comment: "Moderation report reason."), String(localized: "Abuse or harm directed toward animals", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonviolenceother, String(localized: "Other Violence", comment: "Moderation report reason."), String(localized: "Other violent or threatening content", comment: "Moderation report reason description."))
             ]
         case .sexual:
             return [
-                (.toolsozonereportdefsreasonsexualncii, "Non-Consensual Intimate Imagery", "Intimate photos or videos shared without consent"),
-                (.toolsozonereportdefsreasonsexualdeepfake, "Sexually Explicit Deepfakes", "Manipulated sexual imagery or generative explicit media"),
-                (.toolsozonereportdefsreasonsexualunlabeled, "Unlabeled Adult Content", "Adult or sexually explicit content posted without adult content labels"),
-                (.toolsozonereportdefsreasonsexualabusecontent, "Sexual Violence / Assault", "Depiction or promotion of sexual violence"),
-                (.toolsozonereportdefsreasonsexualanimal, "Bestiality", "Sexual acts involving animals"),
-                (.toolsozonereportdefsreasonsexualother, "Other Sexual Content", "Other explicit or inappropriate sexual content")
+                (.toolsozonereportdefsreasonsexualncii, String(localized: "Non-Consensual Intimate Imagery", comment: "Moderation report reason."), String(localized: "Intimate photos or videos shared without consent", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonsexualdeepfake, String(localized: "Sexually Explicit Deepfakes", comment: "Moderation report reason."), String(localized: "Manipulated sexual imagery or generative explicit media", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonsexualunlabeled, String(localized: "Unlabeled Adult Content", comment: "Moderation report reason."), String(localized: "Adult or sexually explicit content posted without adult content labels", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonsexualabusecontent, String(localized: "Sexual Violence / Assault", comment: "Moderation report reason."), String(localized: "Depiction or promotion of sexual violence", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonsexualanimal, String(localized: "Bestiality", comment: "Moderation report reason."), String(localized: "Sexual acts involving animals", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonsexualother, String(localized: "Other Sexual Content", comment: "Moderation report reason."), String(localized: "Other explicit or inappropriate sexual content", comment: "Moderation report reason description."))
             ]
         case .childSafety:
             return [
-                (.toolsozonereportdefsreasonchildsafetycsam, "Child Sexual Abuse Material (CSAM)", "Zero-tolerance CSAM content (Official Bluesky Moderation)"),
-                (.toolsozonereportdefsreasonchildsafetygroom, "Grooming / Exploitation", "Predatory behavior targeting minors (Official Bluesky Moderation)"),
-                (.toolsozonereportdefsreasonchildsafetyprivacy, "Child Privacy Violation", "Exposing private details or images of minors"),
-                (.toolsozonereportdefsreasonchildsafetyharassment, "Harassment of a Minor", "Targeted harassment or bullying of a minor"),
-                (.toolsozonereportdefsreasonchildsafetyother, "Other Child Safety Concern", "Other risks to child safety")
+                (.toolsozonereportdefsreasonchildsafetycsam, String(localized: "Child Sexual Abuse Material (CSAM)", comment: "Moderation report reason."), String(localized: "Zero-tolerance CSAM content (Official Bluesky Moderation)", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonchildsafetygroom, String(localized: "Grooming / Exploitation", comment: "Moderation report reason."), String(localized: "Predatory behavior targeting minors (Official Bluesky Moderation)", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonchildsafetyprivacy, String(localized: "Child Privacy Violation", comment: "Moderation report reason."), String(localized: "Exposing private details or images of minors", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonchildsafetyharassment, String(localized: "Harassment of a Minor", comment: "Moderation report reason."), String(localized: "Targeted harassment or bullying of a minor", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonchildsafetyother, String(localized: "Other Child Safety Concern", comment: "Moderation report reason."), String(localized: "Other risks to child safety", comment: "Moderation report reason description."))
             ]
         case .selfHarm:
             return [
-                (.toolsozonereportdefsreasonselfharmcontent, "Suicide or Self-Harm", "Encouragement or instruction for self-injury or suicide"),
-                (.toolsozonereportdefsreasonselfharmed, "Eating Disorders", "Promotion or glorification of disordered eating"),
-                (.toolsozonereportdefsreasonselfharmstunts, "Dangerous Stunts", "Extremely hazardous challenges or stunts"),
-                (.toolsozonereportdefsreasonselfharmsubstances, "Substance Abuse", "Encouraging lethal or high-risk drug abuse"),
-                (.toolsozonereportdefsreasonselfharmother, "Other Self-Harm", "Other self-harm concerns")
+                (.toolsozonereportdefsreasonselfharmcontent, String(localized: "Suicide or Self-Harm", comment: "Moderation report reason."), String(localized: "Encouragement or instruction for self-injury or suicide", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonselfharmed, String(localized: "Eating Disorders", comment: "Moderation report reason."), String(localized: "Promotion or glorification of disordered eating", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonselfharmstunts, String(localized: "Dangerous Stunts", comment: "Moderation report reason."), String(localized: "Extremely hazardous challenges or stunts", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonselfharmsubstances, String(localized: "Substance Abuse", comment: "Moderation report reason."), String(localized: "Encouraging lethal or high-risk drug abuse", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonselfharmother, String(localized: "Other Self-Harm", comment: "Moderation report reason."), String(localized: "Other self-harm concerns", comment: "Moderation report reason description."))
             ]
         case .ruleBreaking:
             return [
-                (.toolsozonereportdefsreasonrulesitesecurity, "Site Security & Malware", "Hacking, credential harvesting, malware, or exploits"),
-                (.toolsozonereportdefsreasonruleprohibitedsales, "Prohibited Goods", "Illegal sales of drugs, weapons, or regulated items"),
-                (.toolsozonereportdefsreasonrulebanevasion, "Ban Evasion", "Operating an account to evade an active ban"),
-                (.toolsozonereportdefsreasonruleother, "Other Policy Violation", "Other violation of platform terms")
+                (.toolsozonereportdefsreasonrulesitesecurity, String(localized: "Site Security & Malware", comment: "Moderation report reason."), String(localized: "Hacking, credential harvesting, malware, or exploits", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonruleprohibitedsales, String(localized: "Prohibited Goods", comment: "Moderation report reason."), String(localized: "Illegal sales of drugs, weapons, or regulated items", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonrulebanevasion, String(localized: "Ban Evasion", comment: "Moderation report reason."), String(localized: "Operating an account to evade an active ban", comment: "Moderation report reason description.")),
+                (.toolsozonereportdefsreasonruleother, String(localized: "Other Policy Violation", comment: "Moderation report reason."), String(localized: "Other violation of platform terms", comment: "Moderation report reason description."))
             ]
         case .other:
             return [
-                (.comatprotomoderationdefsreasonother, "Other Issue", "Any other violation or concern")
+                (.comatprotomoderationdefsreasonother, String(localized: "Other Issue", comment: "Moderation report reason."), String(localized: "Any other violation or concern", comment: "Moderation report reason description."))
             ]
         }
     }
@@ -153,7 +153,7 @@ struct ReportFormView: View {
     @State private var currentStep: WizardStep = .selectCategory
     @State private var selectedCategory: ReportCategory?
     @State private var selectedReason: ComAtprotoModerationDefs.ReasonType = .comatprotomoderationdefsreasonother
-    @State private var selectedReasonTitle: String = "Other"
+    @State private var selectedReasonTitle: String = String(localized: "Other", comment: "Default moderation report reason title.")
     @State private var customReason: String = ""
     @State private var selectedLabeler: AppBskyLabelerDefs.LabelerViewDetailed?
     @State private var availableLabelers: [AppBskyLabelerDefs.LabelerViewDetailed] = []
@@ -299,7 +299,7 @@ struct ReportFormView: View {
                             
                             Spacer()
                             
-                            Image(systemName: "chevron.right")
+                            Image(systemName: "chevron.forward")
                                 .font(.caption)
                                 .foregroundStyle(.tertiary)
                         }
@@ -318,7 +318,7 @@ struct ReportFormView: View {
                 Button {
                     currentStep = .selectCategory
                 } label: {
-                    Label("Back to Categories", systemImage: "chevron.left")
+                    Label("Back to Categories", systemImage: "chevron.backward")
                         .font(.subheadline)
                 }
             }
@@ -478,8 +478,8 @@ struct ReportFormView: View {
                             Text("Service")
                             Spacer()
                             let displayName = selectedLabeler?.creator.handle.description == "moderation.bsky.app"
-                                ? "Official Bluesky Moderation"
-                                : (selectedLabeler?.creator.displayName ?? selectedLabeler?.creator.handle.description ?? "Select")
+                                ? String(localized: "Official Bluesky Moderation", comment: "Display name for Bluesky's official moderation service.")
+                                : (selectedLabeler?.creator.displayName ?? selectedLabeler?.creator.handle.description ?? String(localized: "Select", comment: "Placeholder to select a moderation service."))
                             Text(displayName)
                                 .foregroundStyle(.secondary)
                             Image(systemName: "chevron.up.chevron.down")
@@ -553,9 +553,7 @@ struct ReportFormView: View {
     
     private func formatTimestamp(_ seconds: Double) -> String {
         let totalSeconds = Int(floor(seconds))
-        let minutes = totalSeconds / 60
-        let remainingSeconds = totalSeconds % 60
-        return String(format: "%d:%02d", minutes, remainingSeconds)
+        return Duration.seconds(totalSeconds).formatted(.time(pattern: .minuteSecond))
     }
     
     /// Services that accept this kind of report for this subject. The official Bluesky service
@@ -640,14 +638,14 @@ struct ReportFormView: View {
                 await MainActor.run {
                     appState.toastManager.show(
                         ToastItem(
-                            message: "Report submitted",
+                            message: String(localized: "Report submitted", comment: "Toast shown after submitting a moderation report."),
                             icon: "flag.fill",
                             duration: 2.5
                         )
                     )
                 }
             } else {
-                errorMessage = "Couldn’t send your report. Try again."
+                errorMessage = String(localized: "Couldn’t send your report. Try again.", comment: "Error when submitting a moderation report fails.")
             }
         } catch {
             errorMessage = UserFacingError.message(for: error, action: "send your report")

@@ -63,16 +63,32 @@ final class CatalystToolbarCoordinator: NSObject {
     updateComposeTooltip(for: tab)
   }
 
+  private static var localizedTabTitles: [String] {
+    [
+      String(localized: "Home", comment: "Toolbar tab title for the Home timeline."),
+      String(localized: "Search", comment: "Toolbar tab title for Search."),
+      String(localized: "Notifications", comment: "Toolbar tab title for Notifications."),
+      String(localized: "Profile", comment: "Toolbar tab title for Profile."),
+      String(localized: "Messages", comment: "Toolbar tab title for Messages.")
+    ]
+  }
+
   func updateBadges(notifications: Int, messages: Int) {
     // Badges on NSToolbarItemGroup subitems — update the label to include count
     guard let group = tabGroup else { return }
-    let titles = ["Home", "Search", "Notifications", "Profile", "Messages"]
+    let titles = Self.localizedTabTitles
     for (i, title) in titles.enumerated() {
       let subitem = group.subitems[i]
       if i == 2 && notifications > 0 {
-        subitem.label = "\(title) (\(notifications))"
+        subitem.label = String(
+          localized: "\(title) (\(notifications))",
+          comment: "Toolbar tab label with unread count — first variable is tab name, second is unread count."
+        )
       } else if i == 4 && messages > 0 {
-        subitem.label = "\(title) (\(messages))"
+        subitem.label = String(
+          localized: "\(title) (\(messages))",
+          comment: "Toolbar tab label with unread count — first variable is tab name, second is unread count."
+        )
       } else {
         subitem.label = title
       }
@@ -94,11 +110,13 @@ final class CatalystToolbarCoordinator: NSObject {
 
   private func updateComposeTooltip(for tab: Int) {
     if tab == 4 {
-      composeItem?.toolTip = "New Message"
-      composeItem?.label = "New Message"
+      let newMessage = String(localized: "New Message", comment: "Toolbar button label and tooltip to start a new chat message.")
+      composeItem?.toolTip = newMessage
+      composeItem?.label = newMessage
     } else {
-      composeItem?.toolTip = "New Post"
-      composeItem?.label = "New Post"
+      let newPost = String(localized: "New Post", comment: "Toolbar button label and tooltip to compose a new post.")
+      composeItem?.toolTip = newPost
+      composeItem?.label = newPost
     }
   }
 
@@ -111,24 +129,24 @@ final class CatalystToolbarCoordinator: NSObject {
     switch tab {
     case 0:
       item.image = UIImage(systemName: "arrow.clockwise")
-      item.toolTip = "Refresh Feed"
-      item.label = "Refresh"
+      item.toolTip = String(localized: "Refresh Feed", comment: "Toolbar tooltip to refresh the current feed.")
+      item.label = String(localized: "Refresh", comment: "Toolbar button label to refresh the current feed.")
       item.target = self
       item.action = #selector(refreshAction)
       item.isEnabled = true
 
     case 1:
       item.image = UIImage(systemName: "line.3.horizontal.decrease.circle")
-      item.toolTip = "Search Filters"
-      item.label = "Filter"
+      item.toolTip = String(localized: "Search Filters", comment: "Toolbar tooltip to open search filters.")
+      item.label = String(localized: "Filter", comment: "Toolbar button label to filter search results.")
       item.target = self
       item.action = #selector(searchFilterAction)
       item.isEnabled = true
 
     case 2:
       item.image = UIImage(systemName: "checkmark.circle")
-      item.toolTip = "Mark All as Read"
-      item.label = "Mark Read"
+      item.toolTip = String(localized: "Mark All as Read", comment: "Toolbar tooltip to mark all notifications as read.")
+      item.label = String(localized: "Mark Read", comment: "Toolbar button label to mark notifications as read.")
       item.target = self
       item.action = #selector(markAllReadAction)
       item.isEnabled = true
@@ -139,8 +157,8 @@ final class CatalystToolbarCoordinator: NSObject {
 
     case 4:
       item.image = UIImage(systemName: "tray.and.arrow.down")
-      item.toolTip = "Message Requests"
-      item.label = "Requests"
+      item.toolTip = String(localized: "Message Requests", comment: "Toolbar tooltip to view chat message requests.")
+      item.label = String(localized: "Requests", comment: "Toolbar button label for chat message requests.")
       item.target = self
       item.action = #selector(messageRequestsAction)
       item.isEnabled = true
@@ -218,15 +236,15 @@ extension CatalystToolbarCoordinator: NSToolbarDelegate {
     case Self.feedSelectorID:
       let item = NSToolbarItem(itemIdentifier: itemIdentifier)
       item.image = UIImage(systemName: "square.grid.3x3.fill")
-      item.label = "Feeds"
-      item.toolTip = "Feed Selector"
+      item.label = String(localized: "Feeds", comment: "Toolbar button label for opening the feeds selector.")
+      item.toolTip = String(localized: "Feed Selector", comment: "Toolbar tooltip for opening the feeds selector.")
       item.target = self
       item.action = #selector(feedSelectorAction)
       feedSelectorItem = item
       return item
 
     case Self.tabSwitcherID:
-      let titles = ["Home", "Search", "Notifications", "Profile", "Messages"]
+      let titles = Self.localizedTabTitles
       let images = ["house", "magnifyingglass", "bell", "person", "envelope"]
 
       // Create individual subitems for each tab
@@ -248,15 +266,16 @@ extension CatalystToolbarCoordinator: NSToolbarDelegate {
         action: #selector(tabAction(_:))
       )
       group.setSelected(true, at: 0)
-      group.label = "Tabs"
+      group.label = String(localized: "Tabs", comment: "Toolbar item group label for the main navigation tabs.")
       tabGroup = group
       return group
 
     case Self.composeID:
       let item = NSToolbarItem(itemIdentifier: itemIdentifier)
       item.image = UIImage(systemName: "square.and.pencil")
-      item.label = "New Post"
-      item.toolTip = "New Post"
+      let newPost = String(localized: "New Post", comment: "Toolbar button label and tooltip to compose a new post.")
+      item.label = newPost
+      item.toolTip = newPost
       item.target = self
       item.action = #selector(composeAction)
       composeItem = item
@@ -264,7 +283,7 @@ extension CatalystToolbarCoordinator: NSToolbarDelegate {
 
     case Self.contextualActionID:
       let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-      item.label = "Action"
+      item.label = String(localized: "Action", comment: "Generic toolbar item label for contextual tab actions.")
       contextualItem = item
       updateContextualItems(for: 0)
       return item
@@ -272,8 +291,8 @@ extension CatalystToolbarCoordinator: NSToolbarDelegate {
     case Self.settingsAvatarID:
       let item = NSToolbarItem(itemIdentifier: itemIdentifier)
       item.image = UIImage(systemName: "person.circle")
-      item.label = "Settings"
-      item.toolTip = "Profile & Settings"
+      item.label = String(localized: "Settings", comment: "Toolbar button label for opening Settings.")
+      item.toolTip = String(localized: "Profile & Settings", comment: "Toolbar tooltip for opening Profile and Settings.")
       item.target = self
       item.action = #selector(settingsAction)
       settingsAvatarItem = item

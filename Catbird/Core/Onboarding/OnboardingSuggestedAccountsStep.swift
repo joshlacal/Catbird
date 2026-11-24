@@ -130,10 +130,12 @@ public struct OnboardingSuggestedAccountsStep: View {
                         }
                     } header: {
                         HStack {
-                            Text("\(suggestedActors.count) SUGGESTED")
+                            Text("\(suggestedActors.count) Suggested", comment: "Section header count of suggested accounts to follow in onboarding.")
                             Spacer()
-                            Button("Follow All") {
+                            Button {
                                 followAll()
+                            } label: {
+                                Text("Follow All", comment: "Button action to follow all suggested accounts in onboarding.")
                             }
                             .font(.caption.bold())
                             .foregroundStyle(.accent)
@@ -146,13 +148,19 @@ public struct OnboardingSuggestedAccountsStep: View {
             // Bottom Actions
             VStack(spacing: 12) {
                 Button(action: onContinue) {
-                    Text(followedDIDs.isEmpty ? "Continue" : "Continue (\(followedDIDs.count) followed)")
-                        .fontWeight(.semibold)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .background(Color.accentColor)
-                        .foregroundColor(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                    Group {
+                        if followedDIDs.isEmpty {
+                            Text("Continue", comment: "Button to continue onboarding.")
+                        } else {
+                            Text("Continue (\(followedDIDs.count) followed)", comment: "Button to continue onboarding showing how many accounts were followed.")
+                        }
+                    }
+                    .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(Color.accentColor)
+                    .foregroundColor(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
                 
                 Button("Skip for Now") {
@@ -197,7 +205,7 @@ public struct OnboardingSuggestedAccountsStep: View {
                     .fill(Color.accentColor.opacity(0.2))
                     .frame(width: 44, height: 44)
                     .overlay(
-                        Text(actor.displayName?.prefix(1) ?? actor.handle.value.prefix(1))
+                        Text(verbatim: String(actor.displayName?.prefix(1) ?? actor.handle.value.prefix(1)))
                             .font(.headline)
                             .foregroundStyle(.accent)
                     )
@@ -210,7 +218,7 @@ public struct OnboardingSuggestedAccountsStep: View {
                         .font(.subheadline.bold())
                         .lineLimit(1)
                 }
-                Text("@\(actor.handle.value)")
+                Text(verbatim: "@\(actor.handle.value)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -234,12 +242,18 @@ public struct OnboardingSuggestedAccountsStep: View {
                     ProgressView()
                         .frame(width: 76, height: 32)
                 } else {
-                    Text(isFollowing ? "Following" : "Follow")
-                        .font(.caption.bold())
-                        .frame(width: 76, height: 32)
-                        .background(isFollowing ? Color.secondary.opacity(0.15) : Color.accentColor)
-                        .foregroundColor(isFollowing ? .primary : .white)
-                        .clipShape(Capsule())
+                    Group {
+                        if isFollowing {
+                            Text("Following", comment: "Button state showing user already follows this suggested account.")
+                        } else {
+                            Text("Follow", comment: "Button action to follow a suggested account.")
+                        }
+                    }
+                    .font(.caption.bold())
+                    .frame(width: 76, height: 32)
+                    .background(isFollowing ? Color.secondary.opacity(0.15) : Color.accentColor)
+                    .foregroundColor(isFollowing ? .primary : .white)
+                    .clipShape(Capsule())
                 }
             }
             .buttonStyle(.plain)
@@ -256,7 +270,7 @@ public struct OnboardingSuggestedAccountsStep: View {
 
         guard let client = appState.atProtoClient else {
             isLoading = false
-            errorMessage = "Suggestions aren’t available right now."
+            errorMessage = String(localized: "Suggestions aren’t available right now.", comment: "Error message when onboarding suggested accounts cannot be fetched because client is unavailable.")
             return
         }
         
@@ -340,7 +354,7 @@ public struct OnboardingSuggestedAccountsStep: View {
         }
         
         if actors.isEmpty {
-            self.errorMessage = "Couldn’t load suggested accounts. Try again."
+            self.errorMessage = String(localized: "Couldn’t load suggested accounts. Try again.", comment: "Error message when onboarding suggested accounts list fails to load.")
             self.isLoading = false
         } else {
             self.suggestedActors = actors
@@ -381,7 +395,7 @@ public struct OnboardingSuggestedAccountsStep: View {
         
         followAllError = nil
         guard let client = appState.atProtoClient else {
-            followAllError = "Couldn’t follow accounts. Please try again."
+            followAllError = String(localized: "Couldn’t follow accounts. Please try again.", comment: "Error banner when bulk-following suggested accounts cannot start.")
             return
         }
         
@@ -431,7 +445,7 @@ public struct OnboardingSuggestedAccountsStep: View {
                         followInProgressDIDs.subtract(remainingDIDs)
                         followedDIDs.subtract(remainingDIDs)
                     }
-                    followAllError = "Couldn’t follow everyone. Try again."
+                    followAllError = String(localized: "Couldn’t follow everyone. Try again.", comment: "Error banner when bulk-following suggested accounts partially fails.")
                     break
                 }
             }

@@ -57,9 +57,11 @@ struct MessagesNavigationFixture: View {
         .modelContainer(storage)
         .environment(\.fontManager, account.fontManager)
       } else if let failure {
-        Text(failure).accessibilityIdentifier("messages-navigation.failure")
+        Text(verbatim: failure).accessibilityIdentifier("messages-navigation.failure")
       } else {
-        ProgressView("Preparing local messages")
+        ProgressView {
+          Text(verbatim: "Preparing local messages")
+        }
       }
     }
     .preferredColorScheme(.light)
@@ -72,39 +74,49 @@ struct MessagesNavigationFixture: View {
 
   private func fixtureControls(account: AppState, context: SceneNavigationContext) -> some View {
     HStack(spacing: 8) {
-      Button("Open link") {
+      Button {
         Task {
           if await context.urlHandler.handleURL(URL(string: "https://bsky.app/messages/\(Self.conversationID)")!) {
             deliveredLinks += 1
           }
         }
+      } label: {
+        Text(verbatim: "Open link")
       }
       .accessibilityIdentifier("messages-navigation.conversation-link")
-      Button("Messages root") {
+      Button {
         Task {
           if await context.urlHandler.handleURL(URL(string: "https://bsky.app/messages")!) {
             deliveredLinks += 1
           }
         }
+      } label: {
+        Text(verbatim: "Messages root")
       }
       .accessibilityIdentifier("messages-navigation.root-link")
       // Compact conversation details intentionally hide the native tab bar.
       // This invokes the same binding event delivered by native tab reselection.
-      Button("Retap") { lastTappedTab = AppNavigationManager.chatTabIndex }
+      Button { lastTappedTab = AppNavigationManager.chatTabIndex } label: {
+        Text(verbatim: "Retap")
+      }
         .accessibilityIdentifier("messages-navigation.reselect")
       if failedLoadScenario && !restoredService {
-        Button("Restore service") {
+        Button {
           // Stop automatic retries only when restoring the local transport, so
           // recovery below must come from the production Try Again button.
           account.chatManager.stopMessagePolling(for: Self.conversationID)
           MessagesNavigationProtocol.restoreService()
           restoredService = true
+        } label: {
+          Text(verbatim: "Restore service")
         }
         .accessibilityIdentifier("messages-navigation.restore-service")
       } else if !failedLoadScenario && selectedTab == AppNavigationManager.chatTabIndex {
-        Button("Nested detail") {
+        Button {
           context.navigationManager.navigate(to: .hashtag("messages-route-fixture"),
             in: AppNavigationManager.chatTabIndex)
+        } label: {
+          Text(verbatim: "Nested detail")
         }
         .accessibilityIdentifier("messages-navigation.nested-detail")
       }

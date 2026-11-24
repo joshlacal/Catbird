@@ -19,12 +19,12 @@ struct LabelerPickerView: View {
                         HStack {
                             VStack(alignment: .leading) {
                                 let displayName = labeler.creator.handle.description == "moderation.bsky.app"
-                                    ? "Official Bluesky Moderation"
+                                    ? String(localized: "Official Bluesky Moderation", comment: "Display name for Bluesky's official moderation service.")
                                     : (labeler.creator.displayName ?? labeler.creator.handle.description)
                                 Text(displayName)
                                     .appFont(AppTextRole.headline)
                                 
-                                Text("@\(labeler.creator.handle.description)")
+                                Text(verbatim: "@\(labeler.creator.handle.description)")
                                     .appFont(AppTextRole.subheadline)
                                     .foregroundStyle(.secondary)
                             }

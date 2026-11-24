@@ -6,6 +6,15 @@ import NukeUI
 enum ListDetailTab: String, CaseIterable {
   case feed = "Posts"
   case members = "People"
+
+  var title: LocalizedStringResource {
+    switch self {
+    case .feed:
+      return LocalizedStringResource("Posts", comment: "Segmented tab title showing posts from members of a list.")
+    case .members:
+      return LocalizedStringResource("People", comment: "Segmented tab title showing accounts on a list.")
+    }
+  }
 }
 
 @MainActor
@@ -181,7 +190,8 @@ final class ListDetailViewModel {
         listDetails = listDetails?.updatingListItemCount(currentCount + 1)
       }
       logger.error("Failed to remove list member: \(error.localizedDescription)")
-      errorMessage = UserFacingError.message(for: error, action: "remove this person from the list") ?? "Try again."
+      errorMessage = UserFacingError.message(for: error, action: "remove this person from the list")
+        ?? String(localized: "Try again.", comment: "Generic retry prompt when a list action fails.")
       showingError = true
     }
   }
@@ -196,7 +206,8 @@ final class ListDetailViewModel {
       await refreshData()
     } catch {
       logger.error("Failed to block list accounts: \(error.localizedDescription)")
-      errorMessage = UserFacingError.message(for: error, action: "block these accounts") ?? "Try again."
+      errorMessage = UserFacingError.message(for: error, action: "block these accounts")
+        ?? String(localized: "Try again.", comment: "Generic retry prompt when a list action fails.")
       showingError = true
     }
   }
@@ -209,7 +220,8 @@ final class ListDetailViewModel {
       await refreshData()
     } catch {
       logger.error("Failed to unblock list accounts: \(error.localizedDescription)")
-      errorMessage = UserFacingError.message(for: error, action: "unblock these accounts") ?? "Try again."
+      errorMessage = UserFacingError.message(for: error, action: "unblock these accounts")
+        ?? String(localized: "Try again.", comment: "Generic retry prompt when a list action fails.")
       showingError = true
     }
   }
@@ -285,10 +297,12 @@ struct ListDetailView: View {
     @Bindable var viewModel = viewModel
 
     // Tab Picker
-    Picker("View", selection: $viewModel.selectedTab) {
+    Picker(selection: $viewModel.selectedTab) {
       ForEach(ListDetailTab.allCases, id: \.self) { tab in
-        Text(tab.rawValue).tag(tab)
+        Text(tab.title).tag(tab)
       }
+    } label: {
+      Text("View", comment: "Accessibility label for segmented picker switching between a list's posts and people.")
     }
     .pickerStyle(.segmented)
     .labelsHidden()
@@ -335,7 +349,10 @@ struct ListDetailView: View {
         }
       }
     }
-    .navigationTitle(viewModel.listDetails?.name ?? "List")
+    .navigationTitle(
+      viewModel.listDetails.map { Text(verbatim: $0.name) }
+        ?? Text("List", comment: "Fallback navigation title for a user list.")
+    )
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
     #endif
@@ -437,7 +454,10 @@ struct ListDetailView: View {
       ReportFormView(
         reportingService: reportingService,
         subject: subject,
-        contentDescription: "List \"\(listDetails.name)\""
+        contentDescription: String(
+          localized: "List \"\(listDetails.name)\"",
+          comment: "Target description in the report form when reporting a user list — %1$@ is the list name."
+        )
       )
     }
   }
@@ -477,7 +497,10 @@ struct ListDetailView: View {
           HStack(spacing: 8) {
             ListPurposeBadge(purpose: listDetails.purpose)
 
-            Text(MemberCountFormatter.format(count: listDetails.listItemCount ?? viewModel.members.count))
+            Text(
+              "\(listDetails.listItemCount ?? viewModel.members.count) members",
+              comment: "Number of members on a user list — %1$lld is the member count."
+            )
               .appFont(AppTextRole.caption)
               .foregroundStyle(.secondary)
           }
@@ -510,7 +533,11 @@ struct ListDetailView: View {
       Button {
         navigate(to: .edit(viewModel.listURI))
       } label: {
-        Label("Edit", systemImage: "pencil")
+        Label {
+          Text("Edit", comment: "Action button verb to edit a user list's name, description, or avatar.")
+        } icon: {
+          Image(systemName: "pencil")
+        }
           .frame(maxWidth: .infinity)
       }
 
@@ -530,9 +557,12 @@ struct ListDetailView: View {
 
   private func creatorLine(for listDetails: AppBskyGraphDefs.ListView) -> String {
     if listDetails.creator.did.didString() == appState.userDID {
-      return String(localized: "List by you")
+      return String(localized: "List by you", comment: "Attribution shown on a list created by the signed-in user.")
     }
-    return String(localized: "List by @\(listDetails.creator.handle.description)")
+    return String(
+      localized: "List by @\(listDetails.creator.handle.description)",
+      comment: "Attribution shown on a list created by another user — %1$@ is the creator's handle (without @)."
+    )
   }
   
   @ViewBuilder

@@ -64,6 +64,7 @@ struct RefinedSearchView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.locale) private var locale
     @State private var viewModel: RefinedSearchViewModel
     @Binding var selectedTab: Int
     @Binding var lastTappedTab: Int?
@@ -236,6 +237,7 @@ struct RefinedSearchView: View {
                 if shouldShowFilterBar && viewModel.filterState.activeFilterCount > 0 {
                     SearchFilterBar(
                         filterState: viewModel.filterState,
+                        locale: locale,
                         onFiltersTap: { isShowingFiltersSheet = true },
                         onResetFilters: {
                             if let client = appState.atProtoClient {
@@ -266,7 +268,7 @@ struct RefinedSearchView: View {
         .searchPresentationToolbarBehavior(.avoidHidingContent)
         .searchScopes($bindableViewModel.selectedContentType) {
             ForEach(availableScopes, id: \.self) { scope in
-                Text(scope.scopeTitle).tag(scope)
+                Text(scope.localizedScopeTitle).tag(scope)
             }
         }
         .onChange(of: bindableViewModel.selectedContentType) { oldValue, newValue in
@@ -310,7 +312,7 @@ struct RefinedSearchView: View {
         .searchFocused($isSearchFieldFocused)
         .searchScopes($bindableViewModel.selectedContentType) {
             ForEach(availableScopes, id: \.self) { scope in
-                Text(scope.scopeTitle).tag(scope)
+                Text(scope.localizedScopeTitle).tag(scope)
             }
         }
         .onChange(of: bindableViewModel.selectedContentType) { oldValue, newValue in
@@ -381,8 +383,8 @@ struct RefinedSearchView: View {
                     .accessibilityIdentifier("searchToolbarFiltersButton")
                     .accessibilityLabel(
                         viewModel.filterState.activeFilterCount > 0
-                            ? "Filters, \(viewModel.filterState.activeFilterCount) active"
-                            : "Filters"
+                            ? Text("Filters, \(viewModel.filterState.activeFilterCount) active", comment: "Toolbar button accessibility label showing active search filter count")
+                            : Text("Filters", comment: "Toolbar button accessibility label for search filters")
                     )
                 }
             }
@@ -521,14 +523,22 @@ struct RefinedSearchView: View {
                 Button {
                     isShowingFiltersSheet = true
                 } label: {
-                    Label(
-                        viewModel.filterState.activeFilterCount > 0
-                            ? "Filters (\(viewModel.filterState.activeFilterCount))"
-                            : "Filters",
-                        systemImage: viewModel.filterState.activeFilterCount > 0
-                            ? "line.3.horizontal.decrease.circle.fill"
-                            : "line.3.horizontal.decrease.circle"
-                    )
+                    if viewModel.filterState.activeFilterCount > 0 {
+                        Label {
+                            Text(
+                                "Filters (\(viewModel.filterState.activeFilterCount))",
+                                comment: "Search menu item to open post filters showing active filter count"
+                            )
+                        } icon: {
+                            Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                        }
+                    } else {
+                        Label {
+                            Text("Filters", comment: "Search menu item to open post filters")
+                        } icon: {
+                            Image(systemName: "line.3.horizontal.decrease.circle")
+                        }
+                    }
                 }
 
                 Divider()
@@ -599,7 +609,10 @@ struct RefinedSearchView: View {
                 commitSearch()
             } label: {
                 SearchSuggestionRow(systemImage: "magnifyingglass", tint: .accentColor) {
-                    Text("Search for “\(trimmedSearchText)”")
+                    Text(
+                        "Search for “\(trimmedSearchText)”",
+                        comment: "Search suggestion row to submit the typed query — variable is the user's typed text"
+                    )
                         .fontWeight(.medium)
                         .foregroundStyle(Color.accentColor)
                 }
@@ -758,7 +771,7 @@ struct RefinedSearchView: View {
                 }
             }
             Spacer(minLength: 8)
-            Image(systemName: "chevron.right")
+            Image(systemName: "chevron.forward")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.tertiary)
                 .accessibilityHidden(true)

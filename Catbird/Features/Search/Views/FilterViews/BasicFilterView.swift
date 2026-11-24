@@ -9,20 +9,29 @@ public enum FilterDate: String, CaseIterable, Sendable {
   case month
   case year
 
-  public var displayName: String {
+  public var localizedDisplayName: LocalizedStringResource {
     switch self {
-    case .anytime: return "Anytime"
-    case .today: return "Today"
-    case .week: return "This week"
-    case .month: return "This month"
-    case .year: return "This year"
+    case .anytime:
+      return LocalizedStringResource("Anytime", comment: "Search date filter option for all dates")
+    case .today:
+      return LocalizedStringResource("Today", comment: "Search date filter option for posts from today")
+    case .week:
+      return LocalizedStringResource("This week", comment: "Search date filter option for posts from the past week")
+    case .month:
+      return LocalizedStringResource("This month", comment: "Search date filter option for posts from the past month")
+    case .year:
+      return LocalizedStringResource("This year", comment: "Search date filter option for posts from the past year")
     }
+  }
+
+  public var displayName: String {
+    String(localized: localizedDisplayName)
   }
 
   public var icon: String {
     switch self {
     case .anytime: return "clock"
-    case .today: return "calendar.day.timeline.left"
+    case .today: return "calendar.day.timeline.leading"
     case .week: return "calendar.badge.clock"
     case .month: return "calendar"
     case .year: return "calendar.circle"
@@ -38,23 +47,38 @@ public enum ContentType: String, CaseIterable, Codable, Sendable {
   case feeds
   case starterPacks
 
-  public var title: String {
+  public var localizedTitle: LocalizedStringResource {
     switch self {
-    case .top: return "Top"
-    case .latest: return "Latest"
-    case .people: return "People"
-    case .feeds: return "Feeds"
-    case .starterPacks: return "Starter Packs"
+    case .top:
+      return LocalizedStringResource("Top", comment: "Search results scope tab for top posts")
+    case .latest:
+      return LocalizedStringResource("Latest", comment: "Search results scope tab for latest posts")
+    case .people:
+      return LocalizedStringResource("People", comment: "Search results scope tab for user profiles")
+    case .feeds:
+      return LocalizedStringResource("Feeds", comment: "Search results scope tab for custom feeds")
+    case .starterPacks:
+      return LocalizedStringResource("Starter Packs", comment: "Search results scope tab for starter packs")
     }
+  }
+
+  public var title: String {
+    String(localized: localizedTitle)
   }
 
   /// Label for the native scope bar. Five scopes share one iPhone-width bar, so
   /// "Starter Packs" is shortened there; results and filters keep `title`.
-  public var scopeTitle: String {
+  public var localizedScopeTitle: LocalizedStringResource {
     switch self {
-    case .starterPacks: return String(localized: "Packs", comment: "Search scope for starter packs")
-    default: return title
+    case .starterPacks:
+      return LocalizedStringResource("Packs", comment: "Search scope for starter packs")
+    default:
+      return localizedTitle
     }
+  }
+
+  public var scopeTitle: String {
+    String(localized: localizedScopeTitle)
   }
 
   public var icon: String {
@@ -91,11 +115,17 @@ public enum SearchSort: String, CaseIterable, Codable, Sendable {
     }
   }
 
-  public var displayName: String {
+  public var localizedDisplayName: LocalizedStringResource {
     switch self {
-    case .top: return "Top"
-    case .latest: return "Latest"
+    case .top:
+      return LocalizedStringResource("Top", comment: "Sort order for most relevant search results")
+    case .latest:
+      return LocalizedStringResource("Latest", comment: "Sort order for most recent search results")
     }
+  }
+
+  public var displayName: String {
+    String(localized: localizedDisplayName)
   }
 
   public var icon: String {
@@ -105,11 +135,23 @@ public enum SearchSort: String, CaseIterable, Codable, Sendable {
     }
   }
 
-  public var description: String {
+  public var localizedDescription: LocalizedStringResource {
     switch self {
-    case .top: return "Most relevant and popular results"
-    case .latest: return "Most recent results first"
+    case .top:
+      return LocalizedStringResource(
+        "Most relevant and popular results",
+        comment: "Description of the Top search sort mode"
+      )
+    case .latest:
+      return LocalizedStringResource(
+        "Most recent results first",
+        comment: "Description of the Latest search sort mode"
+      )
     }
+  }
+
+  public var description: String {
+    String(localized: localizedDescription)
   }
 }
 
@@ -120,7 +162,13 @@ public struct LanguageOption: Identifiable, Hashable, Sendable {
   public let name: String
   public let isPreferred: Bool
 
-  public var displayName: String { name }
+  public var displayName: String {
+    localizedName(in: .current)
+  }
+
+  public func localizedName(in locale: Locale) -> String {
+    locale.localizedString(forLanguageCode: code) ?? name
+  }
 
   public func hash(into hasher: inout Hasher) {
     hasher.combine(code)

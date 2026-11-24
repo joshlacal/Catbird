@@ -12,6 +12,7 @@ import NukeUI
 struct PostQuoteRowView: View {
     let post: AppBskyFeedDefs.PostView
     @Binding var path: NavigationPath
+    @Environment(\.locale) private var locale
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -37,7 +38,7 @@ struct PostQuoteRowView: View {
                     )
                     .appFont(AppTextRole.headline)
 
-                    Text("@\(post.author.handle)")
+                    Text(verbatim: "@\(post.author.handle)")
                         .appFont(AppTextRole.subheadline)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
@@ -66,6 +67,7 @@ struct PostQuoteRowView: View {
     
     private func relativeTime(from date: Date) -> String {
         let formatter = RelativeDateTimeFormatter()
+        formatter.locale = locale
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: date, relativeTo: Date())
     }

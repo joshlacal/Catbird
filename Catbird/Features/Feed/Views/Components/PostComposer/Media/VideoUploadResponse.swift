@@ -37,10 +37,10 @@ enum VideoProcessingOutcome<VideoBlob> {
 
     switch state {
     case "JOB_STATE_COMPLETED":
-      return .failed("Server reported success but provided no video data")
+      return .failed(String(localized: "Server reported success but provided no video data", comment: "Error when video processing job completes without returning a video blob"))
     case "JOB_STATE_FAILED":
       let reason = [message, error].compactMap { $0 }.first { !$0.isEmpty }
-      return .failed(reason ?? "Video processing failed")
+      return .failed(reason ?? String(localized: "Video processing failed", comment: "Fallback error when server-side video processing fails"))
     default:
       return .pending(progress: min(1, max(0, Double(progress ?? 0) / 100)))
     }

@@ -22,7 +22,10 @@ struct CircleReportView: View {
     NavigationStack {
       Form {
         Section {
-          Text("Report a post in Circle \"\(circle.name)\". Reports are reviewed privately and do not create public moderation labels.")
+          Text(
+            "Report a post in Circle \"\(circle.name)\". Reports are reviewed privately and do not create public moderation labels.",
+            comment: "Explanation at the top of the Circle post report sheet — %1$@ is the Circle name."
+          )
             .font(.subheadline)
             .foregroundStyle(.secondary)
         }

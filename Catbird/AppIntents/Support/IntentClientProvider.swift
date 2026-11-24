@@ -128,7 +128,11 @@ actor IntentClientProvider {
     try Task.checkCancellation()
     guard !accountsRequiringAgeCheck.contains(resolvedDID) else {
       throw IntentError.serviceUnavailable(
-        "This shortcut is unavailable under your device’s age requirements. Open Catbird to continue.")
+        LocalizedStringResource(
+          "This shortcut is unavailable under your device’s age requirements. Open Catbird to continue.",
+          comment: "Error spoken by Siri or shown in Shortcuts when an OS age check must be completed in the app first."
+        )
+      )
     }
   }
 

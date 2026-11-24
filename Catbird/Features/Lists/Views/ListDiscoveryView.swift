@@ -38,6 +38,19 @@ final class ListDiscoveryViewModel {
     case moderation = "Moderation"
     case reference = "Reference"
     
+    var displayName: LocalizedStringResource {
+      switch self {
+      case .all:
+        return LocalizedStringResource("All", comment: "Filter chip showing all discovered lists.")
+      case .curated:
+        return LocalizedStringResource("Curated", comment: "Filter chip showing curated people lists.")
+      case .moderation:
+        return LocalizedStringResource("Moderation", comment: "Filter chip showing moderation lists.")
+      case .reference:
+        return LocalizedStringResource("Reference", comment: "Filter chip showing starter-pack reference lists.")
+      }
+    }
+
     var purpose: AppBskyGraphDefs.ListPurpose? {
       switch self {
       case .all:
@@ -92,7 +105,8 @@ final class ListDiscoveryViewModel {
       
     } catch {
       logger.error("Failed to load discovered lists: \(error.localizedDescription)")
-      errorMessage = UserFacingError.message(for: error, action: "load lists") ?? "Try again."
+      errorMessage = UserFacingError.message(for: error, action: "load lists")
+        ?? String(localized: "Try again.", comment: "Generic retry prompt when loading lists fails.")
       showingError = true
     }
     
@@ -264,7 +278,7 @@ struct ListDiscoveryView: View {
       HStack(spacing: 12) {
         ForEach(ListDiscoveryViewModel.ListFilter.allCases, id: \.self) { filter in
           FilterChip(
-            title: filter.rawValue,
+            title: filter.displayName,
             isSelected: viewModel.selectedFilter == filter
           ) {
             viewModel.selectedFilter = filter
@@ -300,9 +314,13 @@ struct ListDiscoveryView: View {
           .font(.title2)
           .fontWeight(.semibold)
         
-        Text(viewModel.searchText.isEmpty ? 
-             "There are no public lists to discover at the moment" :
-             "No lists match your search terms")
+        Group {
+          if viewModel.searchText.isEmpty {
+            Text("There are no public lists to discover at the moment")
+          } else {
+            Text("No lists match your search terms")
+          }
+        }
           .font(.subheadline)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
@@ -362,7 +380,7 @@ struct ListDiscoveryView: View {
 // MARK: - Supporting Views
 
 struct FilterChip: View {
-  let title: String
+  let title: LocalizedStringResource
   let isSelected: Bool
   let onTap: () -> Void
   
@@ -424,13 +442,13 @@ struct DiscoveryListRow: View {
             }
             
             HStack {
-              Text("By @\(list.creator.handle)")
+              Text("By @\(list.creator.handle)", comment: "List creator attribution — %1$@ is the creator's handle (without @).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
               
               Spacer()
               
-              Text("^[\(list.listItemCount ?? 0) member](inflect: true)")
+              Text("\(list.listItemCount ?? 0) members", comment: "Number of members on a user list — %1$lld is the member count.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
             }
@@ -439,14 +457,18 @@ struct DiscoveryListRow: View {
         
         // Action Buttons
         HStack(spacing: 12) {
-          Button("View List") {
+          Button {
             onTap()
+          } label: {
+            Text("View List", comment: "Action button to open a discovered user list.")
           }
           .buttonStyle(.bordered)
           .frame(maxWidth: .infinity)
           
-          Button("Follow") {
+          Button {
             onFollow()
+          } label: {
+            Text("Follow", comment: "Action button verb to subscribe to or follow a discovered list.")
           }
           .buttonStyle(.borderedProminent)
           .frame(maxWidth: .infinity)

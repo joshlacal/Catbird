@@ -30,7 +30,7 @@ public struct StarterPackShareView: View {
            let starterpack = recordValue as? AppBskyGraphStarterpack {
             return starterpack.name
         }
-        return "Starter Pack"
+        return String(localized: "Starter Pack", comment: "Fallback title when a starter pack has no custom name.")
     }
     
     private var packDescription: String? {
@@ -137,7 +137,7 @@ public struct StarterPackShareView: View {
                         .fontWeight(.bold)
                         .lineLimit(1)
                     
-                    Text("Created by @\(starterPack.creator.handle)")
+                    Text("Created by @\(starterPack.creator.handle.description)", comment: "Creator attribution on starter pack share preview card. Placeholder is the creator's Bluesky handle.")
                         .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
@@ -155,12 +155,20 @@ public struct StarterPackShareView: View {
             
             HStack(spacing: 16) {
                 let profileCount = starterPack.list?.listItemCount ?? 0
-                Label("^[\(profileCount) person](inflect: true)", systemImage: "person.2")
+                Label {
+                    Text("\(profileCount) people", comment: "Count of member profiles included in a starter pack.")
+                } icon: {
+                    Image(systemName: "person.2")
+                }
                     .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                 
                 if let feedsCount = starterPack.feeds?.count, feedsCount > 0 {
-                    Label("^[\(feedsCount) feed](inflect: true)", systemImage: "rectangle.grid.1x2")
+                    Label {
+                        Text("\(feedsCount) feeds", comment: "Count of custom feeds included in a starter pack.")
+                    } icon: {
+                        Image(systemName: "rectangle.grid.1x2")
+                    }
                         .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                 }

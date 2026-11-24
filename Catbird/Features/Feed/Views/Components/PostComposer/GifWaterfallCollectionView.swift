@@ -278,7 +278,9 @@ final class GifCollectionViewCell: UICollectionViewCell {
 
         isAccessibilityElement = true
         accessibilityTraits = .button
-        accessibilityLabel = gif.content_description.isEmpty ? "GIF" : gif.content_description
+        accessibilityLabel = gif.content_description.isEmpty
+            ? String(localized: "GIF", comment: "Accessibility label for GIF cell without description")
+            : gif.content_description
         
         // Stream a rendition sized to this tile rather than the full-size clip.
         let gifView = GifVideoView(gif: gif, onTap: {}, rendition: .tile(pixelWidth: tilePixelWidth))

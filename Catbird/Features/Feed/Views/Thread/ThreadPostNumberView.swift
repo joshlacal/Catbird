@@ -17,12 +17,15 @@ public enum ThreadPostNumberFormatter {
 
   /// Formats the display string (e.g., "1/4").
   public static func displayText(index: Int, count: Int) -> String {
-    "\(index)/\(count)"
+    "\(index.formatted(.number.grouping(.never)))/\(count.formatted(.number.grouping(.never)))"
   }
 
   /// Formats the VoiceOver accessibility label (e.g., "Post 1 of 4").
   public static func accessibilityLabel(index: Int, count: Int) -> String {
-    "Post \(index) of \(count)"
+    String(
+      localized: "Post \(index) of \(count)",
+      comment: "VoiceOver label for a numbered post in an author thread — first variable is the post index, second is the total post count."
+    )
   }
 }
 
@@ -49,7 +52,7 @@ public struct ThreadPostNumberView: View {
 
   public var body: some View {
     if ThreadPostNumberFormatter.isValid(index: index, count: count) {
-      Text(ThreadPostNumberFormatter.displayText(index: index, count: count))
+      Text(verbatim: ThreadPostNumberFormatter.displayText(index: index, count: count))
         .font(.caption2.weight(.medium))
         .monospacedDigit()
         .foregroundStyle(.secondary)

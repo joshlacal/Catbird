@@ -26,7 +26,7 @@ enum MLSSpaceBlobLocatorError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .invalidLocator(let value):
-      return "Invalid Space blob locator: \(value)"
+      return String(localized: "Invalid Space blob locator: \(value)", comment: "Technical error when an encrypted attachment locator cannot be parsed. %@ is the invalid locator.")
     }
   }
 }
@@ -92,7 +92,7 @@ enum MLSChatRequestPresentation {
     guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
           !trimmed.isEmpty
     else {
-      return "Group chat invitation"
+      return String(localized: "Group chat invitation", comment: "Fallback title for an unnamed encrypted group chat invitation")
     }
     return trimmed
   }
@@ -160,11 +160,11 @@ enum MLSDirectComposeDraftStore {
     var errorDescription: String? {
       switch self {
       case .invalidText:
-        return "Write a non-empty message up to 1,000 characters."
+        return String(localized: "Write a non-empty message up to 1,000 characters.", comment: "Validation error for an opening encrypted direct message")
       case .accountChanged:
-        return "The active account changed."
+        return String(localized: "The active account changed.", comment: "Error when the signed-in account changes during compose")
       case .immutableSubmittedDraft:
-        return "This request has already been submitted."
+        return String(localized: "This request has already been submitted.", comment: "Error when attempting to re-submit an already sent encrypted chat request")
       }
     }
   }
@@ -392,7 +392,7 @@ struct MLSDirectComposeView: View {
       guard !Task.isCancelled, draft.accountDID == appState.userDID else { return }
       guard recipientCapability?.isCapable == true else { return }
       guard let coordinator = await appState.getOrOpenMLSCoordinator() else {
-        errorMessage = "Encrypted chat isn’t ready on this device yet. Try again in a moment."
+        errorMessage = String(localized: "Encrypted chat isn’t ready on this device yet. Try again in a moment.", comment: "Error when the MLS coordinator is not yet ready")
         return
       }
       guard !Task.isCancelled, draft.accountDID == appState.userDID,
@@ -515,9 +515,15 @@ struct MLSRequestConversationGate<Content: View>: View {
         .foregroundStyle(.secondary)
       Text("Encrypted Chat Request")
         .font(.title3.bold())
-      Text(verbatim: request.previewText ?? "Wants to start an end-to-end encrypted chat.")
-        .multilineTextAlignment(.center)
-        .padding(.horizontal, 24)
+      if let previewText = request.previewText {
+        Text(verbatim: previewText)
+          .multilineTextAlignment(.center)
+          .padding(.horizontal, 24)
+      } else {
+        Text("Wants to start an end-to-end encrypted chat.")
+          .multilineTextAlignment(.center)
+          .padding(.horizontal, 24)
+      }
       if let errorMessage {
         Text(errorMessage)
           .font(.footnote)
@@ -625,7 +631,7 @@ struct BlockChatSenderSheet: View {
   @State private var errorMessage: String?
 
   private var displayTarget: String {
-    senderDisplayName ?? senderHandle.map { "@\($0)" } ?? "this account"
+    senderDisplayName ?? senderHandle.map { "@\($0)" } ?? String(localized: "this account", comment: "Fallback noun phrase when blocking an account with no display name or handle")
   }
 
   var body: some View {
@@ -745,7 +751,7 @@ struct MLSReportSpamSheet: View {
   @MainActor
   private func submitReport() async {
     guard let activeClient = apiClient?.client ?? client ?? appState.atProtoClient else {
-      errorMessage = "Reporting is unavailable while offline."
+      errorMessage = String(localized: "Reporting is unavailable while offline.", comment: "Error when submitting a moderation report without a network client")
       return
     }
     isSubmitting = true
@@ -874,11 +880,11 @@ final class MLSImageSender {
 
     do {
       guard let imageData = try await item.loadTransferable(type: Data.self) else {
-        uploadError = "Could not load image"
+        uploadError = String(localized: "Could not load image", comment: "Error when loading a selected image attachment fails")
         return nil
       }
       guard let platformImage = PlatformImage(data: imageData) else {
-        uploadError = "Invalid image format"
+        uploadError = String(localized: "Invalid image format", comment: "Error when selected image data cannot be decoded")
         return nil
       }
 
@@ -896,7 +902,7 @@ final class MLSImageSender {
         contentType = detectedType
       } else if detectedType == "image/png" {
         guard let result = Self.fitPNG(platformImage, maxBytes: Self.maxBlobBytes) else {
-          uploadError = "Image too large (max 10 MB)"
+          uploadError = String(localized: "Image too large (max 10 MB)", comment: "Error when an image attachment exceeds the 10 MB limit")
           return nil
         }
         finalData = result.data
@@ -905,7 +911,7 @@ final class MLSImageSender {
         contentType = "image/png"
       } else {
         guard let result = Self.fitJPEG(platformImage, maxBytes: Self.maxBlobBytes) else {
-          uploadError = "Image too large (max 10 MB)"
+          uploadError = String(localized: "Image too large (max 10 MB)")
           return nil
         }
         finalData = result.data
@@ -923,7 +929,7 @@ final class MLSImageSender {
         resolvedCoordinator = AppStateManager.shared.lifecycle.appState?.mlsCoordinator
       }
       guard let activeCoordinator = resolvedCoordinator else {
-        uploadError = "Encrypted chat coordinator is unavailable"
+        uploadError = String(localized: "Encrypted chat coordinator is unavailable", comment: "Error when sending an encrypted attachment without an active MLS coordinator")
         return nil
       }
 
@@ -948,7 +954,7 @@ final class MLSImageSender {
       )
     } catch {
       logger.error("Image processing error: \(error.localizedDescription)")
-      uploadError = "Failed to send image: \(error.localizedDescription)"
+      uploadError = String(localized: "Failed to send image: \(error.localizedDescription)", comment: "Error when uploading an encrypted image attachment fails. %@ is the error description.")
       return nil
     }
   }
@@ -1104,7 +1110,7 @@ final class MLSVoiceSender {
         guard permitted else {
           self.pendingStartID = nil
           self.startRecordingTask = nil
-          self.voiceError = "Microphone access is required to record voice messages."
+          self.voiceError = String(localized: "Microphone access is required to record voice messages.", comment: "Error when microphone permission is denied for voice messages")
           return false
         }
         self.recordingSessionOwner = owner
@@ -1161,7 +1167,7 @@ final class MLSVoiceSender {
             self.pendingStartID = nil
             self.startRecordingTask = nil
           }
-          self.voiceError = "Couldn't start voice recording."
+          self.voiceError = String(localized: "Couldn't start voice recording.", comment: "Error when audio recorder fails to start")
           return
         }
         self.recorder = newRecorder
@@ -1226,7 +1232,7 @@ final class MLSVoiceSender {
       #endif
     } catch {
       logger.error("Failed to encode Opus voice preview: \(error.localizedDescription)")
-      voiceError = "Couldn't prepare voice message: \(error.localizedDescription)"
+      voiceError = String(localized: "Couldn't prepare voice message: \(error.localizedDescription)", comment: "Error when Opus encoding of a recorded voice message fails. %@ is the error description.")
       cancelOrDiscard()
     }
   }
@@ -1270,11 +1276,11 @@ final class MLSVoiceSender {
   ) async -> MLSAudioEmbed? {
     let resolvedCoordinator = coordinator ?? AppStateManager.shared.lifecycle.appState?.mlsCoordinator
     guard let activeCoordinator = resolvedCoordinator else {
-      voiceError = "Encrypted chat coordinator is unavailable."
+      voiceError = String(localized: "Encrypted chat coordinator is unavailable.", comment: "Error when sending a voice message without an active MLS coordinator")
       return nil
     }
     guard let prepared = preparedVoice else {
-      voiceError = "No recorded voice message to send."
+      voiceError = String(localized: "No recorded voice message to send.", comment: "Error when attempting to send a voice message with no prepared recording")
       return nil
     }
 
@@ -1303,7 +1309,7 @@ final class MLSVoiceSender {
       return embed
     } catch {
       logger.error("Voice upload failed: \(error.localizedDescription)")
-      voiceError = "Failed to upload voice message: \(error.localizedDescription)"
+      voiceError = String(localized: "Failed to upload voice message: \(error.localizedDescription)", comment: "Error when uploading an encrypted voice message fails. %@ is the error description.")
       return nil
     }
   }
@@ -1403,12 +1409,12 @@ struct MLSPendingGroupCreationBanner: View {
   private var statusMessage: String {
     switch status.state {
     case .pendingRetry:
-      return "Finishing encrypted group setup. Catbird can retry right now or cancel."
+      return String(localized: "Finishing encrypted group setup. Catbird can retry right now or cancel.", comment: "Banner message when encrypted group creation is awaiting retry")
     case .needsUserAction:
       if let code = status.lastErrorCode, !code.isEmpty {
-        return "Encrypted group setup paused (\(code)). Retry or cancel this pending group."
+        return String(localized: "Encrypted group setup paused (\(code)). Retry or cancel this pending group.", comment: "Banner message when encrypted group creation paused with an error code. %@ is the error code.")
       }
-      return "Encrypted group setup needs your confirmation to retry or cancel."
+      return String(localized: "Encrypted group setup needs your confirmation to retry or cancel.", comment: "Banner message when encrypted group creation requires user confirmation")
     }
   }
 
@@ -1475,7 +1481,7 @@ struct ParticipantRow: View {
   let isSelected: Bool
   var isMLSAvailable: Bool = true
   var showsEncryptionBadge: Bool = true
-  var unavailableLabel: String = "Not available"
+  var unavailableLabel: String = String(localized: "Not available", comment: "Badge label when a contact cannot be added to an encrypted chat")
   let onTap: () -> Void
 
   var body: some View {
@@ -1513,13 +1519,13 @@ struct ParticipantRow: View {
           }
 
           HStack(spacing: 4) {
-            Text("@\(participant.handle)")
+            Text(verbatim: "@\(participant.handle)")
               .designCaption()
               .foregroundColor(.secondary)
               .lineLimit(1)
 
             if !isMLSAvailable {
-              Text("• \(unavailableLabel)")
+              Text("• \(unavailableLabel)", comment: "Inline unavailability badge next to a contact handle. %@ is the unavailability reason.")
                 .designCaption()
                 .foregroundColor(.orange)
             }
@@ -1595,7 +1601,7 @@ struct SelectedParticipantsSummaryList: View {
                 .designCallout()
                 .foregroundColor(.primary)
                 .lineLimit(1)
-              Text("@\(participant.handle)")
+              Text(verbatim: "@\(participant.handle)")
                 .designCaption()
                 .foregroundColor(.secondary)
                 .lineLimit(1)

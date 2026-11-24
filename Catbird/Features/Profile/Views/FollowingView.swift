@@ -55,7 +55,7 @@ struct FollowingView: View {
             } else if let error = viewModel.error {
                 ErrorStateView(
                     error: error,
-                    context: "Failed to load following",
+                    context: String(localized: "Failed to load following", comment: "Error context shown when loading the accounts a user follows fails."),
                     retryAction: { Task { await retryLoadFollowing() } }
                 )
                 .listRowSeparator(.hidden)
@@ -66,12 +66,12 @@ struct FollowingView: View {
                     .padding()
                     .listRowSeparator(.hidden)
             } else {
-                Text("Not following anyone yet.")
+                Text("Not following anyone yet.", comment: "Empty state when a user does not follow any accounts.")
                     .foregroundColor(.secondary)
             }
         }
         .listStyle(.plain)
-        .navigationTitle("Following")
+        .navigationTitle(Text("Following", comment: "Navigation title for the list of accounts a user follows."))
     #if os(iOS)
     .toolbarTitleDisplayMode(.large)
     #endif

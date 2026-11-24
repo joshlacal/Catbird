@@ -10,15 +10,23 @@ enum MuteDuration: CaseIterable, Identifiable {
   case oneWeek
   case forever
 
-  var id: String { label }
+  var id: String {
+    switch self {
+    case .oneHour: "1h"
+    case .eightHours: "8h"
+    case .oneDay: "1d"
+    case .oneWeek: "1w"
+    case .forever: "forever"
+    }
+  }
 
   var label: String {
     switch self {
-    case .oneHour: "1 Hour"
-    case .eightHours: "8 Hours"
-    case .oneDay: "1 Day"
-    case .oneWeek: "1 Week"
-    case .forever: "Forever"
+    case .oneHour: String(localized: "1 Hour", comment: "Mute conversation notifications for 1 hour")
+    case .eightHours: String(localized: "8 Hours", comment: "Mute conversation notifications for 8 hours")
+    case .oneDay: String(localized: "1 Day", comment: "Mute conversation notifications for 1 day")
+    case .oneWeek: String(localized: "1 Week", comment: "Mute conversation notifications for 1 week")
+    case .forever: String(localized: "Forever", comment: "Mute conversation notifications indefinitely")
     }
   }
 

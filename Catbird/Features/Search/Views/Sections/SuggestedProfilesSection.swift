@@ -116,7 +116,8 @@ public struct SuggestedProfilesSection: View {
 
   private func categoryPill(_ category: String?) -> some View {
     let isSelected = (selectedCategory?.lowercased() == category?.lowercased())
-    let title = category.map { BlueskyInterest(rawValue: $0)?.displayName ?? $0.capitalized } ?? "For You"
+    let title = category.map { BlueskyInterest(rawValue: $0)?.displayName ?? $0.localizedCapitalized }
+      ?? String(localized: "For You", comment: "Suggested accounts category tab for personalized recommendations")
 
     return Button {
       onSelectCategory(category)
@@ -201,7 +202,7 @@ public struct SuggestedProfilesSection: View {
                 VerificationBadgeView(kind: badgeKind).font(.caption)
               }
             }
-            Text("@\(profile.handle)")
+            Text(verbatim: "@\(profile.handle)")
               .appFont(AppTextRole.subheadline)
               .foregroundStyle(.secondary)
               .lineLimit(1)

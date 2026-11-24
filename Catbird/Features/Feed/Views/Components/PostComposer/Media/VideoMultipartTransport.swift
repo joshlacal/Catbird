@@ -48,7 +48,9 @@ struct VideoMultipartTransportError: Error, LocalizedError, Sendable {
     [404, 405, 501].contains(statusCode ?? 0) || ["MethodNotFound", "UnsupportedMethod"].contains(code ?? "")
   }
 
-  var errorDescription: String? { message ?? code ?? "Video service request failed." }
+  var errorDescription: String? {
+    message ?? code ?? String(localized: "Video service request failed.", comment: "Fallback error when a video service HTTP request fails")
+  }
 
   static func isTransient(_ error: Error) -> Bool {
     if let error = error as? Self { return error.isRetryable }
@@ -88,7 +90,10 @@ struct VideoMultipartTransport: VideoMultipartTransporting {
     onProgress: (@Sendable (Int64) -> Void)? = nil
   ) async throws -> AppBskyVideoUploadPart.Output {
     guard partNumber > 0, byteCount > 0, fileURL.isFileURL else {
-      throw VideoMultipartTransportError(code: "InvalidPart", message: "The prepared video part is invalid.")
+      throw VideoMultipartTransportError(
+        code: "InvalidPart",
+        message: String(localized: "The prepared video part is invalid.", comment: "Error when a multipart video chunk is invalid")
+      )
     }
     let parameters = AppBskyVideoUploadPart.Parameters(jobId: jobID, partNumber: partNumber)
     let result: AppBskyVideoUploadPart.Output = try await send(
@@ -98,7 +103,10 @@ struct VideoMultipartTransport: VideoMultipartTransporting {
       ], fileURL: fileURL, byteCount: byteCount, timeout: 120, onProgress: onProgress
     )
     guard result.partNumber == partNumber, result.sizeBytes == byteCount else {
-      throw VideoMultipartTransportError(code: "InvalidPartReceipt", message: "The video service returned an inconsistent part receipt.")
+      throw VideoMultipartTransportError(
+        code: "InvalidPartReceipt",
+        message: String(localized: "The video service returned an inconsistent part receipt.", comment: "Error when video service part upload acknowledgement mismatches sent part")
+      )
     }
     return result
   }
@@ -141,7 +149,10 @@ struct VideoMultipartTransport: VideoMultipartTransporting {
     url.path = "/xrpc/app.bsky.video.\(endpoint)"
     url.queryItems = query.isEmpty ? nil : query
     guard let requestURL = url.url else {
-      throw VideoMultipartTransportError(code: "InvalidURL", message: "Could not form the video service request.")
+      throw VideoMultipartTransportError(
+        code: "InvalidURL",
+        message: String(localized: "Could not form the video service request.", comment: "Error when video upload URL cannot be constructed")
+      )
     }
     var request = URLRequest(url: requestURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
     request.httpMethod = method
@@ -185,11 +196,14 @@ struct VideoMultipartTransport: VideoMultipartTransporting {
       catch {
         throw VideoMultipartTransportError(
           statusCode: response.statusCode, code: "InvalidResponse",
-          message: "The video service returned an unreadable response."
+          message: String(localized: "The video service returned an unreadable response.", comment: "Error when video service JSON response cannot be decoded")
         )
       }
     }
-    throw VideoMultipartTransportError(code: "AuthRequired", message: "Video upload authorization was rejected.")
+    throw VideoMultipartTransportError(
+      code: "AuthRequired",
+      message: String(localized: "Video upload authorization was rejected.", comment: "Error when video service rejects upload authorization token")
+    )
   }
 
   private static func serverError(data: Data, response: HTTPURLResponse) -> VideoMultipartTransportError {
@@ -211,7 +225,7 @@ struct VideoMultipartTransport: VideoMultipartTransporting {
     }
     return VideoMultipartTransportError(
       statusCode: status, code: code,
-      message: parsed?.message ?? "Video service request failed (\(status)).",
+      message: parsed?.message ?? String(localized: "Video service request failed (\(status)).", comment: "Error when video service returns an HTTP error; variable is HTTP status code"),
       retryAfterSeconds: retryAfter, retryable: retryable
     )
   }
@@ -318,7 +332,10 @@ private final class VideoHTTPRequest: NSObject, URLSessionDataDelegate, URLSessi
     lock.unlock()
     completionHandler(allow ? .allow : .cancel)
     if !allow {
-      complete(.failure(VideoMultipartTransportError(code: "InvalidResponse", message: "The video service response was invalid or too large.")))
+      complete(.failure(VideoMultipartTransportError(
+        code: "InvalidResponse",
+        message: String(localized: "The video service response was invalid or too large.", comment: "Error when video service HTTP response headers are invalid or exceed size limit")
+      )))
     }
   }
 
@@ -330,7 +347,10 @@ private final class VideoHTTPRequest: NSObject, URLSessionDataDelegate, URLSessi
       lock.unlock()
     } else {
       lock.unlock()
-      complete(.failure(VideoMultipartTransportError(code: "ResponseTooLarge", message: "The video service response was too large.")))
+      complete(.failure(VideoMultipartTransportError(
+        code: "ResponseTooLarge",
+        message: String(localized: "The video service response was too large.", comment: "Error when video service HTTP response body exceeds size limit")
+      )))
     }
   }
 
@@ -353,6 +373,11 @@ private final class VideoHTTPRequest: NSObject, URLSessionDataDelegate, URLSessi
     lock.unlock()
     if let error { complete(.failure(error)) }
     else if let response { complete(.success((data, response))) }
-    else { complete(.failure(VideoMultipartTransportError(code: "InvalidResponse", message: "No response from the video service."))) }
+    else {
+      complete(.failure(VideoMultipartTransportError(
+        code: "InvalidResponse",
+        message: String(localized: "No response from the video service.", comment: "Error when video service closes connection without a response")
+      )))
+    }
   }
 }

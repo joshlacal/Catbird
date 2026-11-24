@@ -110,9 +110,14 @@ struct MacOSChatContentView: View {
       }
     }
     .alert(isPresented: $isShowingErrorAlert) {
-      Alert(
+      let messageView: Text = if let lastErrorMessage {
+        Text(lastErrorMessage)
+      } else {
+        Text("An unknown error occurred.")
+      }
+      return Alert(
         title: Text("Chat Error"),
-        message: Text(lastErrorMessage ?? "An unknown error occurred."),
+        message: messageView,
         dismissButton: .default(Text("OK")) {
           appState.chatManager.errorState = nil
           lastErrorMessage = nil
@@ -320,12 +325,18 @@ struct MacOSChatContentView: View {
             if let plaintext = payload.text, !plaintext.isEmpty {
               lastMessages[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: plaintext)
             } else if case .some(.image(_)) = payload.embed {
-              lastMessages[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: "Sent a photo")
+              lastMessages[convoID] = MLSLastMessagePreview(
+                senderDID: message.senderID,
+                text: String(localized: "Sent a photo", comment: "Conversation list preview when the last message is a photo")
+              )
             } else {
               continue
             }
           case .reaction:
-            lastMessages[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: "Reacted to a message")
+            lastMessages[convoID] = MLSLastMessagePreview(
+              senderDID: message.senderID,
+              text: String(localized: "Reacted to a message", comment: "Conversation list preview when the last activity is an emoji reaction")
+            )
           case .readReceipt, .typing, .adminRoster, .adminAction, .deliveryAck, .recoveryRequest,
                .edit, .unknown:
             continue
@@ -496,7 +507,7 @@ struct MacOSChatContentView: View {
     case .mls(let convo, let participants, _, _, _, _):
       if let title = convo.title, !title.isEmpty { return title }
       let others = participants.filter { $0.id != appState.userDID }
-      return others.prefix(2).map { $0.displayName ?? $0.handle }.joined(separator: ", ")
+      return Array(others.prefix(2).map { $0.displayName ?? $0.handle }).formatted(.list(type: .and))
     }
   }
 }

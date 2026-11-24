@@ -10,11 +10,16 @@ enum CopilotProposalError: LocalizedError, Equatable, Sendable {
 
     var errorDescription: String? {
         switch self {
-        case .unsupported: "That proposed action is not enabled in Catbird yet."
-        case .failed: "Catbird could not complete the confirmed action."
-        case .accountChanged: "The active account changed since this action was proposed."
-        case .staleTarget: "The target of this action is no longer available in the current context."
-        case .requiresDedicatedFlow: "This action requires a dedicated confirmation flow."
+        case .unsupported:
+            String(localized: "That proposed action is not enabled in Catbird yet.", comment: "Error when Ask Catbird proposes an unsupported action.")
+        case .failed:
+            String(localized: "Catbird could not complete the confirmed action.", comment: "Error when a confirmed Ask Catbird action fails.")
+        case .accountChanged:
+            String(localized: "The active account changed since this action was proposed.", comment: "Error when active account changed before confirming an Ask Catbird action.")
+        case .staleTarget:
+            String(localized: "The target of this action is no longer available in the current context.", comment: "Error when proposed action target changed.")
+        case .requiresDedicatedFlow:
+            String(localized: "This action requires a dedicated confirmation flow.", comment: "Error when proposed action requires its own sheet.")
         }
     }
 }
@@ -372,36 +377,38 @@ enum CopilotProposalCoordinator {
 
     static func confirmationText(for proposal: CopilotProposal, context: CopilotContext? = nil) -> String {
         switch proposal {
-        case .followActor: "Follow this account?"
-        case .unfollowActor: "Unfollow this account?"
-        case .muteActor: "Mute this account?"
-        case .unmuteActor: "Unmute this account?"
-        case .blockActor: "Block this account?"
-        case .unblockActor: "Unblock this account?"
-        case .reportActor: "Report this account?"
-        case .addActorToList: "Add this account to a list?"
-        case .likePost: "Like this post?"
-        case .unlikePost: "Unlike this post?"
-        case .repostPost: "Repost this post?"
-        case .unrepostPost: "Remove repost?"
-        case .bookmarkPost: "Bookmark this post?"
-        case .unbookmarkPost: "Remove bookmark?"
-        case .hidePost: "Hide this post?"
-        case .unhidePost: "Unhide this post?"
-        case .prepareReply: "Prepare reply?"
-        case .prepareQuote: "Prepare quote post?"
-        case .reportPost: "Report this post?"
-        case .deletePost: "Delete this post?"
-        case .muteThread: "Mute this thread?"
-        case .unmuteThread: "Unmute this thread?"
-        case .saveFeed: "Save this feed?"
-        case .unsaveFeed: "Remove this saved feed?"
-        case .pinFeed: "Pin this feed?"
-        case .unpinFeed: "Unpin this feed?"
-        case .createSmartFilter(let rule): "Save this Smart Filter?\n\(rule.rawText)"
+        case .followActor: String(localized: "Follow this account?", comment: "Ask Catbird action confirmation prompt.")
+        case .unfollowActor: String(localized: "Unfollow this account?", comment: "Ask Catbird action confirmation prompt.")
+        case .muteActor: String(localized: "Mute this account?", comment: "Ask Catbird action confirmation prompt.")
+        case .unmuteActor: String(localized: "Unmute this account?", comment: "Ask Catbird action confirmation prompt.")
+        case .blockActor: String(localized: "Block this account?", comment: "Ask Catbird action confirmation prompt.")
+        case .unblockActor: String(localized: "Unblock this account?", comment: "Ask Catbird action confirmation prompt.")
+        case .reportActor: String(localized: "Report this account?", comment: "Ask Catbird action confirmation prompt.")
+        case .addActorToList: String(localized: "Add this account to a list?", comment: "Ask Catbird action confirmation prompt.")
+        case .likePost: String(localized: "Like this post?", comment: "Ask Catbird action confirmation prompt.")
+        case .unlikePost: String(localized: "Unlike this post?", comment: "Ask Catbird action confirmation prompt.")
+        case .repostPost: String(localized: "Repost this post?", comment: "Ask Catbird action confirmation prompt.")
+        case .unrepostPost: String(localized: "Remove repost?", comment: "Ask Catbird action confirmation prompt.")
+        case .bookmarkPost: String(localized: "Bookmark this post?", comment: "Ask Catbird action confirmation prompt.")
+        case .unbookmarkPost: String(localized: "Remove bookmark?", comment: "Ask Catbird action confirmation prompt.")
+        case .hidePost: String(localized: "Hide this post?", comment: "Ask Catbird action confirmation prompt.")
+        case .unhidePost: String(localized: "Unhide this post?", comment: "Ask Catbird action confirmation prompt.")
+        case .prepareReply: String(localized: "Prepare reply?", comment: "Ask Catbird action confirmation prompt.")
+        case .prepareQuote: String(localized: "Prepare quote post?", comment: "Ask Catbird action confirmation prompt.")
+        case .reportPost: String(localized: "Report this post?", comment: "Ask Catbird action confirmation prompt.")
+        case .deletePost: String(localized: "Delete this post?", comment: "Ask Catbird action confirmation prompt.")
+        case .muteThread: String(localized: "Mute this thread?", comment: "Ask Catbird action confirmation prompt.")
+        case .unmuteThread: String(localized: "Unmute this thread?", comment: "Ask Catbird action confirmation prompt.")
+        case .saveFeed: String(localized: "Save this feed?", comment: "Ask Catbird action confirmation prompt.")
+        case .unsaveFeed: String(localized: "Remove this saved feed?", comment: "Ask Catbird action confirmation prompt.")
+        case .pinFeed: String(localized: "Pin this feed?", comment: "Ask Catbird action confirmation prompt.")
+        case .unpinFeed: String(localized: "Unpin this feed?", comment: "Ask Catbird action confirmation prompt.")
+        case .createSmartFilter(let rule):
+            String(localized: "Save this Smart Filter?\n\(rule.rawText)", comment: "Ask Catbird confirmation prompt to save a Smart Filter — variable is filter rule text.")
         case .setSmartFilterEnabled(let id, let enabled):
             smartFilterConfirmationText(id: id, enabled: enabled, context: context)
-        case .preparePostDraft: "Prepare this text as a draft?"
+        case .preparePostDraft:
+            String(localized: "Prepare this text as a draft?", comment: "Ask Catbird action confirmation prompt.")
         }
     }
 
@@ -411,8 +418,12 @@ enum CopilotProposalCoordinator {
         context: CopilotContext?
     ) -> String {
         if case .smartFilter(let filterID, let name) = context, filterID == id {
-            return enabled ? "Enable Smart Filter '\(name)'?" : "Disable Smart Filter '\(name)'?"
+            return enabled
+                ? String(localized: "Enable Smart Filter '\(name)'?", comment: "Ask Catbird confirmation prompt to enable a named Smart Filter.")
+                : String(localized: "Disable Smart Filter '\(name)'?", comment: "Ask Catbird confirmation prompt to disable a named Smart Filter.")
         }
-        return enabled ? "Enable this Smart Filter?" : "Disable this Smart Filter?"
+        return enabled
+            ? String(localized: "Enable this Smart Filter?", comment: "Ask Catbird confirmation prompt to enable a Smart Filter.")
+            : String(localized: "Disable this Smart Filter?", comment: "Ask Catbird confirmation prompt to disable a Smart Filter.")
     }
 }

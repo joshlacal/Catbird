@@ -117,7 +117,10 @@ struct FeedWidgetProvider: AppIntentTimelineProvider {
         authorName: "Jane Doe",
         authorHandle: "@jane.bsky.social",
         authorAvatarURL: nil,
-        text: "Just shipped a major update to my app! Really excited about the new features we've added.",
+        text: String(
+          localized: "Just shipped a major update to my app! Really excited about the new features we've added.",
+          comment: "Sample post text shown in the iOS Widget Gallery preview."
+        ),
         timestamp: Date(),
         likeCount: 42,
         repostCount: 5,
@@ -128,10 +131,16 @@ struct FeedWidgetProvider: AppIntentTimelineProvider {
       ),
       WidgetPost(
         id: "2",
-        authorName: "Tech News",
+        authorName: String(
+          localized: "Tech News",
+          comment: "Sample author name shown in the iOS Widget Gallery preview."
+        ),
         authorHandle: "@technews.bsky.social",
         authorAvatarURL: nil,
-        text: "Breaking: New framework announced at developer conference. This changes everything for mobile development!",
+        text: String(
+          localized: "Breaking: New framework announced at developer conference. This changes everything for mobile development!",
+          comment: "Sample post text shown in the iOS Widget Gallery preview."
+        ),
         timestamp: Date().addingTimeInterval(-3600),
         likeCount: 128,
         repostCount: 34,
@@ -142,24 +151,39 @@ struct FeedWidgetProvider: AppIntentTimelineProvider {
       ),
       WidgetPost(
         id: "3",
-        authorName: "Developer",
+        authorName: String(
+          localized: "Developer",
+          comment: "Sample author name shown in the iOS Widget Gallery preview."
+        ),
         authorHandle: "@dev.bsky.social",
         authorAvatarURL: nil,
-        text: "Pro tip: Always test your widgets on different device sizes. You'd be surprised how different they can look!",
+        text: String(
+          localized: "Pro tip: Always test your widgets on different device sizes. You'd be surprised how different they can look!",
+          comment: "Sample post text shown in the iOS Widget Gallery preview."
+        ),
         timestamp: Date().addingTimeInterval(-7200),
         likeCount: 89,
         repostCount: 23,
         replyCount: 8,
         imageURLs: [],
         isRepost: true,
-        repostAuthorName: "Code Mentor"
+        repostAuthorName: String(
+          localized: "Code Mentor",
+          comment: "Sample reposter name shown in the iOS Widget Gallery preview."
+        )
       ),
       WidgetPost(
         id: "4",
-        authorName: "Designer",
+        authorName: String(
+          localized: "Designer",
+          comment: "Sample author name shown in the iOS Widget Gallery preview."
+        ),
         authorHandle: "@design.bsky.social",
         authorAvatarURL: nil,
-        text: "New design system components are looking great. Consistency is key to a polished user experience.",
+        text: String(
+          localized: "New design system components are looking great. Consistency is key to a polished user experience.",
+          comment: "Sample post text shown in the iOS Widget Gallery preview."
+        ),
         timestamp: Date().addingTimeInterval(-10800),
         likeCount: 67,
         repostCount: 12,
@@ -170,10 +194,16 @@ struct FeedWidgetProvider: AppIntentTimelineProvider {
       ),
       WidgetPost(
         id: "5",
-        authorName: "Open Source",
+        authorName: String(
+          localized: "Open Source",
+          comment: "Sample author name shown in the iOS Widget Gallery preview."
+        ),
         authorHandle: "@oss.bsky.social",
         authorAvatarURL: nil,
-        text: "Just released v2.0 of our popular library. Major performance improvements and new API surface.",
+        text: String(
+          localized: "Just released v2.0 of our popular library. Major performance improvements and new API surface.",
+          comment: "Sample post text shown in the iOS Widget Gallery preview."
+        ),
         timestamp: Date().addingTimeInterval(-14400),
         likeCount: 205,
         repostCount: 56,
@@ -222,15 +252,30 @@ struct CatbirdFeedWidgetEntryView: View {
 
 // MARK: - Feed Display Name Helper
 
-private func feedDisplayName(for configuration: ConfigurationAppIntent) -> String {
+private func feedDisplayName(for configuration: ConfigurationAppIntent) -> LocalizedStringResource {
   let accountDID = configuration.resolvedAccountDID
   switch configuration.effectiveFeedType {
   case .timeline:
-    return "Timeline"
+    return LocalizedStringResource(
+      "Timeline",
+      comment: "Header title for the Following timeline in the Catbird Feed widget."
+    )
   case .pinnedFeed:
-    return FeedWidgetProvider().getFeedDisplayName(for: configuration.selectedFeedURI, accountDID: accountDID) ?? "Pinned Feed"
+    if let customName = FeedWidgetProvider().getFeedDisplayName(for: configuration.selectedFeedURI, accountDID: accountDID) {
+      return "\(customName)"
+    }
+    return LocalizedStringResource(
+      "Pinned Feed",
+      comment: "Fallback header title for a pinned feed in the Catbird Feed widget."
+    )
   case .savedFeed:
-    return FeedWidgetProvider().getFeedDisplayName(for: configuration.selectedFeedURI, accountDID: accountDID) ?? "Saved Feed"
+    if let customName = FeedWidgetProvider().getFeedDisplayName(for: configuration.selectedFeedURI, accountDID: accountDID) {
+      return "\(customName)"
+    }
+    return LocalizedStringResource(
+      "Saved Feed",
+      comment: "Fallback header title for a saved feed in the Catbird Feed widget."
+    )
   }
 }
 
@@ -253,18 +298,54 @@ private func accountName(for configuration: ConfigurationAppIntent) -> String? {
 // MARK: - Empty State Copy
 
 /// Explains why a widget has no posts and what to do about it.
-private func emptyStateMessage(for entry: FeedWidgetEntry) -> (title: String, detail: String) {
+private func emptyStateMessage(for entry: FeedWidgetEntry) -> (title: LocalizedStringResource, detail: LocalizedStringResource) {
   if !entry.isSignedIn {
-    return ("Not Signed In", "Open Catbird to sign in.")
+    return (
+      LocalizedStringResource(
+        "Not Signed In",
+        comment: "Empty-state title in the Catbird Feed widget when no Bluesky account is signed in."
+      ),
+      LocalizedStringResource(
+        "Open Catbird to sign in.",
+        comment: "Empty-state prompt in the Catbird Feed widget when no Bluesky account is signed in."
+      )
+    )
   }
   switch entry.configuration.effectiveFeedType {
   case .timeline:
-    return ("No Posts Yet", "Open Catbird to load your Following feed.")
+    return (
+      LocalizedStringResource(
+        "No Posts Yet",
+        comment: "Empty-state title in the Catbird Feed widget when no cached posts are available yet."
+      ),
+      LocalizedStringResource(
+        "Open Catbird to load your Following feed.",
+        comment: "Empty-state instructions in the Catbird Feed widget when the Following feed has not been loaded yet."
+      )
+    )
   case .pinnedFeed, .savedFeed:
     if entry.configuration.selectedFeedURI == nil {
-      return ("No Feed Chosen", "Touch and hold this widget, then choose Edit Widget to pick a feed.")
+      return (
+        LocalizedStringResource(
+          "No Feed Chosen",
+          comment: "Empty-state title in the Catbird Feed widget when a pinned or saved feed has not been selected."
+        ),
+        LocalizedStringResource(
+          "Touch and hold this widget, then choose Edit Widget to pick a feed.",
+          comment: "Empty-state instructions in the Catbird Feed widget explaining how to configure a feed."
+        )
+      )
     }
-    return ("No Posts Yet", "Open this feed in Catbird to show it here.")
+    return (
+      LocalizedStringResource(
+        "No Posts Yet",
+        comment: "Empty-state title in the Catbird Feed widget when no cached posts are available yet."
+      ),
+      LocalizedStringResource(
+        "Open this feed in Catbird to show it here.",
+        comment: "Empty-state instructions in the Catbird Feed widget when a custom feed has not been loaded in the app yet."
+      )
+    )
   }
 }
 
@@ -283,7 +364,7 @@ struct SmallFeedWidget: View {
             size: WidgetAvatarSize.sm
           )
 
-          Text(feedDisplayName(for: entry.configuration).uppercased())
+          Text(feedDisplayName(for: entry.configuration))
             .font(.system(size: 9, weight: .semibold))
             .foregroundStyle(.secondary)
             .lineLimit(1)
@@ -299,7 +380,7 @@ struct SmallFeedWidget: View {
               .lineLimit(1)
 
             if entry.configuration.showTimestamps {
-              Text("·")
+              Text(verbatim: "·")
                 .font(.system(size: 9))
                 .foregroundStyle(.secondary)
               Text(firstPost.timestamp, style: .relative)
@@ -446,7 +527,7 @@ struct LargeFeedWidget: View {
         WidgetHeader(
           avatarName: accountName(for: entry.configuration),
           title: feedDisplayName(for: entry.configuration),
-          subtitle: accountHandle(for: entry.configuration),
+          subtitle: accountHandle(for: entry.configuration).map { Text(verbatim: $0) },
           lastUpdated: entry.lastUpdated
         )
         .padding(.bottom, WidgetSpacing.md)
@@ -482,7 +563,7 @@ struct LargeFeedWidget: View {
       WidgetHeader(
         avatarName: accountName(for: entry.configuration),
         title: feedDisplayName(for: entry.configuration),
-        subtitle: accountHandle(for: entry.configuration),
+        subtitle: accountHandle(for: entry.configuration).map { Text(verbatim: $0) },
         lastUpdated: entry.lastUpdated
       )
 
@@ -545,7 +626,10 @@ struct ExtraLargeFeedWidget: View {
         WidgetHeader(
           avatarName: accountName(for: entry.configuration),
           title: feedDisplayName(for: entry.configuration),
-          subtitle: entry.posts.count == 1 ? "1 post" : "\(entry.posts.count) posts",
+          subtitle: Text(
+            "\(entry.posts.count) posts",
+            comment: "Post count subtitle in the extra-large Catbird Feed widget header."
+          ),
           lastUpdated: entry.lastUpdated
         )
         .padding(.bottom, WidgetSpacing.lg)
@@ -625,8 +709,18 @@ struct CatbirdFeedWidget: Widget {
     ) { entry in
       CatbirdFeedWidgetEntryView(entry: entry)
     }
-    .configurationDisplayName("Catbird Feed")
-    .description("See recent posts from your Following feed or a pinned or saved feed.")
+    .configurationDisplayName(
+      LocalizedStringResource(
+        "Catbird Feed",
+        comment: "Widget gallery display name for the Catbird Feed widget."
+      )
+    )
+    .description(
+      LocalizedStringResource(
+        "See recent posts from your Following feed or a pinned or saved feed.",
+        comment: "Widget gallery description for the Catbird Feed widget."
+      )
+    )
     .supportedFamilies([
       .systemSmall,
       .systemMedium,

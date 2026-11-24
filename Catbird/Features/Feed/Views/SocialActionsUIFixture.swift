@@ -24,12 +24,12 @@ struct SocialActionsUIFixture: View {
       if let appState, let sceneContext {
         ScrollView {
           VStack(alignment: .leading, spacing: 20) {
-            Text("Post actions")
+            Text(verbatim: "Post actions")
               .font(.title2.bold())
-            Text("A quiet afternoon by the water. A post to share with a friend.")
+            Text(verbatim: "A quiet afternoon by the water. A post to share with a friend.")
               .font(.body)
             HStack {
-              Text("@river.test")
+              Text(verbatim: "@river.test")
                 .foregroundStyle(.secondary)
               Spacer()
               PostShareMenu(
@@ -57,14 +57,16 @@ struct SocialActionsUIFixture: View {
               )
             }
             Divider()
-            Button("Saved drafts") { showingDrafts = true }
+            Button { showingDrafts = true } label: { Text(verbatim: "Saved drafts") }
               .accessibilityIdentifier("fixtureSavedDrafts")
-            Button("Own account labels") { inspectingOwnLabels = true }
+            Button { inspectingOwnLabels = true } label: { Text(verbatim: "Own account labels") }
               .accessibilityIdentifier("fixtureOwnLabels")
-            Button("Other account labels") { inspectingOwnLabels = false }
+            Button { inspectingOwnLabels = false } label: { Text(verbatim: "Other account labels") }
               .accessibilityIdentifier("fixtureOtherLabels")
-            NavigationLink("Profile with Germ") {
+            NavigationLink {
               SocialFixtureProfile(appState: appState, sceneContext: sceneContext)
+            } label: {
+              Text(verbatim: "Profile with Germ")
             }
             .accessibilityIdentifier("fixtureGermProfile")
           }
@@ -72,7 +74,7 @@ struct SocialActionsUIFixture: View {
         }
         .environment(appState)
         .environment(sceneContext)
-        .navigationTitle("Social actions")
+        .navigationTitle(Text(verbatim: "Social actions"))
         .sheet(isPresented: $showingDrafts) {
           DraftsListView(appState: appState) { draft in
             result = "Selected draft: \(draft.previewText)"
@@ -127,7 +129,7 @@ struct SocialActionsUIFixture: View {
       } else if let failure {
         Text(failure)
       } else {
-        ProgressView("Loading fixture")
+        ProgressView { Text(verbatim: "Loading fixture") }
       }
     }
     .dynamicTypeSize(ProcessInfo.processInfo.arguments.contains("--social-large-text") ? .accessibility3 : .large)

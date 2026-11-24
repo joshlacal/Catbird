@@ -32,8 +32,11 @@ struct ProfileAccountLabelsView: View {
         .buttonStyle(.plain)
         // The button stays the accessibility element, so activating it (a VoiceOver double tap)
         // runs its action; a replacement element would drop the action.
-        .accessibilityLabel(Text("\(info.name), \(info.attribution)"))
-        .accessibilityHint("Opens details for this label")
+        .accessibilityLabel(Text(
+          "\(info.name), \(info.attribution)",
+          comment: "Accessibility label for an account moderation chip — %1$@ is the label name, %2$@ is the issuing service attribution."
+        ))
+        .accessibilityHint(Text("Opens details for this label", comment: "Accessibility hint for an account moderation label chip."))
         .accessibilityIdentifier("profileAccountLabel-\(label.id)")
       }
     }

@@ -157,10 +157,22 @@ struct MessageRequestsScreen: View {
     .alert("Message Requests", isPresented: errorBinding) {
       Button("OK", role: .cancel) {}
     } message: {
-      Text(store.errorMessage ?? "Something went wrong. Please try again.")
+      if let errorMessage = store.errorMessage {
+        Text(errorMessage)
+      } else {
+        Text("Something went wrong. Please try again.")
+      }
     }
     .confirmationDialog(
-      blockCandidate.map { "Block \($0.item.title)?" } ?? "Block",
+      blockCandidate.map {
+        String(
+          localized: "Block \($0.item.title)?",
+          comment: "Confirmation dialog title to block a request sender (%@ = sender name)"
+        )
+      } ?? String(
+        localized: "Block",
+        comment: "Fallback block confirmation dialog title"
+      ),
       isPresented: blockDialogBinding,
       titleVisibility: .visible,
       presenting: blockCandidate
@@ -170,9 +182,11 @@ struct MessageRequestsScreen: View {
       }
       Button("Cancel", role: .cancel) {}
     } message: { request in
-      Text(request.item.source == .encrypted
-        ? "Your Bluesky block is published first. The request closes only after the server confirms it."
-        : "They won’t be able to message you, and this request will be removed.")
+      if request.item.source == .encrypted {
+        Text("Your Bluesky block is published first. The request closes only after the server confirms it.")
+      } else {
+        Text("They won’t be able to message you, and this request will be removed.")
+      }
     }
     .confirmationDialog("Decline All Bluesky Requests?", isPresented: $showingDeclineAll, titleVisibility: .visible) {
       Button("Decline All", role: .destructive) {
@@ -265,8 +279,11 @@ struct MessageRequestsScreen: View {
             MLSGroupInvitationNotesView(batch: batch) { onClose() }
           } label: {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-              Text("Review notes for \(batch.recipients.count) invitees")
-                .designCallout()
+              Text(
+                "Review notes for \(batch.recipients.count) invitees",
+                comment: "Row title for pending group invitation notes (%lld = invitee count)"
+              )
+              .designCallout()
               Text(verbatim: batch.text)
                 .designFootnote()
                 .foregroundStyle(.secondary)
@@ -281,12 +298,24 @@ struct MessageRequestsScreen: View {
         ForEach(store.savedInvitationNotes) { draft in
           Button { noteDraft = draft } label: {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-              Label(draft.noteAttempted == true ? "Check note delivery" : "Unsent invitation note", systemImage: "square.and.pencil")
-                .designCallout()
-              Text(verbatim: draft.text.isEmpty ? "Write a separate encrypted note" : draft.text)
-                .designFootnote()
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
+              Group {
+                if draft.noteAttempted == true {
+                  Label("Check note delivery", systemImage: "square.and.pencil")
+                } else {
+                  Label("Unsent invitation note", systemImage: "square.and.pencil")
+                }
+              }
+              .designCallout()
+              Group {
+                if draft.text.isEmpty {
+                  Text("Write a separate encrypted note")
+                } else {
+                  Text(verbatim: draft.text)
+                }
+              }
+              .designFootnote()
+              .foregroundStyle(.secondary)
+              .lineLimit(2)
             }
           }
         }
@@ -400,7 +429,10 @@ struct MessageRequestsScreen: View {
           reportedName: sender.name ?? item.title,
           client: client)
       } else {
-        store.errorMessage = "Reporting is unavailable right now. Please try again."
+        store.errorMessage = String(
+          localized: "Reporting is unavailable right now. Please try again.",
+          comment: "Error message when the encrypted chat report service is unavailable"
+        )
       }
     }
   }
@@ -496,9 +528,14 @@ struct MessageRequestsSectionHeader: View {
           .accessibilityHidden(true)
       }
       Text(source.title)
-      Text("\(count)")
+      Text(count, format: .number)
         .foregroundStyle(.secondary)
-        .accessibilityLabel("\(count) request\(count == 1 ? "" : "s")")
+        .accessibilityLabel(
+          Text(
+            "\(count) requests",
+            comment: "Accessibility label for request count in section header (%lld = request count)"
+          )
+        )
     }
     .accessibilityElement(children: .combine)
     .accessibilityAddTraits(.isHeader)
@@ -588,7 +625,11 @@ struct MessageRequestDetailView: View {
           .multilineTextAlignment(.center)
       }
     }
-    .navigationTitle(item.isGroup ? "Group Invitation" : "Message Request")
+    .navigationTitle(
+      item.isGroup
+        ? String(localized: "Group Invitation", comment: "Navigation title for a group chat invitation detail screen")
+        : String(localized: "Message Request", comment: "Navigation title for a direct message request detail screen")
+    )
     .toolbarTitleDisplayMode(.inline)
     .accessibilityIdentifier("messageRequests.detailView")
   }
@@ -607,7 +648,7 @@ struct MessageRequestDetailView: View {
           }
         }
         if let handle = item.sender?.secondaryHandle {
-          Text(handle)
+          Text(verbatim: handle)
             .designFootnote()
             .foregroundStyle(.secondary)
         }
@@ -659,10 +700,19 @@ struct MessageRequestDetailView: View {
 
   private var participantsSection: some View {
     VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-      Text(item.memberCount.map { "In this chat · \($0)" } ?? "In this chat")
-        .designFootnote()
-        .fontWeight(.semibold)
-        .foregroundStyle(.secondary)
+      Group {
+        if let memberCount = item.memberCount {
+          Text(
+            "In this chat · \(memberCount)",
+            comment: "Section header showing participant count in a message request (%lld = member count)"
+          )
+        } else {
+          Text("In this chat", comment: "Section header for participants in a message request")
+        }
+      }
+      .designFootnote()
+      .fontWeight(.semibold)
+      .foregroundStyle(.secondary)
       VStack(spacing: 0) {
         ForEach(item.participants) { participant in
           participantRow(participant)
@@ -680,12 +730,21 @@ struct MessageRequestDetailView: View {
     let label = HStack(spacing: DesignTokens.Spacing.base) {
       AsyncProfileImage(url: participant.avatarURL, size: DesignTokens.Size.avatarMD)
       VStack(alignment: .leading, spacing: 2) {
-        Text(participant.name ?? "Encrypted chat member")
-          .designCallout()
-          .foregroundStyle(.primary)
-          .lineLimit(1)
+        Group {
+          if let name = participant.name {
+            Text(name)
+          } else {
+            Text(
+              "Encrypted chat member",
+              comment: "Fallback display name when an encrypted chat member's profile is unknown"
+            )
+          }
+        }
+        .designCallout()
+        .foregroundStyle(.primary)
+        .lineLimit(1)
         if let handle = participant.secondaryHandle {
-          Text(handle)
+          Text(verbatim: handle)
             .designFootnote()
             .foregroundStyle(.secondary)
             .lineLimit(1)
@@ -693,7 +752,7 @@ struct MessageRequestDetailView: View {
       }
       Spacer(minLength: 0)
       if participant.canOpenProfile {
-        Image(systemName: "chevron.right")
+        Image(systemName: "chevron.forward")
           .font(.footnote.weight(.semibold))
           .foregroundStyle(.tertiary)
       }

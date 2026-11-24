@@ -27,24 +27,24 @@ import Foundation
         switch recoveryState {
         case .inProgress:
             return RejoinStatusPresentation(
-                title: "Updating secure session",
-                detail: "Rejoining to keep forward secrecy up to date.",
+                title: String(localized: "Updating secure session", comment: "Status banner title while rejoining an encrypted session"),
+                detail: String(localized: "Rejoining to keep forward secrecy up to date.", comment: "Status banner subtitle while rejoining an encrypted session"),
                 iconName: "arrow.triangle.2.circlepath.circle.fill",
                 showsProgress: true,
                 showsRetry: false
             )
         case .success:
             return RejoinStatusPresentation(
-                title: "Secure session restored",
-                detail: "You're rejoined and can continue chatting.",
+                title: String(localized: "Secure session restored", comment: "Status banner title after encrypted session recovery succeeds"),
+                detail: String(localized: "You're rejoined and can continue chatting.", comment: "Status banner subtitle after encrypted session recovery succeeds"),
                 iconName: "checkmark.shield.fill",
                 showsProgress: false,
                 showsRetry: false
             )
         case .failed:
             return RejoinStatusPresentation(
-                title: "Secure rejoin not completed",
-                detail: "Your messages remain protected. Try rejoining again.",
+                title: String(localized: "Secure rejoin not completed", comment: "Status banner title when encrypted session recovery fails"),
+                detail: String(localized: "Your messages remain protected. Try rejoining again.", comment: "Status banner subtitle when encrypted session recovery fails"),
                 iconName: "exclamationmark.shield.fill",
                 showsProgress: false,
                 showsRetry: true

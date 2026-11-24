@@ -24,20 +24,24 @@ struct CreateCircleView: View {
             .accessibilityLabel("Circle name")
             .accessibilityHint("Name must be between 1 and 64 characters")
 
-          Text("\(name.trimmingCharacters(in: .whitespacesAndNewlines).count)/64 characters")
+          Text(
+            "\(name.trimmingCharacters(in: .whitespacesAndNewlines).count)/64 characters",
+            comment: "Character count indicator for Circle name out of 64 maximum characters — %1$lld is the current character count."
+          )
             .font(.caption2)
             .foregroundStyle(name.trimmingCharacters(in: .whitespacesAndNewlines).count > 64 ? .red : .secondary)
         }
 
         Section {
           ForEach(selectedMembers, id: \.did) { profile in
+            let targetName = profile.displayName ?? "@\(profile.handle)"
             HStack(spacing: 12) {
               AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 36)
               VStack(alignment: .leading, spacing: 2) {
-                Text(profile.displayName ?? "@\(profile.handle)")
+                Text(verbatim: profile.displayName ?? "@\(profile.handle)")
                   .font(.subheadline.weight(.medium))
                   .lineLimit(1)
-                Text("@\(profile.handle)")
+                Text(verbatim: "@\(profile.handle)")
                   .font(.caption)
                   .foregroundStyle(.secondary)
                   .lineLimit(1)
@@ -50,7 +54,10 @@ struct CreateCircleView: View {
                   .foregroundStyle(.red)
               }
               .buttonStyle(.borderless)
-              .accessibilityLabel("Remove \(profile.displayName ?? "@\(profile.handle)")")
+              .accessibilityLabel(Text(
+                "Remove \(targetName)",
+                comment: "Accessibility label for button to remove an initial member while creating a Circle — %1$@ is their display name or @handle."
+              ))
             }
           }
 
@@ -63,7 +70,10 @@ struct CreateCircleView: View {
           .accessibilityLabel("Add Members")
           .accessibilityHint("Search for people to add to this Circle")
         } header: {
-          Text("Initial Members (\(selectedMembers.count)/150)")
+          Text(
+            "Initial Members (\(selectedMembers.count)/150)",
+            comment: "Section header showing initial Circle members out of maximum 150 — %1$lld is the selected member count."
+          )
         } footer: {
           Text("You can also add members after the Circle is created.")
         }
@@ -111,7 +121,13 @@ struct CreateCircleView: View {
               HStack {
                 ProgressView()
                   .padding(.trailing, 8)
-                Text(vm.hasCreatedSpace ? "Activating Circle..." : "Creating Circle...")
+                Group {
+                  if vm.hasCreatedSpace {
+                    Text("Activating Circle...", comment: "Progress message while activating a newly created Circle with the AppView.")
+                  } else {
+                    Text("Creating Circle...", comment: "Progress message while creating a new Circle Space on the user's PDS.")
+                  }
+                }
                   .font(.subheadline)
                   .foregroundStyle(.secondary)
               }

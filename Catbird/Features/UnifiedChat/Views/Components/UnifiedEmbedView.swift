@@ -127,7 +127,10 @@ struct UnifiedEmbedView: View {
           .multilineTextAlignment(.leading)
       }
 
-      Text("Group invite · \(memberCount) of \(memberLimit) members")
+      Text(
+        "Group invite · \(memberCount) of \(memberLimit) members",
+        comment: "Group invite card subtitle. %1$lld is current member count, %2$lld is maximum member limit."
+      )
         .font(.caption2)
         .foregroundStyle(.secondary)
         .lineLimit(1)
@@ -408,7 +411,10 @@ private struct UnifiedGIFView: View {
     guard let wrapper else {
       await MainActor.run {
         isLoading = false
-        loadError = "This GIF can’t be played right now."
+        loadError = String(
+          localized: "This GIF can’t be played right now.",
+          comment: "Error message when a chat GIF fails to initialize playback"
+        )
       }
       logger.error("Tenor GIF setup failed: could not create LoopingPlayerWrapper for url=\(url, privacy: .public)")
       return

@@ -60,20 +60,32 @@ struct RepostHeaderView: View {
   /// "Reposted by <name> [badge]" as composed `Text` so the inline verified
   /// badge keeps the surrounding typography and truncation.
   private var repostedByText: Text {
-    let base = Text("Reposted by \(reposterName)")
     let hideBadges = appState?.preferencesManager.hideVerificationBadges ?? false
     if let badge = VerificationBadge.inlineText(for: reposterVerification, did: reposterDID, hideBadges: hideBadges) {
-      return base + Text(verbatim: " ") + badge.font(.caption2)
+      let nameWithBadge = Text(reposterName) + Text(verbatim: " ") + badge.font(.caption2)
+      return Text(
+        "Reposted by \(nameWithBadge)",
+        comment: "Repost attribution header — variable is the reposter's display name or handle"
+      )
     }
-    return base
+    return Text(
+      "Reposted by \(reposterName)",
+      comment: "Repost attribution header — variable is the reposter's display name or handle"
+    )
   }
 
   private var repostedByAccessibilityLabel: String {
     let hideBadges = appState?.preferencesManager.hideVerificationBadges ?? false
     if let kind = VerificationBadge.kind(for: reposterVerification, did: reposterDID, hideBadges: hideBadges) {
-      return "Reposted by \(reposterName), \(kind.accessibilityLabel)"
+      return String(
+        localized: "Reposted by \(reposterName), \(kind.accessibilityLabel)",
+        comment: "Accessibility label for repost attribution with verification badge — first variable is the reposter's name, second is verification status"
+      )
     }
-    return "Reposted by \(reposterName)"
+    return String(
+      localized: "Reposted by \(reposterName)",
+      comment: "Repost attribution header — variable is the reposter's display name or handle"
+    )
   }
 }
 

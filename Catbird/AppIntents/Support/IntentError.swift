@@ -25,22 +25,34 @@ enum IntentError: Error, CustomLocalizedStringResourceConvertible, LocalizedErro
   /// The server returned a 2xx response with no body where one was required.
   case emptyResponse
   /// A parameter supplied to the intent was invalid or unusable.
-  case invalidParameter(String)
+  case invalidParameter(LocalizedStringResource)
   /// A required app or system service is temporarily unavailable.
-  case serviceUnavailable(String)
+  case serviceUnavailable(LocalizedStringResource)
 
   var localizedStringResource: LocalizedStringResource {
     switch self {
     case .notSignedIn:
-      return "You need to sign in to Catbird before using this shortcut."
+      return LocalizedStringResource(
+        "You need to sign in to Catbird before using this shortcut.",
+        comment: "Error spoken by Siri or shown in Shortcuts when no Bluesky account is signed in."
+      )
     case .accountUnavailable:
-      return "That account is no longer signed in to Catbird. Open Catbird to sign in again."
+      return LocalizedStringResource(
+        "That account is no longer signed in to Catbird. Open Catbird to sign in again.",
+        comment: "Error spoken by Siri or shown in Shortcuts when the selected Bluesky account is no longer available."
+      )
     case .httpError:
-      return "Bluesky couldn’t complete the request. Please try again."
+      return LocalizedStringResource(
+        "Bluesky couldn’t complete the request. Please try again.",
+        comment: "Error spoken by Siri or shown in Shortcuts when a Bluesky server request fails."
+      )
     case .emptyResponse:
-      return "Bluesky didn’t return the expected information. Please try again."
+      return LocalizedStringResource(
+        "Bluesky didn’t return the expected information. Please try again.",
+        comment: "Error spoken by Siri or shown in Shortcuts when a Bluesky server response has an empty body."
+      )
     case .invalidParameter(let detail), .serviceUnavailable(let detail):
-      return "\(detail)"
+      return detail
     }
   }
 

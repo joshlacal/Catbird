@@ -193,7 +193,10 @@ struct AccountSwitcherView: View {
 
   @ViewBuilder
   private func removeAccountAlertMessage(_ account: AccountViewModel) -> some View {
-    Text("Remove @\(account.handle) from Catbird? This doesn’t delete the account, and you can add it again later.")
+    Text(
+      "Remove @\(account.handle) from Catbird? This doesn’t delete the account, and you can add it again later.",
+      comment: "Confirmation alert message when removing a saved account. Placeholder is the account handle."
+    )
   }
 
   // MARK: - onChange Handlers
@@ -208,7 +211,12 @@ struct AccountSwitcherView: View {
 
   private func handleReauthRequestChange(_ oldRequest: AppState.ReauthenticationRequest?, _ newRequest: AppState.ReauthenticationRequest?) {
     guard composerTransfer == nil else {
-      if newRequest != nil { error = "Sign in to that account before moving this draft to it." }
+      if newRequest != nil {
+        error = String(
+          localized: "Sign in to that account before moving this draft to it.",
+          comment: "Error shown when switching accounts with an unsaved draft requires re-authentication."
+        )
+      }
       return
     }
     Task { @MainActor in
@@ -304,7 +312,7 @@ struct AccountSwitcherView: View {
     .disabled(isSwitchingAccount)
     .accessibilityElement(children: .combine)
     .accessibilityAddTraits(account.isActive ? .isSelected : [])
-    .accessibilityHint(account.isActive ? "" : "Switches to this account")
+    .accessibilityHint(account.isActive ? Text(verbatim: "") : Text("Switches to this account", comment: "Accessibility hint on an inactive account row in the account switcher."))
     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
       if !account.isActive {
         Button(role: .destructive) {
@@ -328,7 +336,7 @@ struct AccountSwitcherView: View {
           .appFont(AppTextRole.headline)
           .lineLimit(1)
 
-        Text("@\(account.handle)")
+        Text(verbatim: "@\(account.handle)")
           .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)
@@ -530,7 +538,10 @@ struct AccountSwitcherView: View {
               appStateManager.lifecycle.isAuthenticated,
               appStateManager.lifecycle.userDID == accountDID,
               composerTransfer == nil || reopenID != nil else {
-          error = "That account isn’t ready yet. Your draft is saved."
+          error = String(
+            localized: "That account isn’t ready yet. Your draft is saved.",
+            comment: "Error when account switch finishes before the target account state is ready."
+          )
           return
         }
         // The captured callback belongs to this exact attempt, even if account content remounts.
@@ -539,7 +550,10 @@ struct AccountSwitcherView: View {
       case .unchanged, .cancelled:
         return
       case .busy:
-        error = "Another account is still switching. Try again in a moment."
+        error = String(
+          localized: "Another account is still switching. Try again in a moment.",
+          comment: "Error when trying to switch accounts while a switch is already in progress."
+        )
       case .blockedBySettings(let message):
         // A local save refusal has already recovered the source; it needs no target reauthentication.
         error = message
@@ -549,7 +563,10 @@ struct AccountSwitcherView: View {
         guard composerTransfer == nil else {
           // A draft can't wait on a browser sign-in; the person signs in from Settings first.
           appStateManager.discardExpiredAccountIfInactive(expiredDID)
-          error = "Sign in to that account again before moving this draft to it."
+          error = String(
+            localized: "Sign in to that account again before moving this draft to it.",
+            comment: "Error when target account session is expired during a draft transfer."
+          )
           return
         }
         if appStateManager.lifecycle.appState != nil {
@@ -584,7 +601,10 @@ struct AccountSwitcherView: View {
         await loadAccounts()
       } catch {
         logger.error("Failed to remove account \(account.did): \(error.localizedDescription)")
-        self.error = "Couldn’t remove this account. Try again."
+        self.error = String(
+          localized: "Couldn’t remove this account. Try again.",
+          comment: "Error when removing an account from the switcher fails."
+        )
       }
     }
 
@@ -598,7 +618,10 @@ struct AccountSwitcherView: View {
       await loadAccounts()
     } catch {
       logger.error("Failed to remove account \(account.did): \(error.localizedDescription)")
-      self.error = "Couldn’t remove this account. Try again."
+      self.error = String(
+        localized: "Couldn’t remove this account. Try again.",
+        comment: "Error when removing an account from the switcher fails."
+      )
     }
   }
 
@@ -620,7 +643,10 @@ struct AccountSwitcherView: View {
     // Simple validation - must contain a dot or @ symbol
     guard trimmedHandle.contains(".") || trimmedHandle.contains("@") else {
       logger.warning("Invalid handle format: \(trimmedHandle)")
-      validationError = "Please include a domain (example.bsky.social)"
+      validationError = String(
+        localized: "Please include a domain (example.bsky.social)",
+        comment: "Validation error when handle is missing a domain."
+      )
       showInvalidAnimation = true
       // Reset animation flag after a delay
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
@@ -716,7 +742,10 @@ struct AccountSwitcherView: View {
         logger.error("Authentication error: \(error.localizedDescription)")
 
         if case AuthError.timeout = error {
-          self.error = "Signing in took too long. Try again."
+          self.error = String(
+            localized: "Signing in took too long. Try again.",
+            comment: "Error shown when browser sign-in times out."
+          )
         } else {
           self.error = AuthenticationManager.userFacingMessage(for: error)
         }
@@ -766,7 +795,10 @@ struct AccountSwitcherView: View {
       reauthenticatedTargetDID = did
       finishReauthenticationIfReady()
     case .signedInToDifferentAccount:
-      error = "Sign-in finished for a different account. Try again."
+      error = String(
+        localized: "Sign-in finished for a different account. Try again.",
+        comment: "Error when re-authentication completes for a different account than expected."
+      )
     case .cancelled:
       authenticationCancelled = true
     case .failed(let message):

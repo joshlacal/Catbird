@@ -24,13 +24,16 @@ struct StarterPackRowView: View {
                         .appFont(AppTextRole.headline)
                         .lineLimit(1)
                 } else {
-                    Text("Starter Pack")
+                    Text("Starter Pack", comment: "Fallback title for a starter pack row in search results")
                         .appFont(AppTextRole.headline)
                         .lineLimit(1)
 
                 }
                 
-                Text("By @\(pack.creator.handle)")
+                Text(
+                    "By @\(pack.creator.handle.description)",
+                    comment: "Starter pack creator attribution in search results — variable is the creator's handle"
+                )
                     .appFont(AppTextRole.subheadline)
                     .foregroundColor(.secondary)
                 
@@ -48,9 +51,16 @@ struct StarterPackRowView: View {
                 // Pack stats
                 if let count = pack.listItemCount {
                     HStack(spacing: 12) {
-                        Label("^[\(count) profile](inflect: true)", systemImage: "person.2")
-                            .appFont(AppTextRole.caption2)
-                            .foregroundColor(.secondary)
+                        Label {
+                            Text(
+                                "\(count) profiles",
+                                comment: "Number of member profiles in a starter pack"
+                            )
+                        } icon: {
+                            Image(systemName: "person.2")
+                        }
+                        .appFont(AppTextRole.caption2)
+                        .foregroundColor(.secondary)
                     }
                     .padding(.top, 2)
                 }
@@ -58,7 +68,7 @@ struct StarterPackRowView: View {
             
             Spacer()
             
-            Image(systemName: "chevron.right")
+            Image(systemName: "chevron.forward")
                 .appFont(AppTextRole.footnote)
                 .foregroundColor(.secondary)
         }

@@ -89,13 +89,25 @@ final class ListsManagerViewModel {
     
     var result: [ListSection] = []
     if !peopleLists.isEmpty {
-      result.append(ListSection(id: "people", category: "People Lists", lists: peopleLists))
+      result.append(ListSection(
+        id: "people",
+        category: String(localized: "People Lists", comment: "Section header for curated people lists."),
+        lists: peopleLists
+      ))
     }
     if !modLists.isEmpty {
-      result.append(ListSection(id: "mod", category: "Moderation Lists", lists: modLists))
+      result.append(ListSection(
+        id: "mod",
+        category: String(localized: "Moderation Lists", comment: "Section header for moderation lists used to mute or block accounts."),
+        lists: modLists
+      ))
     }
     if !otherLists.isEmpty {
-      result.append(ListSection(id: "other", category: "Other Lists", lists: otherLists))
+      result.append(ListSection(
+        id: "other",
+        category: String(localized: "Other Lists", comment: "Section header for miscellaneous user lists."),
+        lists: otherLists
+      ))
     }
     sections = result
   }
@@ -203,7 +215,11 @@ struct ListsManagerView: View {
       }
     }
     .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
-    .navigationTitle(isHostedInSettings ? "Moderation Lists" : "My Lists")
+    .navigationTitle(
+      isHostedInSettings
+        ? Text("Moderation Lists", comment: "Navigation title for the moderation lists manager inside Settings.")
+        : Text("My Lists", comment: "Navigation title for the user's lists manager.")
+    )
     .modifier(ListsManagerTitleDisplayModifier(isInline: isHostedInSettings))
     .environment(\.listsUseLocalNavigation, isHostedInSettings)
     .task {
@@ -263,14 +279,17 @@ private struct ListsManagerContent: View {
 
   private var emptyStateView: some View {
     ContentUnavailableView {
-      Label(
-        isHostedInSettings ? "No Moderation Lists Yet" : "No Lists Yet",
-        systemImage: "list.bullet.rectangle"
-      )
+      if isHostedInSettings {
+        Label("No Moderation Lists Yet", systemImage: "list.bullet.rectangle")
+      } else {
+        Label("No Lists Yet", systemImage: "list.bullet.rectangle")
+      }
     } description: {
-      Text(isHostedInSettings
-        ? "Create a moderation list to mute or block a group of accounts at once."
-        : "Create your first list to organize and curate accounts.")
+      if isHostedInSettings {
+        Text("Create a moderation list to mute or block a group of accounts at once.")
+      } else {
+        Text("Create your first list to organize and curate accounts.")
+      }
     } actions: {
       Button("Create List") {
         viewModel.showingCreateList = true
@@ -340,7 +359,10 @@ private struct ListsManagerPresentations: ViewModifier {
           Task { await viewModel.deleteList(list) }
         }
       } message: { list in
-        Text("Delete “\(list.name)”? This can’t be undone.")
+        Text(
+          "Delete “\(list.name)”? This can’t be undone.",
+          comment: "Confirmation alert message when deleting a user list — %1$@ is the list name."
+        )
       }
       .sheet(isPresented: $viewModel.showingCreateList, onDismiss: {
         viewModel.syncFromCache()

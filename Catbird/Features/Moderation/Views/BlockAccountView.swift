@@ -92,7 +92,7 @@ struct BlockAccountView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(profile.displayName ?? "@\(profile.handle.description)")
                         .font(.headline)
-                    Text("@\(profile.handle.description)")
+                    Text(verbatim: "@\(profile.handle.description)")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -113,11 +113,10 @@ struct BlockAccountView: View {
                     .foregroundStyle(.orange)
                 
                 VStack(alignment: .leading, spacing: 4) {
-                    let plural = mlsAffectedConvoCount == 1 ? "" : "s"
                     Text("Encrypted Chat Notice")
                         .font(.subheadline)
                         .fontWeight(.semibold)
-                    Text("You share \(mlsAffectedConvoCount) end-to-end encrypted conversation\(plural) with this user. Blocking them will cause you to leave those conversations.")
+                    Text("You share \(mlsAffectedConvoCount) end-to-end encrypted conversations with this user. Blocking them will cause you to leave those conversations.", comment: "Warning when blocking a user with shared E2EE chats — variable is the number of conversations.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -221,9 +220,15 @@ struct BlockAccountView: View {
                         .fontWeight(.medium)
                     
                     let memberCount = convo.members.count
-                    Text("\(memberCount) members • \(isOwner ? "You own this group" : "Member")")
-                        .font(.caption)
-                        .foregroundStyle(isOwner ? Color.blue : Color.secondary)
+                    Group {
+                        if isOwner {
+                            Text("\(memberCount) members • You own this group", comment: "Group chat member count and ownership status — variable is member count.")
+                        } else {
+                            Text("\(memberCount) members • Member", comment: "Group chat member count and membership status — variable is member count.")
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(isOwner ? Color.blue : Color.secondary)
                 }
                 
                 Spacer()
@@ -261,7 +266,7 @@ struct BlockAccountView: View {
                     if blocked {
                         dismiss()
                     } else {
-                        errorMessage = "Couldn’t block @\(profile.handle.description). Check your connection and try again."
+                        errorMessage = String(localized: "Couldn’t block @\(profile.handle.description). Check your connection and try again.", comment: "Error when blocking an account fails — variable is the user's handle.")
                     }
                 }
             } label: {
@@ -272,7 +277,7 @@ struct BlockAccountView: View {
                         Spacer()
                     }
                 } else {
-                    Text("Block @\(profile.handle.description)")
+                    Text("Block @\(profile.handle.description)", comment: "Destructive button to block an account — variable is the user's handle.")
                         .fontWeight(.semibold)
                         .frame(maxWidth: .infinity)
                 }
@@ -300,8 +305,8 @@ struct BlockAccountView: View {
         }
         let otherMembers = convo.members.filter { $0.did.didString() != viewerDID }
         let names = otherMembers.prefix(3).map { $0.displayName ?? "@\($0.handle.description)" }
-        let combined = names.joined(separator: ", ")
-        return combined.isEmpty ? "Group Chat" : combined
+        let combined = names.formatted()
+        return combined.isEmpty ? String(localized: "Group Chat", comment: "Fallback title for an unnamed group chat.") : combined
     }
     
     private func loadMutualGroups() async {
@@ -309,9 +314,10 @@ struct BlockAccountView: View {
         mutualGroupsLoadError = nil
         isFeatureUnavailable = false
         
+        let loadFailureMessage = String(localized: "Couldn’t check for shared group chats.", comment: "Error when checking mutual group chats before blocking fails.")
         guard let client = appState.atProtoClient else {
             isLoading = false
-            mutualGroupsLoadError = "Couldn’t check for shared group chats."
+            mutualGroupsLoadError = loadFailureMessage
             return
         }
         
@@ -325,9 +331,9 @@ struct BlockAccountView: View {
                 self.mutualGroupsLoadError = nil
             } else if code == 401 || code == 403 || code == 501 {
                 self.isFeatureUnavailable = true
-                self.mutualGroupsLoadError = "Couldn’t check for shared group chats."
+                self.mutualGroupsLoadError = loadFailureMessage
             } else {
-                self.mutualGroupsLoadError = "Couldn’t check for shared group chats."
+                self.mutualGroupsLoadError = loadFailureMessage
             }
         } catch {
             let desc = error.localizedDescription
@@ -336,9 +342,9 @@ struct BlockAccountView: View {
                desc.localizedCaseInsensitiveContains("forbidden") ||
                desc.localizedCaseInsensitiveContains("scope") {
                 self.isFeatureUnavailable = true
-                self.mutualGroupsLoadError = "Couldn’t check for shared group chats."
+                self.mutualGroupsLoadError = loadFailureMessage
             } else {
-                self.mutualGroupsLoadError = "Couldn’t check for shared group chats."
+                self.mutualGroupsLoadError = loadFailureMessage
             }
         }
         
@@ -364,7 +370,7 @@ struct BlockAccountView: View {
                 self.mutualGroups.append(contentsOf: newConvos)
                 self.nextCursor = data.cursor
             } else {
-                errorMessage = "Couldn’t load more group chats. Try again."
+                errorMessage = String(localized: "Couldn’t load more group chats. Try again.", comment: "Error when paginating mutual group chats fails.")
             }
         } catch {
             errorMessage = UserFacingError.message(for: error, action: "load more group chats")
@@ -406,10 +412,10 @@ struct BlockAccountView: View {
             break
         case .ownerMustLockFirst:
             mutualGroups = originalGroups
-            errorMessage = "You must lock this group before leaving because you are the owner."
+            errorMessage = String(localized: "You must lock this group before leaving because you are the owner.", comment: "Error when group owner attempts to leave without locking the group.")
         case .failure:
             mutualGroups = originalGroups
-            errorMessage = "Couldn’t leave this group. Try again."
+            errorMessage = String(localized: "Couldn’t leave this group. Try again.", comment: "Error when leaving a mutual group chat fails.")
         }
         
         actionInProgressConvoId = nil

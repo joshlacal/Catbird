@@ -66,21 +66,21 @@ public enum GatewayPermissionError: LocalizedError, Equatable, Sendable {
   public var errorDescription: String? {
     switch self {
     case .unauthenticated:
-      return "Sign in again to continue."
+      return String(localized: "Sign in again to continue.", comment: "Permission upgrade error when signed out.")
     case .clientUnavailable:
-      return "Something went wrong. Please try again."
+      return String(localized: "Something went wrong. Please try again.", comment: "Permission upgrade error when client is unavailable.")
     case .stateChanged:
-      return "Your account changed while this was in progress. Please try again."
+      return String(localized: "Your account changed while this was in progress. Please try again.", comment: "Permission upgrade error when active account changed.")
     case .permissionDenied, .missingGrantedScope:
-      return "Catbird needs your permission to make this change. Try again and tap Allow when asked."
+      return String(localized: "Catbird needs your permission to make this change. Try again and tap Allow when asked.", comment: "Permission upgrade error when OAuth scope grant was denied.")
     case .cancelled:
-      return "The permission request was cancelled."
+      return String(localized: "The permission request was cancelled.", comment: "Permission upgrade error when user cancelled.")
     case .alreadyInProgress:
-      return "Finish the open permission request first."
+      return String(localized: "Finish the open permission request first.", comment: "Permission upgrade error when another flow is already open.")
     case .upgradeFailed:
-      return "Couldn’t get permission from your server. Please try again."
+      return String(localized: "Couldn’t get permission from your server. Please try again.", comment: "Permission upgrade error when server grant failed.")
     case .invalidCallbackURL:
-      return "The permission request didn’t finish. Please try again."
+      return String(localized: "The permission request didn’t finish. Please try again.", comment: "Permission upgrade error when OAuth callback URL is invalid.")
     }
   }
 }
