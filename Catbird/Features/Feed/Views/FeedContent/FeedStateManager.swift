@@ -859,6 +859,13 @@ final class FeedStateManager: StateInvalidationSubscriber {
     /// `force` (pull to refresh) fetches new lists even when Search or an earlier load fetched some within
     /// `TrendingTopicListCache.freshAge`. A pull whose load was cancelled still forces the next appear.
     func loadTrendingIfNeeded(requestID: String, displayScale: CGFloat, force: Bool = false) async {
+        guard await isTrendingEligibleFeed() else {
+            guard !Task.isCancelled else { return }
+            appState.cancelTopicPreviewPrefetch(owner: .timeline)
+            if trendingRequestID == requestID { trendingContent = TrendingFeedContent() }
+            return
+        }
+        guard !Task.isCancelled else { return }
         let force = force || trendingInvalidated
         guard force || shouldReloadTrending(for: requestID, now: Date()) else {
             appState.prefetchTopicPreviews(trends: trendingContent.trends, displayScale: displayScale, owner: .timeline)
@@ -870,6 +877,13 @@ final class FeedStateManager: StateInvalidationSubscriber {
         trendingRequestID = requestID
         trendingLoadedAt = Date()
         trendingInvalidated = false
+    }
+
+    /// Whether the current feed is the user's default (first pinned) feed, the only
+    /// feed that carries the trending card. See `TrendingFeedEligibility`.
+    private func isTrendingEligibleFeed() async -> Bool {
+        let pinnedFeeds = (try? await appState.preferencesManager.getPreferences().pinnedFeeds) ?? []
+        return TrendingFeedEligibility.isEligible(feed: currentFeedType, pinnedFeeds: pinnedFeeds)
     }
 
     private func shouldReloadTrending(for requestID: String, now: Date) -> Bool {

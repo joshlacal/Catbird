@@ -136,11 +136,6 @@ struct FeedCollectionViewWrapper: View {
         )
         .catalystPlainButtons()
         .task(id: trendingRequestID) {
-            let feed = stateManager.currentFeedType
-            guard feed == .timeline || feed.identifier.contains("discover") || feed.identifier == "timeline" else {
-                stateManager.appState.cancelTopicPreviewPrefetch(owner: .timeline)
-                return
-            }
             await stateManager.loadTrendingIfNeeded(requestID: trendingRequestID, displayScale: displayScale)
         }
         .onDisappear { stateManager.appState.cancelTopicPreviewPrefetch(owner: .timeline) }
