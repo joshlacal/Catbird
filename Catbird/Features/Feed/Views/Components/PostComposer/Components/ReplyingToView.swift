@@ -13,11 +13,12 @@ struct ReplyingToView: View {
 
   var body: some View {
     HStack {
-      Text("Replying to")
-        .foregroundColor(.secondary)
-      Text("@\(parentPost.author.handle)")
-        .fontWeight(.semibold)
-        Spacer()
+      Text(
+        "Replying to \(Text(verbatim: "@\(parentPost.author.handle)").fontWeight(.semibold).foregroundColor(.primary))",
+        comment: "Header above post composer indicating which user handle is being replied to"
+      )
+      .foregroundColor(.secondary)
+      Spacer()
     }
     .appFont(AppTextRole.subheadline)
     .padding(.vertical, 8)

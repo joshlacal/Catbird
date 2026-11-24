@@ -129,11 +129,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     var errorDescription: String? {
       switch self {
       case .clientUnavailable:
-        return "Network client not available"
+        return String(localized: "Network client not available", comment: "Notification service error when network client is missing")
       case .clientNotConfigured:
-        return "Network client not configured"
+        return String(localized: "Network client not configured", comment: "Notification service error when network client is not configured")
       case .deviceTokenNotAvailable:
-        return "Device token not available"
+        return String(localized: "Device token not available", comment: "Notification service error when APNs device token is missing")
       case .serverError(let message):
         return message
       }
@@ -142,9 +142,9 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     var recoverySuggestion: String? {
       switch self {
       case .deviceTokenNotAvailable:
-        return "Please try disabling and re-enabling notifications."
+        return String(localized: "Please try disabling and re-enabling notifications.", comment: "Recovery suggestion when push device token is unavailable")
       case .clientUnavailable, .clientNotConfigured:
-        return "Please try signing out and signing back in."
+        return String(localized: "Please try signing out and signing back in.", comment: "Recovery suggestion when notification client is unavailable")
       default:
         return nil
       }
@@ -253,12 +253,18 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   var systemPermissionSummary: String {
     switch systemAuthorizationStatus {
-    case .authorized: return "Allowed"
-    case .provisional: return "Quiet delivery"
-    case .ephemeral: return "Temporary permission"
-    case .denied: return "Off in System Settings"
-    case .notDetermined: return "Not requested"
-    default: return "Not checked"
+    case .authorized:
+      return String(localized: "Allowed", comment: "System push notification permission status when authorized")
+    case .provisional:
+      return String(localized: "Quiet delivery", comment: "System push notification permission status when provisional")
+    case .ephemeral:
+      return String(localized: "Temporary permission", comment: "System push notification permission status when ephemeral")
+    case .denied:
+      return String(localized: "Off in System Settings", comment: "System push notification permission status when denied")
+    case .notDetermined:
+      return String(localized: "Not requested", comment: "System push notification permission status before asking")
+    default:
+      return String(localized: "Not checked", comment: "System push notification permission status before checking")
     }
   }
 
@@ -269,24 +275,42 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   /// Delivery and service preferences have distinct states; neither implies the other is ready.
   var settingsSummary: String {
     switch preferencesState {
-    case .loading: return "Loading"
-    case .loadFailed: return "Couldn’t load"
-    case .saving: return "Saving"
-    case .saveFailed: return "Couldn’t save"
-    case .unavailable: return "Not connected"
-    case .ready: return pushDeliverySummary
+    case .loading:
+      return String(localized: "Loading", comment: "Notification preferences status while loading")
+    case .loadFailed:
+      return String(localized: "Couldn’t load", comment: "Notification preferences status when loading failed")
+    case .saving:
+      return String(localized: "Saving", comment: "Notification preferences status while saving")
+    case .saveFailed:
+      return String(localized: "Couldn’t save", comment: "Notification preferences status when saving failed")
+    case .unavailable:
+      return String(localized: "Not connected", comment: "Notification preferences status when disconnected")
+    case .ready:
+      return pushDeliverySummary
     }
   }
 
   var pushDeliverySummary: String {
-    guard isPushRequested else { return "Push paused" }
+    guard isPushRequested else {
+      return String(localized: "Push paused", comment: "Push delivery status when push notifications are turned off")
+    }
     switch status {
-    case .permissionDenied: return "System permission off"
-    case .registrationFailed: return "Connection failed"
-    case .waitingForPermission: return "Waiting for permission"
-    case .registered: return notificationsEnabled ? "Push ready" : "Push paused"
-    case .disabled: return "Push paused"
-    case .unknown: return notificationsEnabled ? "Connecting" : "Not set up"
+    case .permissionDenied:
+      return String(localized: "System permission off", comment: "Push delivery status when OS permission is denied")
+    case .registrationFailed:
+      return String(localized: "Connection failed", comment: "Push delivery status when push server registration failed")
+    case .waitingForPermission:
+      return String(localized: "Waiting for permission", comment: "Push delivery status while awaiting OS permission")
+    case .registered:
+      return notificationsEnabled
+        ? String(localized: "Push ready", comment: "Push delivery status when registered and active")
+        : String(localized: "Push paused", comment: "Push delivery status when push notifications are turned off")
+    case .disabled:
+      return String(localized: "Push paused", comment: "Push delivery status when push notifications are turned off")
+    case .unknown:
+      return notificationsEnabled
+        ? String(localized: "Connecting", comment: "Push delivery status while connecting")
+        : String(localized: "Not set up", comment: "Push delivery status before initial setup")
     }
   }
 
@@ -2732,7 +2756,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         if let text = payload.text, !text.isEmpty {
           content.body = text
         } else {
-          content.body = "New Message"
+          content.body = String(localized: "New Message", comment: "Fallback notification title or body for an encrypted message")
         }
         notificationLogger.info("📝 [FG] Text message notification")
 
@@ -2740,7 +2764,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         // Only show notifications for added reactions, suppress removed reactions
         if let reaction = payload.reaction {
           if reaction.action == .add {
-            content.body = "Reacted with \(reaction.emoji)"
+            content.body = String(
+              localized: "Reacted with \(reaction.emoji)",
+              comment: "Notification body when someone reacts to an encrypted message. %@ is the emoji."
+            )
             notificationLogger.info("😀 [FG] Reaction notification: \(reaction.emoji)")
           } else {
             // Removed reactions should not generate notifications
@@ -2776,7 +2803,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
       case .adminRoster, .adminAction:
         // Admin actions - generic notification
-        content.body = "Group settings updated"
+        content.body = String(localized: "Group settings updated", comment: "Notification body when encrypted group settings or admins change")
         notificationLogger.info("👑 [FG] Admin action notification")
 
       case .system:
@@ -2846,14 +2873,17 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     if let sender = senderName {
       if let convTitle = conversationTitle, !convTitle.isEmpty {
-        content.title = "\(sender) in \(convTitle)"
+        content.title = String(
+          localized: "\(sender) in \(convTitle)",
+          comment: "Notification title for a group chat message. %1$@ is the sender's name, %2$@ is the conversation title."
+        )
       } else {
         content.title = sender
       }
     } else if let convTitle = conversationTitle, !convTitle.isEmpty {
       content.title = convTitle
     } else {
-      content.title = "New Message"
+      content.title = String(localized: "New Message")
     }
 
     // Copy over metadata but mark as already decrypted to prevent infinite loop
@@ -3786,53 +3816,97 @@ extension AppBskyNotificationPutPreferencesV2.Input {
 
   var notificationChangesDescription: String {
     var changes: [String] = []
-    if let chat { changes.append("Direct Messages: \(chat.push ? "Push" : "Off")") }
-    if let follow { changes.append("New Followers: \(follow.summaryDescription)") }
-    if let like { changes.append("Likes: \(like.summaryDescription)") }
-    if let likeViaRepost { changes.append("Likes of Your Reposts: \(likeViaRepost.summaryDescription)") }
-    if let mention { changes.append("Mentions: \(mention.summaryDescription)") }
-    if let quote { changes.append("Quotes: \(quote.summaryDescription)") }
-    if let reply { changes.append("Replies: \(reply.summaryDescription)") }
-    if let repost { changes.append("Reposts: \(repost.summaryDescription)") }
-    if let repostViaRepost { changes.append("Reposts of Your Reposts: \(repostViaRepost.summaryDescription)") }
-    if let starterpackJoined { changes.append("Starter Pack Signups: \(starterpackJoined.summaryDescription)") }
-    if let subscribedPost { changes.append("Posts from Your Subscriptions: \(subscribedPost.summaryDescription)") }
-    if let unverified { changes.append("Verification Removed: \(unverified.summaryDescription)") }
-    if let verified { changes.append("Account Verified: \(verified.summaryDescription)") }
+    if let chat {
+      let chatStatus = chat.push
+        ? String(localized: "Push", comment: "Notification delivery channel: push notifications only")
+        : String(localized: "Off", comment: "Notification delivery channel: disabled")
+      changes.append(
+        String(
+          localized: "Direct Messages: \(chatStatus)",
+          comment: "Summary line for direct message notification preference. %@ is the delivery state."
+        )
+      )
+    }
+    if let follow {
+      changes.append(String(localized: "New Followers: \(follow.summaryDescription)", comment: "Summary line for follower notification preference. %@ is the delivery state."))
+    }
+    if let like {
+      changes.append(String(localized: "Likes: \(like.summaryDescription)", comment: "Summary line for like notification preference. %@ is the delivery state."))
+    }
+    if let likeViaRepost {
+      changes.append(String(localized: "Likes of Your Reposts: \(likeViaRepost.summaryDescription)", comment: "Summary line for likes-via-repost notification preference. %@ is the delivery state."))
+    }
+    if let mention {
+      changes.append(String(localized: "Mentions: \(mention.summaryDescription)", comment: "Summary line for mention notification preference. %@ is the delivery state."))
+    }
+    if let quote {
+      changes.append(String(localized: "Quotes: \(quote.summaryDescription)", comment: "Summary line for quote notification preference. %@ is the delivery state."))
+    }
+    if let reply {
+      changes.append(String(localized: "Replies: \(reply.summaryDescription)", comment: "Summary line for reply notification preference. %@ is the delivery state."))
+    }
+    if let repost {
+      changes.append(String(localized: "Reposts: \(repost.summaryDescription)", comment: "Summary line for repost notification preference. %@ is the delivery state."))
+    }
+    if let repostViaRepost {
+      changes.append(String(localized: "Reposts of Your Reposts: \(repostViaRepost.summaryDescription)", comment: "Summary line for reposts-via-repost notification preference. %@ is the delivery state."))
+    }
+    if let starterpackJoined {
+      changes.append(String(localized: "Starter Pack Signups: \(starterpackJoined.summaryDescription)", comment: "Summary line for starter pack signup notification preference. %@ is the delivery state."))
+    }
+    if let subscribedPost {
+      changes.append(String(localized: "Posts from Your Subscriptions: \(subscribedPost.summaryDescription)", comment: "Summary line for activity subscription notification preference. %@ is the delivery state."))
+    }
+    if let unverified {
+      changes.append(String(localized: "Verification Removed: \(unverified.summaryDescription)", comment: "Summary line for verification removed notification preference. %@ is the delivery state."))
+    }
+    if let verified {
+      changes.append(String(localized: "Account Verified: \(verified.summaryDescription)", comment: "Summary line for account verified notification preference. %@ is the delivery state."))
+    }
     return changes.joined(separator: "\n")
   }
 }
 
 extension AppBskyNotificationDefs.FilterablePreference {
   public var summaryDescription: String {
-    guard list || push else { return "Off" }
+    guard list || push else {
+      return String(localized: "Off")
+    }
     let channelText: String
     if list && push {
-      channelText = "In-App, Push"
+      channelText = String(localized: "In-App, Push", comment: "Notification delivery channel: both in-app list and push")
     } else if list {
-      channelText = "In-App"
+      channelText = String(localized: "In-App", comment: "Notification delivery channel: in-app list only")
     } else {
-      channelText = "Push"
+      channelText = String(localized: "Push")
     }
     let audienceText: String
     switch include {
-    case "follows": audienceText = "People I follow"
-    case "all": audienceText = "Everyone"
-    default: audienceText = "Existing audience"
+    case "follows":
+      audienceText = String(localized: "People I follow", comment: "Notification audience filter: accounts the user follows")
+    case "all":
+      audienceText = String(localized: "Everyone", comment: "Notification audience filter: everyone")
+    default:
+      audienceText = String(localized: "Existing audience", comment: "Notification audience filter: current server setting")
     }
-    return "\(channelText), \(audienceText)"
+    return String(
+      localized: "\(channelText), \(audienceText)",
+      comment: "Combined notification channel and audience summary. %1$@ is delivery channel, %2$@ is audience."
+    )
   }
 }
 
 extension AppBskyNotificationDefs.Preference {
   public var summaryDescription: String {
-    guard list || push else { return "Off" }
+    guard list || push else {
+      return String(localized: "Off")
+    }
     if list && push {
-      return "In-App, Push"
+      return String(localized: "In-App, Push")
     } else if list {
-      return "In-App"
+      return String(localized: "In-App")
     } else {
-      return "Push"
+      return String(localized: "Push")
     }
   }
 }

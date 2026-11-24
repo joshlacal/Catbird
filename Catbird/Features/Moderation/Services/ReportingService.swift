@@ -15,19 +15,19 @@ enum LabelAppealError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .selfLabelNotAppealable:
-            return "Self-applied labels cannot be appealed."
+            return String(localized: "Self-applied labels cannot be appealed.", comment: "Label appeal error.")
         case .subjectNotOwned:
-            return "You can only appeal labels on your own account or posts."
+            return String(localized: "You can only appeal labels on your own account or posts.", comment: "Label appeal error.")
         case .inactiveLabel:
-            return "This label is no longer active."
+            return String(localized: "This label is no longer active.", comment: "Label appeal error.")
         case .accountChanged:
-            return "Your account changed. Reopen the label to appeal it."
+            return String(localized: "Your account changed. Reopen the label to appeal it.", comment: "Label appeal error.")
         case .invalidDetails:
-            return "Enter an appeal reason of 1 to 300 characters."
+            return String(localized: "Enter an appeal reason of 1 to 300 characters.", comment: "Label appeal validation error.")
         case .alreadyAppealed:
-            return "This label has already been appealed and is currently under review."
+            return String(localized: "This label has already been appealed and is currently under review.", comment: "Label appeal error.")
         case .invalidLabelSubject(let msg):
-            return "Invalid label subject: \(msg)"
+            return String(localized: "Invalid label subject: \(msg)", comment: "Label appeal error — variable is subject identifier or error message.")
         }
     }
 }

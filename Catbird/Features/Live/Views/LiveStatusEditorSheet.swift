@@ -4,6 +4,7 @@ import Petrel
 public struct LiveStatusEditorSheet: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.locale) private var locale
 
     @State private var streamURLString: String = ""
     @State private var selectedDuration: Int = 60
@@ -32,7 +33,9 @@ public struct LiveStatusEditorSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("https://twitch.tv/...", text: $streamURLString)
+                    TextField(text: $streamURLString, prompt: Text(verbatim: "https://twitch.tv/…")) {
+                        Text("Stream URL")
+                    }
                         .platformURLInput()
                         .autocorrectionDisabled()
                         .onChange(of: streamURLString) { _, newValue in
@@ -40,9 +43,15 @@ public struct LiveStatusEditorSheet: View {
                         }
 
                     if !streamURLString.isEmpty && !validation.isValid {
-                        Text(validation.error ?? "Invalid URL")
-                            .font(.caption)
-                            .foregroundColor(.red)
+                        if let error = validation.error {
+                            Text(error)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                        } else {
+                            Text("Invalid URL")
+                                .font(.caption)
+                                .foregroundColor(.red)
+                        }
                     }
                 } header: {
                     Text("Stream URL")
@@ -54,8 +63,16 @@ public struct LiveStatusEditorSheet: View {
                 if let card = previewCard {
                     Section("Preview") {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(card.title.isEmpty ? (validation.apexDomain ?? "Live Stream") : card.title)
-                                .font(.headline)
+                            if !card.title.isEmpty {
+                                Text(card.title)
+                                    .font(.headline)
+                            } else if let apexDomain = validation.apexDomain {
+                                Text(verbatim: apexDomain)
+                                    .font(.headline)
+                            } else {
+                                Text("Live Stream", comment: "Fallback title for a live stream preview card")
+                                    .font(.headline)
+                            }
                             if !card.description.isEmpty {
                                 Text(card.description)
                                     .font(.caption)
@@ -70,7 +87,7 @@ public struct LiveStatusEditorSheet: View {
                 Section("Duration") {
                     Picker("Active for", selection: $selectedDuration) {
                         ForEach(durations, id: \.self) { duration in
-                            Text(LiveStatusManager.displayDuration(minutes: duration))
+                            Text(LiveStatusManager.displayDuration(minutes: duration, locale: locale))
                                 .tag(duration)
                         }
                     }
@@ -100,7 +117,11 @@ public struct LiveStatusEditorSheet: View {
                     }
                 }
             }
-            .navigationTitle(isLive ? "Edit Live" : "Go Live")
+            .navigationTitle(
+                isLive
+                    ? Text("Edit Live", comment: "Navigation title when editing an active live stream status")
+                    : Text("Go Live", comment: "Navigation title when starting a live stream status")
+            )
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -111,8 +132,14 @@ public struct LiveStatusEditorSheet: View {
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(isLive ? "Save" : "Go Live") {
+                    Button {
                         Task { await submit() }
+                    } label: {
+                        if isLive {
+                            Text("Save", comment: "Toolbar button to save live stream status changes")
+                        } else {
+                            Text("Go Live", comment: "Toolbar button to publish live stream status")
+                        }
                     }
                     .bold()
                     .disabled(!validation.isValid || isSubmitting)

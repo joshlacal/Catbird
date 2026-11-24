@@ -57,7 +57,11 @@ struct FeedLibraryControls: View {
           }
         } label: {
           Label {
-            if membership == .pinned { Text("Pinned") } else { Text("Saved") }
+            if membership == .pinned {
+              Text("Pinned", comment: "Status badge indicating a feed is pinned")
+            } else {
+              Text("Saved", comment: "Status badge indicating a feed is saved in the library")
+            }
           } icon: {
             Image(systemName: membership == .pinned ? "pin.fill" : "checkmark")
           }
@@ -67,7 +71,11 @@ struct FeedLibraryControls: View {
             .modifier(FeedLibraryStatusChip(enabled: statusChip))
         }
         .modifier(FeedLibraryButtonPresentation(prominent: prominent, drawsChrome: !statusChip))
-        .accessibilityLabel("\(feed.displayName), \(membership == .pinned ? "Pinned" : "Saved"). Manage feed")
+        .accessibilityLabel(
+          membership == .pinned
+            ? Text("\(feed.displayName), Pinned. Manage feed", comment: "Accessibility label for manage menu on a pinned feed — variable is feed name")
+            : Text("\(feed.displayName), Saved. Manage feed", comment: "Accessibility label for manage menu on a saved feed — variable is feed name")
+        )
         .accessibilityIdentifier("feed.library.manage.\(feed.uri.uriString())")
       }
       feedback

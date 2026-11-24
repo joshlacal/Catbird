@@ -72,7 +72,7 @@ struct ScenePeekSheet: View {
 
         Spacer()
 
-        Text("\(state.community.eligibleCount) vetted voices")
+        Text("\(state.community.eligibleCount) vetted voices", comment: "Count of vetted accounts in scene peek header.")
           .font(.caption.monospacedDigit())
           .foregroundStyle(.secondary)
       }
@@ -95,10 +95,21 @@ struct ScenePeekSheet: View {
 
       HStack(spacing: 10) {
         Button(action: onTogglePick) {
-          Label(
-            isPicked ? "In Your Orbit" : "Add Scene",
-            systemImage: isPicked ? "checkmark.circle.fill" : "plus.circle.fill"
-          )
+          Group {
+            if isPicked {
+              Label {
+                Text("In Your Orbit", comment: "Button state showing scene is selected in onboarding.")
+              } icon: {
+                Image(systemName: "checkmark.circle.fill")
+              }
+            } else {
+              Label {
+                Text("Add Scene", comment: "Button action to add scene in onboarding.")
+              } icon: {
+                Image(systemName: "plus.circle.fill")
+              }
+            }
+          }
           .font(.subheadline.weight(.semibold))
           .foregroundStyle(isPicked ? Color.accentColor : .white)
           .padding(.horizontal, 16)
@@ -112,10 +123,21 @@ struct ScenePeekSheet: View {
         .accessibilityIdentifier("intel.peek.togglePick")
 
         Button(action: onToggleBoost) {
-          Label(
-            isBoosted ? "Boosted 2×" : "Favorite 2×",
-            systemImage: isBoosted ? "heart.fill" : "heart"
-          )
+          Group {
+            if isBoosted {
+              Label {
+                Text("Boosted 2×", comment: "Button state showing scene is heart-boosted 2x.")
+              } icon: {
+                Image(systemName: "heart.fill")
+              }
+            } else {
+              Label {
+                Text("Favorite 2×", comment: "Button action to heart-boost scene 2x.")
+              } icon: {
+                Image(systemName: "heart")
+              }
+            }
+          }
           .font(.subheadline.weight(.semibold))
           .foregroundStyle(isBoosted ? .white : .pink)
           .padding(.horizontal, 14)
@@ -252,7 +274,7 @@ struct AvatarThumbView: View {
       .fill(Color.accentColor.opacity(0.18))
       .frame(width: size, height: size)
       .overlay(
-        Text(String(fallbackText.prefix(1)).uppercased())
+        Text(verbatim: String(fallbackText.prefix(1)).uppercased())
           .font(.subheadline.weight(.bold))
           .foregroundStyle(Color.accentColor)
       )
@@ -278,7 +300,7 @@ struct HydratedPostCardView: View {
             .foregroundStyle(Color.accentColor)
             .lineLimit(1)
           if let role = post.authorRole {
-            Text("· \(role.badgeTitle)")
+            Text(verbatim: "· \(role.badgeTitle)")
               .font(.caption2)
               .foregroundStyle(.secondary)
           }
@@ -287,8 +309,13 @@ struct HydratedPostCardView: View {
             HStack(spacing: 4) {
               Image(systemName: isPinned ? "pin.fill" : "pin")
                 .font(.caption2.weight(.semibold))
-              Text(isPinned ? "Pinned" : "Pin Voice")
-                .font(.caption2.weight(.semibold))
+              if isPinned {
+                Text("Pinned", comment: "Button state showing post author is pinned into starting lineup.")
+                  .font(.caption2.weight(.semibold))
+              } else {
+                Text("Pin Voice", comment: "Button action to pin post author into starting lineup.")
+                  .font(.caption2.weight(.semibold))
+              }
             }
             .foregroundStyle(isPinned ? .white : Color.accentColor)
             .padding(.horizontal, 8)
@@ -314,7 +341,7 @@ struct HydratedPostCardView: View {
           Text(post.authorDisplayName)
             .font(.subheadline.weight(.semibold))
             .lineLimit(1)
-          Text("@\(post.authorHandle)")
+          Text(verbatim: "@\(post.authorHandle)")
             .font(.caption)
             .foregroundStyle(.secondary)
             .lineLimit(1)
@@ -331,6 +358,11 @@ struct HydratedPostCardView: View {
               .background(Color.secondary.opacity(0.1), in: Circle())
           }
           .buttonStyle(.plain)
+          .accessibilityLabel(
+            isPinned
+              ? Text("Unpin \(post.authorDisplayName)", comment: "Accessibility action to unpin post author.")
+              : Text("Pin \(post.authorDisplayName)", comment: "Accessibility action to pin post author.")
+          )
         }
       }
 
@@ -364,9 +396,21 @@ struct HydratedPostCardView: View {
       }
 
       HStack(spacing: 16) {
-        Label("\(post.replyCount)", systemImage: "bubble.left")
-        Label("\(post.repostCount)", systemImage: "arrow.2.squarepath")
-        Label("\(post.likeCount)", systemImage: "heart")
+        Label {
+          Text(post.replyCount, format: .number)
+        } icon: {
+          Image(systemName: "bubble.left")
+        }
+        Label {
+          Text(post.repostCount, format: .number)
+        } icon: {
+          Image(systemName: "arrow.2.squarepath")
+        }
+        Label {
+          Text(post.likeCount, format: .number)
+        } icon: {
+          Image(systemName: "heart")
+        }
       }
       .font(.caption2.monospacedDigit())
       .foregroundStyle(.secondary)

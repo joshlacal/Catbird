@@ -138,13 +138,16 @@ final class DraftPost {
     } else if !draft.threadEntries.isEmpty, let firstEntry = draft.threadEntries.first {
       return firstEntry.text
     } else if draft.mediaItems.count > 0 {
-      return "Draft with \(draft.mediaItems.count) image(s)"
+      return String(
+        localized: "Draft with \(draft.mediaItems.count) images",
+        comment: "Fallback preview label for a post draft containing images but no text — variable is image count."
+      )
     } else if draft.videoItem != nil {
-      return "Draft with video"
+      return String(localized: "Draft with video", comment: "Fallback preview label for a post draft containing a video.")
     } else if draft.selectedGif != nil {
-      return "Draft with GIF"
+      return String(localized: "Draft with GIF", comment: "Fallback preview label for a post draft containing a GIF.")
     } else {
-      return "Empty draft"
+      return String(localized: "Empty draft", comment: "Fallback preview label for an empty post draft.")
     }
   }
 

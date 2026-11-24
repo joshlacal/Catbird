@@ -103,7 +103,10 @@ struct NotificationsActivityListView: View {
       )
 
       guard (200 ... 299).contains(responseCode), let fetchedPosts = output?.posts else {
-        errorMessage = "Couldn’t load these posts. Try again."
+        errorMessage = String(
+          localized: "Couldn’t load these posts. Try again.",
+          comment: "Error message when activity subscription posts fail to load"
+        )
         isLoading = false
         return
       }
@@ -119,7 +122,13 @@ struct NotificationsActivityListView: View {
       hasLoaded = true
       isLoading = false
     } catch {
-      errorMessage = UserFacingError.message(for: error, action: "load these posts")
+      errorMessage = UserFacingError.message(
+        for: error,
+        action: String(
+          localized: "load these posts",
+          comment: "Action phrase interpolated into an error message when activity subscription posts fail to load"
+        )
+      )
       isLoading = false
     }
   }

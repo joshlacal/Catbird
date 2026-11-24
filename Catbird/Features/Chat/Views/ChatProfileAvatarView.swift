@@ -41,7 +41,7 @@ struct ChatProfileAvatarView: View {
   private var placeholder: some View {
     ZStack {
       Circle().fill(Color.gray.opacity(0.2))
-      Text(initials)
+      Text(verbatim: initials)
         .appFont(size: size * 0.4)
         .foregroundColor(.secondary)
     }
@@ -58,14 +58,14 @@ struct ChatProfileAvatarView: View {
       }
       if components.count > 1, let first = components.first?.first,
         let last = components.last?.first {
-        return String(first).uppercased() + String(last).uppercased()
+        return String(first).localizedUppercase + String(last).localizedUppercase
       } else if let first = displayName.trimmingCharacters(in: .whitespaces).first {
-        return String(first).uppercased()
+        return String(first).localizedUppercase
       }
     }
 
     // Fallback to the handle's first character
-    return profile.handle.description.first.map { String($0).uppercased() } ?? "?"
+    return profile.handle.description.first.map { String($0).localizedUppercase } ?? "?"
   }
 }
 

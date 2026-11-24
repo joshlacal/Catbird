@@ -621,7 +621,12 @@ final class PostViewModel {
                 )
                 
                 await MainActor.run {
-                    appState.toastManager.show(ToastItem(message: "Bookmarked", icon: "bookmark.fill"))
+                    appState.toastManager.show(
+                        ToastItem(
+                            message: String(localized: "Bookmarked", comment: "Toast shown when a post is added to bookmarks"),
+                            icon: "bookmark.fill"
+                        )
+                    )
                 }
                 return true
                 
@@ -632,7 +637,12 @@ final class PostViewModel {
                 )
                 
                 await MainActor.run {
-                    appState.toastManager.show(ToastItem(message: "Bookmark removed", icon: "bookmark"))
+                    appState.toastManager.show(
+                        ToastItem(
+                            message: String(localized: "Bookmark removed", comment: "Toast shown when a post is removed from bookmarks"),
+                            icon: "bookmark"
+                        )
+                    )
                 }
                 return true
             }
@@ -714,13 +724,25 @@ final class PostViewModel {
         var errorDescription: String? {
             switch self {
             case .missingClient:
-                return "Your account is unavailable. Please sign in and try again."
+                return String(
+                    localized: "Your account is unavailable. Please sign in and try again.",
+                    comment: "Error when performing a post interaction without an active session"
+                )
             case .unableToFindRecordKey:
-                return "The interaction record could not be found. Refresh the post and try again."
+                return String(
+                    localized: "The interaction record could not be found. Refresh the post and try again.",
+                    comment: "Error when unliking or undoing a repost and the record key is missing"
+                )
             case .requestFailed:
-                return "The request could not be completed. Please try again."
+                return String(
+                    localized: "The request could not be completed. Please try again.",
+                    comment: "Generic error when a post interaction API request fails"
+                )
             case .repostRemovalFailed:
-                return "Your repost couldn’t be removed. Try again."
+                return String(
+                    localized: "Your repost couldn’t be removed. Try again.",
+                    comment: "Error shown when removing a repost fails"
+                )
             }
         }
     }

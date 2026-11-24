@@ -258,7 +258,7 @@ struct ColorSchemePreview: View {
 
       VStack(alignment: .leading, spacing: 12) {
         Label {
-          Text("@username")
+          Text(verbatim: "@username")
             .appFont(AppTextRole.subheadline)
             .foregroundStyle(textColor)
         } icon: {
@@ -282,7 +282,12 @@ struct ColorSchemePreview: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(backgroundColor, in: .rect(cornerRadius: 12))
 
-      Text("Current Theme: \(isDarkMode ? (isBlackMode ? "True Black" : "Dim") : "Light")")
+      let themeLabel = isDarkMode
+        ? (isBlackMode
+          ? String(localized: "True Black", comment: "Dark theme style option.")
+          : String(localized: "Dim", comment: "Dark theme style option."))
+        : String(localized: "Light", comment: "Light theme option.")
+      Text("Current Theme: \(themeLabel)", comment: "Theme preview caption — variable is the localized theme name.")
         .appFont(AppTextRole.caption)
         .foregroundStyle(.secondary)
     }

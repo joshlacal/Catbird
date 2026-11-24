@@ -98,7 +98,11 @@ private struct FullsizeImagePreview: View {
     }
     .frame(width: size.width, height: size.height)
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel(image.alt.isEmpty ? "Image" : image.alt)
+    .accessibilityLabel(
+      image.alt.isEmpty
+        ? String(localized: "Image", comment: "Fallback accessibility label for an image without alt text")
+        : image.alt
+    )
     .accessibilityAddTraits(.isImage)
   }
 

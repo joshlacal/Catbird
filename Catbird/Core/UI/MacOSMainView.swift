@@ -101,13 +101,20 @@ struct MacOSMainView: View {
 
   private var windowTitle: String {
     switch selectedItem {
-    case .search: return "Search"
-    case .notifications: return "Notifications"
-    case .chat: return "Chat"
-    case .profile: return "Profile"
+    case .search:
+      return String(localized: "Search", comment: "macOS window title for Search section.")
+    case .notifications:
+      return String(localized: "Notifications", comment: "macOS window title for Notifications section.")
+    case .chat:
+      return String(localized: "Chat", comment: "macOS window title for Chat section.")
+    case .profile:
+      return String(localized: "Profile", comment: "macOS window title for Profile section.")
     case .feed(let type):
-      return type.description.isEmpty ? "Timeline" : type.description
-    case nil: return "Catbird"
+      return type.description.isEmpty
+        ? String(localized: "Timeline", comment: "macOS window title for Timeline feed.")
+        : type.description
+    case nil:
+      return String(localized: "Catbird", comment: "macOS window title when no sidebar item is selected.")
     }
   }
 

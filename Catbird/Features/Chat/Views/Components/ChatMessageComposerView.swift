@@ -54,7 +54,7 @@ struct ChatMessageComposerView: View {
   var clearsDraftOnSend: Bool = true
   var onTypingChanged: ((Bool) -> Void)? = nil
   var dismissKeyboardOnSend: Bool = false
-  var placeholderText: String = "Message"
+  var placeholderText: String = String(localized: "Message", comment: "Default placeholder text in the direct message composer")
 
   #if DEBUG
   var fixtureSendingDisabled: Bool = false
@@ -125,7 +125,11 @@ struct ChatMessageComposerView: View {
   private func postPreviewSection(_ post: ChatSharedPostPreview) -> some View {
     VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
       HStack {
-        Label("Post", systemImage: "text.bubble")
+        Label {
+          Text("Post", comment: "Badge label for an attached Bluesky post in the chat composer")
+        } icon: {
+          Image(systemName: "text.bubble")
+        }
           .designCaption()
           .foregroundColor(.accentColor)
 
@@ -142,17 +146,17 @@ struct ChatMessageComposerView: View {
 
       VStack(alignment: .leading, spacing: 4) {
         if let displayName = post.authorDisplayName {
-          Text(displayName)
+          Text(verbatim: displayName)
             .designFootnote()
             .fontWeight(.semibold)
         } else if let handle = post.authorHandle {
-          Text("@\(handle)")
+          Text(verbatim: "@\(handle)")
             .designFootnote()
             .fontWeight(.semibold)
         }
 
         if let text = post.text, !text.isEmpty {
-          Text(text)
+          Text(verbatim: text)
             .designFootnote()
             .lineLimit(2)
         }
@@ -230,14 +234,20 @@ struct ChatMessageComposerView: View {
   }
 
   private var characterCounter: some View {
-    Text("\(messageLength.formatted())/\(ChatManager.maxMessageGraphemes.formatted())")
+    Text(verbatim: "\(messageLength.formatted())/\(ChatManager.maxMessageGraphemes.formatted())")
       .font(.caption2.monospacedDigit())
       .foregroundStyle(isOverLimit ? Color.red : Color.secondary)
       .fixedSize()
       .accessibilityLabel(
         isOverLimit
-          ? "Message too long. \(messageLength) of \(ChatManager.maxMessageGraphemes) characters."
-          : "\(messageLength) of \(ChatManager.maxMessageGraphemes) characters"
+          ? Text(
+              "Message too long. \(messageLength) of \(ChatManager.maxMessageGraphemes) characters.",
+              comment: "Accessibility label when message exceeds character limit (%1$lld = current length, %2$lld = maximum length)"
+            )
+          : Text(
+              "\(messageLength) of \(ChatManager.maxMessageGraphemes) characters",
+              comment: "Accessibility label for character counter in message composer (%1$lld = current length, %2$lld = maximum length)"
+            )
       )
   }
 

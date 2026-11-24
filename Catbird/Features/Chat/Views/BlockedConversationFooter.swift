@@ -16,7 +16,7 @@ struct BlockedConversationFooter: View {
   @State private var showingListBlockDialog = false
   @State private var showingLeaveAlert = false
 
-  private var statusText: String {
+  private var statusText: LocalizedStringKey {
     switch blockState {
     case .directBlock:
       if isGroup {
@@ -97,8 +97,14 @@ struct BlockedConversationFooter: View {
         Button(role: .destructive) {
           showingLeaveAlert = true
         } label: {
-          Text(isGroup ? "Leave Group" : "Leave Chat")
-            .fontWeight(.medium)
+          Group {
+            if isGroup {
+              Text("Leave Group")
+            } else {
+              Text("Leave Chat")
+            }
+          }
+          .fontWeight(.medium)
         }
         .buttonStyle(.bordered)
         .disabled(isProcessing)
@@ -117,7 +123,10 @@ struct BlockedConversationFooter: View {
       }
     } message: {
       if case .listBlock(_, let handle, _, let list) = blockState {
-        Text("@\(handle) is blocked because you subscribe to the list \"\(list.name)\". You can view the list to adjust your moderation settings.")
+        Text(
+          "@\(handle) is blocked because you subscribe to the list \"\(list.name)\". You can view the list to adjust your moderation settings.",
+          comment: "Alert message explaining list-based block (%1$@ = user handle without @, %2$@ = moderation list name)"
+        )
       }
     }
     .alert("Leave Chat", isPresented: $showingLeaveAlert) {
@@ -140,7 +149,10 @@ struct BlockedConversationFooter: View {
         onUnblocked?()
       } catch {
         isProcessing = false
-        errorMessage = UserFacingError.message(for: error, action: "unblock this account")
+        errorMessage = UserFacingError.message(
+          for: error,
+          action: String(localized: "unblock this account", comment: "Action phrase when unblocking an account fails")
+        )
       }
     }
   }
@@ -154,7 +166,11 @@ struct BlockedConversationFooter: View {
       if result == .success {
         onLeft?()
       } else {
-        errorMessage = appState.chatManager.errorState?.localizedDescription ?? "Couldn’t leave this conversation. Please try again."
+        errorMessage = appState.chatManager.errorState?.localizedDescription
+          ?? String(
+            localized: "Couldn’t leave this conversation. Please try again.",
+            comment: "Error message when leaving a conversation fails"
+          )
         appState.chatManager.errorState = nil
       }
     }

@@ -43,6 +43,7 @@ struct StarterPackProfilesStep: View {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundColor(.secondary)
                     }
+                    .accessibilityLabel(Text("Clear search", comment: "Button to clear the people search query."))
                 }
             }
             .padding(10)
@@ -53,13 +54,19 @@ struct StarterPackProfilesStep: View {
             
             // Header stats
             HStack {
-                Text("Selected (\(draft.profiles.count)/\(StarterPackDraft.maxProfilesCount))")
+                Text(
+                    "Selected (\(draft.profiles.count)/\(StarterPackDraft.maxProfilesCount))",
+                    comment: "Header showing how many profiles are selected out of the maximum allowed. First placeholder is selected count, second is maximum count."
+                )
                     .appFont(AppTextRole.headline)
                 
                 Spacer()
                 
                 if draft.profiles.count < StarterPackDraft.minProfilesCount {
-                    Text("Add at least \(StarterPackDraft.minProfilesCount)")
+                    Text(
+                        "Add at least \(StarterPackDraft.minProfilesCount)",
+                        comment: "Helper label showing the minimum number of profiles required in a starter pack."
+                    )
                         .appFont(AppTextRole.caption)
                         .foregroundColor(.orange)
                 } else if draft.profiles.count == StarterPackDraft.maxProfilesCount {
@@ -125,12 +132,12 @@ struct StarterPackProfilesStep: View {
                 did: profile.did.didString(), labels: profile.labels)
             
             VStack(alignment: .leading, spacing: 2) {
-                Text(profile.displayName ?? "@\(profile.handle)")
+                Text(verbatim: profile.displayName ?? "@\(profile.handle)")
                     .appFont(AppTextRole.subheadline)
                     .fontWeight(.semibold)
                     .lineLimit(1)
                 
-                Text("@\(profile.handle)")
+                Text(verbatim: "@\(profile.handle)")
                     .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
@@ -139,7 +146,7 @@ struct StarterPackProfilesStep: View {
             Spacer()
             
             if isSelf {
-                Text("You")
+                Text("You", comment: "Badge indicating the search result row belongs to the current signed-in user.")
                     .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
             } else if isSelected {
@@ -151,6 +158,7 @@ struct StarterPackProfilesStep: View {
                         .font(.title3)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(Text("Remove \(profile.displayName ?? profile.handle.description)", comment: "Accessibility label on button to remove a profile from the starter pack. Placeholder is the person's name or handle."))
             } else {
                 Button {
                     _ = draft.addProfile(profile)
@@ -161,6 +169,7 @@ struct StarterPackProfilesStep: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!canAdd)
+                .accessibilityLabel(Text("Add \(profile.displayName ?? profile.handle.description)", comment: "Accessibility label on button to add a profile to the starter pack. Placeholder is the person's name or handle."))
             }
         }
         .padding(.vertical, 4)
@@ -194,12 +203,12 @@ struct StarterPackProfilesStep: View {
                                 did: profile.did.didString(), labels: profile.labels)
                             
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(profile.displayName ?? "@\(profile.handle)")
+                                Text(verbatim: profile.displayName ?? "@\(profile.handle)")
                                     .appFont(AppTextRole.subheadline)
                                     .fontWeight(.semibold)
                                     .lineLimit(1)
                                 
-                                Text("@\(profile.handle)")
+                                Text(verbatim: "@\(profile.handle)")
                                     .appFont(AppTextRole.caption)
                                     .foregroundColor(.secondary)
                                     .lineLimit(1)
@@ -217,7 +226,7 @@ struct StarterPackProfilesStep: View {
                                     .background(Circle().fill(Color.systemGray5))
                             }
                             .buttonStyle(.plain)
-                            .accessibilityLabel("Remove \(profile.displayName ?? profile.handle.description)")
+                            .accessibilityLabel(Text("Remove \(profile.displayName ?? profile.handle.description)", comment: "Accessibility label on button to remove a profile from the starter pack. Placeholder is the person's name or handle."))
                         }
                         .padding(.vertical, 4)
                     }

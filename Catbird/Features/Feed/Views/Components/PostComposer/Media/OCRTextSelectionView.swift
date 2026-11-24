@@ -99,7 +99,7 @@ struct OCRTextSelectionView: View {
               // Selected text preview
               if !selectedTexts.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                  Text("Selected Text (\(selectedTexts.count))")
+                  Text("Selected Text (\(selectedTexts.count))", comment: "Header showing count of selected OCR text regions")
                     .appFont(AppTextRole.headline)
                     .foregroundStyle(.primary)
 
@@ -199,8 +199,8 @@ private struct TextRegionButton: View {
       x: region.boundingBox.midX * imageSize.width,
       y: (1 - region.boundingBox.midY) * imageSize.height
     )
-    .accessibilityLabel("Text: \(region.text)")
-    .accessibilityHint(isSelected ? "Selected" : "Tap to select")
+    .accessibilityLabel(Text("Text: \(region.text)", comment: "Accessibility label for a detected text region in an image"))
+    .accessibilityHint(isSelected ? Text("Selected", comment: "Accessibility hint when OCR text region is selected") : Text("Tap to select", comment: "Accessibility hint when OCR text region can be selected"))
   }
 }
 
@@ -292,7 +292,7 @@ struct OCRTextSelectionViewLegacy: View {
               // Selected text preview
               if !selectedTexts.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                  Text("Selected Text (\(selectedTexts.count))")
+                  Text("Selected Text (\(selectedTexts.count))", comment: "Header showing count of selected OCR text regions")
                     .appFont(AppTextRole.headline)
                     .foregroundStyle(.primary)
 
@@ -391,8 +391,8 @@ private struct LegacyTextRegionButton: View {
       x: region.boundingBox.midX * imageSize.width,
       y: (1 - region.boundingBox.midY) * imageSize.height
     )
-    .accessibilityLabel("Text: \(region.text)")
-    .accessibilityHint(isSelected ? "Selected" : "Tap to select")
+    .accessibilityLabel(Text("Text: \(region.text)", comment: "Accessibility label for a detected text region in an image"))
+    .accessibilityHint(isSelected ? Text("Selected", comment: "Accessibility hint when OCR text region is selected") : Text("Tap to select", comment: "Accessibility hint when OCR text region can be selected"))
   }
 }
 

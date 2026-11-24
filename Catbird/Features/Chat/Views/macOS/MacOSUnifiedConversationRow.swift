@@ -83,7 +83,7 @@ struct MacOSUnifiedConversationRow: View {
           Spacer()
 
           if convo.unreadCount > 0 {
-            Text("\(convo.unreadCount)")
+            Text(convo.unreadCount, format: .number)
               .font(.caption2)
               .fontWeight(.semibold)
               .foregroundStyle(.white)
@@ -153,7 +153,7 @@ struct MacOSUnifiedConversationRow: View {
               .foregroundStyle(.secondary)
               .lineLimit(1)
           } else {
-            Text("\(participants.count) members")
+            Text("\(participants.count) members", comment: "Fallback subtitle showing number of members in an encrypted conversation (%lld = member count)")
               .font(.subheadline)
               .foregroundStyle(.secondary)
           }
@@ -161,7 +161,7 @@ struct MacOSUnifiedConversationRow: View {
           Spacer()
 
           if unreadCount > 0 {
-            Text("\(unreadCount)")
+            Text(unreadCount, format: .number)
               .font(.caption2)
               .fontWeight(.semibold)
               .foregroundStyle(.white)
@@ -179,12 +179,14 @@ struct MacOSUnifiedConversationRow: View {
   // MARK: - Helpers
 
   private func displayName(for members: [ChatBskyActorDefs.ProfileViewBasic]) -> String {
-    if members.isEmpty { return "Conversation" }
+    if members.isEmpty {
+      return String(localized: "Conversation", comment: "Fallback title for a conversation with no visible members")
+    }
     if members.count == 1, let member = members.first {
       return member.displayName ?? member.handle.description
     }
-    let names = members.prefix(3).map { $0.displayName ?? $0.handle.description }
-    return names.joined(separator: ", ")
+    let names = Array(members.prefix(3).map { $0.displayName ?? $0.handle.description })
+    return names.formatted(.list(type: .and))
   }
 
   /// Verified badge for a 1:1 conversation only. A multi-member name is a
@@ -201,9 +203,9 @@ struct MacOSUnifiedConversationRow: View {
     case .chatBskyConvoDefsMessageView(let msg):
       return msg.text
     case .chatBskyConvoDefsDeletedMessageView:
-      return "Message deleted"
+      return String(localized: "Message deleted", comment: "Last message preview when the message was deleted")
     case .chatBskyConvoDefsSystemMessageView:
-      return "System message"
+      return String(localized: "System message", comment: "Last message preview for a system message")
     case .unexpected:
       return ""
     }
@@ -212,9 +214,11 @@ struct MacOSUnifiedConversationRow: View {
   private func groupName(_ convo: MLSConversationModel, participants: [MLSParticipantViewModel]) -> String {
     if let title = convo.title, !title.isEmpty { return title }
     let otherParticipants = participants.filter { $0.id != currentUserDID }
-    if otherParticipants.isEmpty { return "Group" }
-    let names = otherParticipants.prefix(3).map { $0.displayName ?? $0.handle }
-    return names.joined(separator: ", ")
+    if otherParticipants.isEmpty {
+      return String(localized: "Group", comment: "Fallback title for an unnamed group conversation")
+    }
+    let names = Array(otherParticipants.prefix(3).map { $0.displayName ?? $0.handle })
+    return names.formatted(.list(type: .and))
   }
 
   @ViewBuilder
@@ -261,7 +265,7 @@ struct MacOSUnifiedConversationRow: View {
       Circle()
         .fill(Color.gray.opacity(0.3))
         .overlay {
-          Text(String((participant.displayName ?? participant.handle).prefix(1)).uppercased())
+          Text(verbatim: String((participant.displayName ?? participant.handle).prefix(1)).localizedUppercase)
             .font(.caption2)
             .foregroundStyle(.white)
         }

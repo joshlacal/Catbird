@@ -96,6 +96,7 @@ struct CircleMemberPickerView: View {
     } else {
       Section {
         ForEach(selection, id: \.did) { profile in
+          let targetName = profile.displayName ?? "@\(profile.handle)"
           HStack(spacing: 12) {
             profileCell(profile)
             Spacer()
@@ -106,11 +107,17 @@ struct CircleMemberPickerView: View {
                 .foregroundStyle(.red)
             }
             .buttonStyle(.borderless)
-            .accessibilityLabel("Remove \(profile.displayName ?? "@\(profile.handle)")")
+            .accessibilityLabel(Text(
+              "Remove \(targetName)",
+              comment: "Accessibility label for button to remove a selected person in the Circle member picker — %1$@ is their display name or @handle."
+            ))
           }
         }
       } header: {
-        Text("Selected (\(selection.count))")
+        Text(
+          "Selected (\(selection.count))",
+          comment: "Section header in the Circle member picker showing selected member count — %1$lld is the number of selected profiles."
+        )
       } footer: {
         if let disclosure {
           Text(disclosure)
@@ -139,7 +146,10 @@ struct CircleMemberPickerView: View {
       }
     } footer: {
       if remainingCapacity == 0 {
-        Text("This Circle has reached its \(maxMembers)-member limit.")
+        Text(
+          "This Circle has reached its \(maxMembers)-member limit.",
+          comment: "Footer in the Circle member picker when maximum capacity is reached — %1$lld is the maximum member count."
+        )
       }
     }
   }
@@ -170,18 +180,22 @@ struct CircleMemberPickerView: View {
     .buttonStyle(.plain)
     .disabled(atCapacity)
     .opacity(atCapacity ? 0.4 : 1)
-    .accessibilityLabel(profile.displayName ?? "@\(profile.handle)")
-    .accessibilityHint(isSelected ? "Selected. Tap to deselect." : "Tap to select.")
+    .accessibilityLabel(Text(verbatim: profile.displayName ?? "@\(profile.handle)"))
+    .accessibilityHint(
+      isSelected
+        ? Text("Selected. Tap to deselect.", comment: "Accessibility hint on a selected row in the Circle member picker.")
+        : Text("Tap to select.", comment: "Accessibility hint on an unselected row in the Circle member picker.")
+    )
   }
 
   private func profileCell(_ profile: AppBskyActorDefs.ProfileViewBasic) -> some View {
     HStack(spacing: 12) {
       AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 40)
       VStack(alignment: .leading, spacing: 2) {
-        Text(profile.displayName ?? "@\(profile.handle)")
+        Text(verbatim: profile.displayName ?? "@\(profile.handle)")
           .font(.subheadline.weight(.medium))
           .lineLimit(1)
-        Text("@\(profile.handle)")
+        Text(verbatim: "@\(profile.handle)")
           .font(.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)

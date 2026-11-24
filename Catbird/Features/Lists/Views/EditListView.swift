@@ -31,7 +31,7 @@ final class EditListViewModel {
   // State
   var isLoading = false
   var isSaving = false
-  var errorTitle = "Couldn’t Load List"
+  var errorTitle = String(localized: "Couldn’t Load List", comment: "Alert title when loading a list for editing fails.")
   var errorMessage: String?
   var showingError = false
   var hasUnsavedChanges = false
@@ -89,7 +89,7 @@ final class EditListViewModel {
       
     } catch {
       logger.error("Failed to load list data: \(error.localizedDescription)")
-      errorTitle = "Couldn’t Load List"
+      errorTitle = String(localized: "Couldn’t Load List", comment: "Alert title when loading a list for editing fails.")
       errorMessage = error.localizedDescription
       showingError = true
     }
@@ -118,8 +118,8 @@ final class EditListViewModel {
       }
     } catch {
       logger.error("Failed to process selected image: \(error.localizedDescription)")
-      errorTitle = "Couldn’t Use Image"
-      errorMessage = "Try a different image."
+      errorTitle = String(localized: "Couldn’t Use Image", comment: "Alert title when a selected list avatar image fails processing.")
+      errorMessage = String(localized: "Try a different image.", comment: "Recovery message when a selected list avatar image fails processing.")
       showingError = true
     }
   }
@@ -146,7 +146,7 @@ final class EditListViewModel {
       
     } catch {
       logger.error("Failed to update list: \(error.localizedDescription)")
-      errorTitle = "Couldn’t Save List"
+      errorTitle = String(localized: "Couldn’t Save List", comment: "Alert title when saving changes to a list fails.")
       errorMessage = error.localizedDescription
       showingError = true
     }
@@ -193,7 +193,10 @@ struct EditListView: View {
       } message: {
         Text("You have unsaved changes. Are you sure you want to discard them?")
       }
-      .alert(viewModel?.errorTitle ?? "Couldn’t Save List", isPresented: errorAlertBinding) {
+      .alert(
+        viewModel?.errorTitle ?? String(localized: "Couldn’t Save List", comment: "Alert title when saving changes to a list fails."),
+        isPresented: errorAlertBinding
+      ) {
         Button("OK") {
           viewModel?.showingError = false
         }
@@ -372,9 +375,12 @@ struct EditListView: View {
       // Name Field
       VStack(alignment: .leading, spacing: 4) {
         HStack {
-          Text("Name")
+          Text("Name", comment: "Field label for the name of a user list.")
           Spacer()
-          Text("\(viewModel.wrappedValue.characterCount)/64")
+          Text(
+            "\(viewModel.wrappedValue.characterCount)/64",
+            comment: "Character count indicator for list name — %1$lld is the current character count out of 64."
+          )
             .font(.caption)
             .foregroundStyle(viewModel.wrappedValue.isNameValid ? Color.secondary : Color.red)
         }
@@ -390,9 +396,12 @@ struct EditListView: View {
       // Description Field
       VStack(alignment: .leading, spacing: 4) {
         HStack {
-          Text("Description")
+          Text("Description", comment: "Field label for the description of a user list.")
           Spacer()
-          Text("\(viewModel.wrappedValue.descriptionCharacterCount)/300")
+          Text(
+            "\(viewModel.wrappedValue.descriptionCharacterCount)/300",
+            comment: "Character count indicator for list description — %1$lld is the current character count out of 300."
+          )
             .font(.caption)
             .foregroundStyle(viewModel.wrappedValue.isDescriptionValid ? Color.secondary : Color.red)
         }

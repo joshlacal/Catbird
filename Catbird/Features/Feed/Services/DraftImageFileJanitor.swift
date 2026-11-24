@@ -175,8 +175,10 @@ extension DraftImageFileJanitor {
 
     var errorDescription: String? {
       switch self {
-      case .unavailable(let store): return "\(store) is unavailable"
-      case .unreadable(let store): return "\(store) could not be read"
+      case .unavailable(let store):
+        return String(localized: "\(store) is unavailable", comment: "Error when a draft storage location is unavailable — variable is the storage name.")
+      case .unreadable(let store):
+        return String(localized: "\(store) could not be read", comment: "Error when a draft storage location cannot be read — variable is the storage name.")
       }
     }
   }
@@ -205,13 +207,21 @@ extension DraftImageFileJanitor {
     DraftImageFileJanitor(
       directory: directory,
       storedReferences: {
-        guard let persistence else { throw ReferenceStoreError.unavailable("Saved-draft storage") }
+        guard let persistence else {
+          throw ReferenceStoreError.unavailable(
+            String(localized: "Saved-draft storage", comment: "Name of the local saved-draft database in storage error messages")
+          )
+        }
         var stored = try legacyDraftsDirectory.map(legacyDraftData(in:)) ?? []
         stored += try persistence.storedMediaReferenceData()
         stored += try SceneComposerEditingSession.storedRecoveryData(in: recoveryDefaults)
-        guard let handoffDefaults else { throw ReferenceStoreError.unavailable("The App Group handoff slot") }
+        let handoffSlotName = String(
+          localized: "The App Group handoff slot",
+          comment: "Name of the shared draft handoff storage in error messages"
+        )
+        guard let handoffDefaults else { throw ReferenceStoreError.unavailable(handoffSlotName) }
         if let slot = handoffDefaults.object(forKey: ComposeDraftStasher.draftKey) {
-          guard let bytes = slot as? Data else { throw ReferenceStoreError.unreadable("The App Group handoff slot") }
+          guard let bytes = slot as? Data else { throw ReferenceStoreError.unreadable(handoffSlotName) }
           stored.append(bytes)
         }
         if let outboxQueueURL, FileManager.default.fileExists(atPath: outboxQueueURL.path) {

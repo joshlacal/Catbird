@@ -157,7 +157,10 @@ struct StarterPackView: View {
                 ReportFormView(
                     reportingService: reportingService,
                     subject: reportingService.createRecordSubject(uri: pack.uri, cid: pack.cid),
-                    contentDescription: "Starter pack “\(starterPackName(pack))”"
+                    contentDescription: String(
+                        localized: "Starter pack “\(starterPackName(pack))”",
+                        comment: "Description of the starter pack being reported — variable is the starter pack name"
+                    )
                 )
             }
         }
@@ -195,7 +198,7 @@ struct StarterPackView: View {
                        let starterpack = recordValue as? AppBskyGraphStarterpack {
                         return starterpack.name
                     }
-                    return "Copied List"
+                    return String(localized: "Copied List", comment: "Fallback name when creating a list from a starter pack")
                 }()
                 let packDescription: String = {
                     if case .knownType(let recordValue) = pack.record,
@@ -244,7 +247,10 @@ struct StarterPackView: View {
             logger.info("Successfully copied \(copiedCount) members")
         } catch {
             logger.error("Failed to copy members to list: \(error.localizedDescription)")
-            cloneMembersMessage = "Your list was created, but some people couldn’t be copied to it. You can add them from the list’s Manage Members screen."
+            cloneMembersMessage = String(
+                localized: "Your list was created, but some people couldn’t be copied to it. You can add them from the list’s Manage Members screen.",
+                comment: "Alert message when copying starter pack members to a new list partially fails"
+            )
             showingCloneMessageAlert = true
         }
         
@@ -272,7 +278,12 @@ struct StarterPackView: View {
             Text("Couldn’t Load Starter Pack")
                 .appFont(AppTextRole.headline)
             
-            Text(UserFacingError.message(for: error, action: "load this starter pack") ?? "Try again.")
+            Text(
+                UserFacingError.message(
+                    for: error,
+                    action: String(localized: "load this starter pack", comment: "Action phrase when loading a starter pack fails")
+                ) ?? String(localized: "Try again.", comment: "Generic retry prompt")
+            )
                 .appFont(AppTextRole.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -402,12 +413,15 @@ struct StarterPackView: View {
                         .fontWeight(.bold)
                         .lineLimit(1)
                 } else {
-                    Text("Starter Pack")
+                    Text("Starter Pack", comment: "Fallback title for a starter pack detail screen")
                         .appFont(AppTextRole.title3)
                         .fontWeight(.bold)
                 }
                 
-                Text("Created by @\(pack.creator.handle)")
+                Text(
+                    "Created by @\(pack.creator.handle.description)",
+                    comment: "Starter pack creator attribution — variable is the creator's handle"
+                )
                     .appFont(AppTextRole.subheadline)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
@@ -421,29 +435,29 @@ struct StarterPackView: View {
         HStack(spacing: 20) {
             VStack {
                 let profileCount = pack.list?.listItemCount ?? allProfiles.count
-                Text("\(profileCount)")
+                Text(profileCount, format: .number)
                     .appFont(AppTextRole.headline)
                 
-                Text("Profiles")
+                Text("Profiles", comment: "Label under member count statistic in starter pack header")
                     .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
             }
             
             VStack {
-                Text("\(pack.feeds?.count ?? 0)")
+                Text(pack.feeds?.count ?? 0, format: .number)
                     .appFont(AppTextRole.headline)
                 
-                Text("Feeds")
+                Text("Feeds", comment: "Label under feed count statistic in starter pack header")
                     .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
             }
             
             if let joinedWeekCount = pack.joinedWeekCount {
                 VStack {
-                    Text("\(joinedWeekCount)")
+                    Text(joinedWeekCount, format: .number)
                         .appFont(AppTextRole.headline)
                     
-                    Text("Joined this week")
+                    Text("Joined this week", comment: "Label under weekly joins statistic in starter pack header")
                         .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                 }
@@ -451,10 +465,10 @@ struct StarterPackView: View {
             
             if let joinedAllTimeCount = pack.joinedAllTimeCount {
                 VStack {
-                    Text("\(joinedAllTimeCount)")
+                    Text(joinedAllTimeCount, format: .number)
                         .appFont(AppTextRole.headline)
                     
-                    Text("All-time joins")
+                    Text("All-time joins", comment: "Label under all-time joins statistic in starter pack header")
                         .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                 }
@@ -481,7 +495,7 @@ struct StarterPackView: View {
            let starterpack = recordValue as? AppBskyGraphStarterpack {
             return starterpack.name
         }
-        return "Starter Pack"
+        return String(localized: "Starter Pack", comment: "Fallback starter pack name")
     }
     
     private func isFollowed(_ subject: AppBskyActorDefs.ProfileView) -> Bool {
@@ -530,8 +544,16 @@ struct StarterPackView: View {
                             .fontWeight(.semibold)
                     } else {
                         Image(systemName: "person.badge.plus")
-                        Text(count > 0 ? "Follow All (\(count))" : "Follow All")
-                            .fontWeight(.semibold)
+                        if count > 0 {
+                            Text(
+                                "Follow All (\(count))",
+                                comment: "Button to follow all unfollowed accounts in a starter pack — variable is the number of accounts"
+                            )
+                                .fontWeight(.semibold)
+                        } else {
+                            Text("Follow All", comment: "Button to follow all accounts in a starter pack")
+                                .fontWeight(.semibold)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -581,7 +603,13 @@ struct StarterPackView: View {
             
             await appState.refreshSocialGraph()
         } catch {
-            followAllError = UserFacingError.message(for: error, action: "follow everyone") ?? "Couldn’t follow everyone. Try again."
+            followAllError = UserFacingError.message(
+                for: error,
+                action: String(localized: "follow everyone", comment: "Action phrase when following all starter pack members fails")
+            ) ?? String(
+                localized: "Couldn’t follow everyone. Try again.",
+                comment: "Error message when following all starter pack members fails"
+            )
             logger.error("Failed to follow all: \(error.localizedDescription)")
         }
     }
@@ -603,12 +631,18 @@ struct StarterPackView: View {
                 switch tab {
                 case .people:
                     let count = pack.list?.listItemCount ?? allProfiles.count
-                    Text("People (\(count))").tag(tab)
+                    Text(
+                        "People (\(count))",
+                        comment: "Starter pack tab title showing number of member profiles"
+                    ).tag(tab)
                 case .feeds:
                     let count = pack.feeds?.count ?? 0
-                    Text("Feeds (\(count))").tag(tab)
+                    Text(
+                        "Feeds (\(count))",
+                        comment: "Starter pack tab title showing number of feeds"
+                    ).tag(tab)
                 case .posts:
-                    Text("Posts").tag(tab)
+                    Text("Posts", comment: "Starter pack tab title for member posts").tag(tab)
                 }
             }
         }
@@ -673,7 +707,7 @@ struct StarterPackView: View {
                                 .foregroundColor(.primary)
                                 .lineLimit(1)
                             
-                            Text("@\(subject.handle)")
+                            Text(verbatim: "@\(subject.handle)")
                                 .appFont(AppTextRole.subheadline)
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
@@ -697,7 +731,11 @@ struct StarterPackView: View {
                             await toggleMemberFollow(did: didString, isFollowing: isFollowing)
                         }
                     } label: {
-                        Text(isFollowing ? "Following" : "Follow")
+                        Text(
+                            isFollowing
+                                ? LocalizedStringResource("Following", comment: "Button label indicating the user is currently following this starter pack member")
+                                : LocalizedStringResource("Follow", comment: "Button action to follow a starter pack member")
+                        )
                             .appFont(AppTextRole.caption)
                             .fontWeight(.medium)
                             .foregroundColor(isFollowing ? .secondary : .white)
@@ -756,14 +794,21 @@ struct StarterPackView: View {
                 starterPack: pack,
                 accountDID: appState.userDID
             )
-            appState.toastManager.show(ToastItem(message: "Starter pack deleted", icon: "trash"))
+            appState.toastManager.show(
+                ToastItem(
+                    message: String(localized: "Starter pack deleted", comment: "Toast message shown after deleting a starter pack"),
+                    icon: "trash"
+                )
+            )
             if !path.isEmpty {
                 path.removeLast()
             }
         } catch {
             logger.error("Failed to delete starter pack: \(error.localizedDescription)")
-            deleteErrorMessage = UserFacingError.message(for: error, action: "delete this starter pack")
-                ?? "Try again."
+            deleteErrorMessage = UserFacingError.message(
+                for: error,
+                action: String(localized: "delete this starter pack", comment: "Action phrase when deleting a starter pack fails")
+            ) ?? String(localized: "Try again.", comment: "Generic retry prompt")
         }
     }
     
@@ -824,7 +869,10 @@ struct StarterPackView: View {
                             .appFont(AppTextRole.headline)
                             .foregroundColor(.primary)
                         
-                        Text("By @\(feed.creator.handle)")
+                        Text(
+                            "By @\(feed.creator.handle.description)",
+                            comment: "Feed creator attribution in starter pack — variable is the creator's handle"
+                        )
                             .appFont(AppTextRole.subheadline)
                             .foregroundColor(.secondary)
                         
@@ -838,7 +886,7 @@ struct StarterPackView: View {
                     
                     Spacer()
                     
-                    Image(systemName: "chevron.right")
+                    Image(systemName: "chevron.forward")
                         .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                 }
@@ -886,7 +934,16 @@ struct StarterPackView: View {
     
     private func fetchStarterPack() async {
         guard let client = appState.atProtoClient else {
-            error = NSError(domain: "StarterPackView", code: 0, userInfo: [NSLocalizedDescriptionKey: "Not logged in"])
+            error = NSError(
+                domain: "StarterPackView",
+                code: 0,
+                userInfo: [
+                    NSLocalizedDescriptionKey: String(
+                        localized: "Not logged in",
+                        comment: "Error when attempting to load a starter pack without an active session"
+                    )
+                ]
+            )
             isLoading = false
             return
         }
@@ -907,7 +964,16 @@ struct StarterPackView: View {
                     await loadProfileList(client: client, listUri: listUri, cursor: nil)
                 }
             } else {
-                self.error = NSError(domain: "StarterPackView", code: 0, userInfo: [NSLocalizedDescriptionKey: "No data returned"])
+                self.error = NSError(
+                    domain: "StarterPackView",
+                    code: 0,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: String(
+                            localized: "No data returned",
+                            comment: "Error when the server returns an empty starter pack response"
+                        )
+                    ]
+                )
             }
         } catch {
             self.error = error

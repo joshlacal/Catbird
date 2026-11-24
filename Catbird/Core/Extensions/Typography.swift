@@ -264,7 +264,6 @@ struct CaptionModifier: ViewModifier {
             .font(.sfProText(size: Typography.Size.caption, weight: Typography.Weight.medium))
             .tracking(Typography.LetterSpacing.wide)
             .foregroundColor(color)
-            .textCase(.uppercase)
     }
 }
 
@@ -754,25 +753,25 @@ struct ComprehensiveAccessibilityModifier: ViewModifier {
         VStack(alignment: .leading, spacing: 20) {
             // Traditional Typography Examples
             Group {
-                Text("Traditional Typography Examples")
+                Text(verbatim: "Traditional Typography Examples")
                     .appTitle2()
                     .fontWeight(.bold)
                     .padding(.bottom, 8)
                 
-                Text("Standard SF Pro Headline")
+                Text(verbatim: "Standard SF Pro Headline")
                     .headlineStyle()
                 
-                Text("Custom SF Pro Display")
+                Text(verbatim: "Custom SF Pro Display")
                     .font(.sfProDisplay(size: 24, weight: Typography.Weight.bold))
                     .tracking(Typography.LetterSpacing.tight)
                 
-                Text("SF Pro Rounded Style")
+                Text(verbatim: "SF Pro Rounded Style")
                     .customScaledFont(size: 20, weight: .semibold, design: .rounded)
                 
-                Text("Caption Style Example")
+                Text(verbatim: "Caption Style Example")
                     .captionStyle()
                 
-                Text("Body Text with Custom Line Height")
+                Text(verbatim: "Body Text with Custom Line Height")
                     .bodyStyle(lineHeight: Typography.LineHeight.relaxed)
             }
             .padding()
@@ -787,48 +786,48 @@ struct ComprehensiveAccessibilityModifier: ViewModifier {
             
             // New App Font System Examples
             Group {
-                Text("App Font System (Accessibility-Aware)")
+                Text(verbatim: "App Font System (Accessibility-Aware)")
                     .appTitle2()
                     .fontWeight(.bold)
                     .padding(.bottom, 8)
                 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("App Large Title")
+                    Text(verbatim: "App Large Title")
                         .appLargeTitle()
                     
-                    Text("App Title")
+                    Text(verbatim: "App Title")
                         .appTitle()
                     
-                    Text("App Title 2")
+                    Text(verbatim: "App Title 2")
                         .appTitle2()
                     
-                    Text("App Title 3")
+                    Text(verbatim: "App Title 3")
                         .appTitle3()
                     
-                    Text("App Headline")
+                    Text(verbatim: "App Headline")
                         .appHeadline()
                     
-                    Text("App Subheadline")
+                    Text(verbatim: "App Subheadline")
                         .appSubheadline()
                     
-                    Text("App Body Text - This text automatically scales with user font size preferences, respects Dynamic Type settings, and adapts to the user's chosen font style.")
+                    Text(verbatim: "App Body Text - This text automatically scales with user font size preferences, respects Dynamic Type settings, and adapts to the user's chosen font style.")
                         .appBody()
                     
-                    Text("App Callout")
+                    Text(verbatim: "App Callout")
                         .appCallout()
                     
-                    Text("App Footnote")
+                    Text(verbatim: "App Footnote")
                         .appFootnote()
                     
-                    Text("App Caption")
+                    Text(verbatim: "App Caption")
                         .appCaption()
                     
                     Divider()
                     
-                    Text("Custom App Text (20pt, medium weight)")
+                    Text(verbatim: "Custom App Text (20pt, medium weight)")
                         .appText(size: 20, weight: .medium)
                     
-                    Text("Accessibility-optimized text that respects user preferences")
+                    Text(verbatim: "Accessibility-optimized text that respects user preferences")
                         .appFont(AppTextRole.body)
                         .foregroundStyle(.secondary)
                 }
@@ -845,27 +844,26 @@ struct ComprehensiveAccessibilityModifier: ViewModifier {
             
             // Effects Examples
             Group {
-                Text("Text Effects")
+                Text(verbatim: "Text Effects")
                     .appTitle2()
                     .fontWeight(.bold)
                     .padding(.bottom, 8)
                 
-                Text("Gradient Text Effect")
+                Text(verbatim: "Gradient Text Effect")
                     .appHeadline()
                     .gradientText(colors: [.blue, .purple])
                 
-                Text("Text with Depth Effect")
+                Text(verbatim: "Text with Depth Effect")
                     .appHeadline()
                     .textDepth(radius: 1, y: 1, opacity: 0.5)
                 
-                Text("Text with Glow Effect")
+                Text(verbatim: "Text with Glow Effect")
                     .appHeadline()
                     .textGlow(color: .blue.opacity(0.5), radius: 4)
                 
-                Text("CUSTOM LETTER SPACING")
+                Text(verbatim: "CUSTOM LETTER SPACING")
                     .appBody()
                     .tracking(0.8)
-                    .textCase(.uppercase)
             }
             .padding()
             #if os(iOS)

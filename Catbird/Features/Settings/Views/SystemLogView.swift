@@ -139,7 +139,7 @@ private struct StatusBarView: View {
   
   var body: some View {
     HStack {
-      Text("\(logService.logEntries.count) entries")
+      Text("\(logService.logEntries.count) entries", comment: "Count of system log entries shown in the status bar.")
         .appCaption()
         .foregroundStyle(.secondary)
       
@@ -256,7 +256,7 @@ private struct LogEntryRow: View {
             .appCaption()
             .foregroundStyle(.secondary)
           
-          Text("•")
+          Text(verbatim: "•")
             .appCaption()
             .foregroundStyle(.secondary)
           
@@ -474,7 +474,7 @@ private struct LogDetailView: View {
 }
 
 private struct DetailRow: View {
-  let label: String
+  let label: LocalizedStringKey
   let value: String
   
   var body: some View {
@@ -482,7 +482,7 @@ private struct DetailRow: View {
       Text(label)
         .appCaption()
         .foregroundStyle(.secondary)
-        .frame(width: 80, alignment: .leading)
+        .frame(minWidth: 80, alignment: .leading)
       
       Text(value)
         .appCaption()

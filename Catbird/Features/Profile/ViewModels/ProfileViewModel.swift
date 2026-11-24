@@ -1422,13 +1422,25 @@ enum ProfileError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .clientNotAvailable:
-      return "You’re signed out. Sign in and try again."
+      return String(
+        localized: "You’re signed out. Sign in and try again.",
+        comment: "Error message shown when loading a profile while signed out."
+      )
     case .invalidUserDID:
-      return "This profile link isn’t valid."
+      return String(
+        localized: "This profile link isn’t valid.",
+        comment: "Error message shown when a profile identifier or DID is malformed."
+      )
     case .httpError:
-      return "Couldn’t load this profile. Try again."
+      return String(
+        localized: "Couldn’t load this profile. Try again.",
+        comment: "Error message shown when a profile request fails."
+      )
     case .unavailable:
-      return "This account may have been deactivated, suspended or deleted."
+      return String(
+        localized: "This account may have been deactivated, suspended or deleted.",
+        comment: "Error message shown when a user account is unavailable."
+      )
     }
   }
 }

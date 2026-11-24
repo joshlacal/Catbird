@@ -23,7 +23,9 @@ struct RequestParticipant: Hashable, Sendable, Identifiable {
        !displayName.isEmpty {
       return displayName
     }
-    if isDeletedAccount { return "Deleted Account" }
+    if isDeletedAccount {
+      return String(localized: "Deleted Account", comment: "Placeholder display name for a deleted Bluesky account")
+    }
     return handleText
   }
 
@@ -48,8 +50,10 @@ enum MessageRequestSource: String, CaseIterable, Hashable, Sendable {
 
   var title: String {
     switch self {
-    case .bluesky: "Bluesky"
-    case .encrypted: "Encrypted chats"
+    case .bluesky:
+      String(localized: "Bluesky", comment: "Section header for Bluesky direct message requests")
+    case .encrypted:
+      String(localized: "Encrypted chats", comment: "Section header for end-to-end encrypted chat requests")
     }
   }
 }
@@ -108,7 +112,9 @@ struct MessageRequestItem: Identifiable, Hashable, Sendable {
   var title: String {
     if let name = sender?.name { return name }
     if let groupTitle { return groupTitle }
-    return source == .encrypted ? "Encrypted chat request" : "Chat request"
+    return source == .encrypted
+      ? String(localized: "Encrypted chat request", comment: "Fallback title for an anonymous encrypted chat request")
+      : String(localized: "Chat request", comment: "Fallback title for an anonymous Bluesky chat request")
   }
 
   /// Block and report both target the sender's account.
@@ -139,7 +145,12 @@ enum MessageRequestDecision: Hashable, Sendable {
 /// they are unit-testable.
 enum MessageRequestPresentation {
   static let newAccountWindow: TimeInterval = 7 * 24 * 60 * 60
-  static let encryptedDirectDescription = "Wants to start an encrypted chat"
+  static var encryptedDirectDescription: String {
+    String(
+      localized: "Wants to start an encrypted chat",
+      comment: "Fallback preview description for an incoming encrypted chat request without opening text"
+    )
+  }
 
   /// The social-proof line under a sender's name, or nil when nothing is known.
   static func contextLine(
@@ -157,19 +168,43 @@ enum MessageRequestPresentation {
       let followedBy: String
       switch total {
       case 1:
-        followedBy = "Followed by \(first)"
+        followedBy = String(
+          localized: "Followed by \(first)",
+          comment: "Social proof showing one mutual follower (%@ = follower name)"
+        )
       case 2 where names.count >= 2:
-        followedBy = "Followed by \(first) and \(names[1])"
+        followedBy = String(
+          localized: "Followed by \(first) and \(names[1])",
+          comment: "Social proof showing two mutual followers (%1$@ = first follower, %2$@ = second follower)"
+        )
       default:
         let others = total - 1
-        followedBy = "Followed by \(first) and \(others) other\(others == 1 ? "" : "s") you know"
+        followedBy = String(
+          localized: "Followed by \(first) and \(others) others you know",
+          comment: "Social proof showing a named mutual follower and count of additional mutual followers (%1$@ = first follower, %2$lld = additional follower count)"
+        )
       }
-      return followsYou ? "Follows you · \(followedBy)" : followedBy
+      return followsYou
+        ? String(
+            localized: "Follows you · \(followedBy)",
+            comment: "Combined social proof when the sender follows you and has mutual followers (%@ = followed-by summary)"
+          )
+        : followedBy
     }
-    if followsYou { return "Follows you" }
+    if followsYou {
+      return String(
+        localized: "Follows you",
+        comment: "Social proof badge when the request sender follows the current user"
+      )
+    }
     if let accountCreatedAt {
       let age = now.timeIntervalSince(accountCreatedAt)
-      if age >= 0 && age < newAccountWindow { return "New account" }
+      if age >= 0 && age < newAccountWindow {
+        return String(
+          localized: "New account",
+          comment: "Social context badge when the request sender's account is less than 7 days old"
+        )
+      }
     }
     return nil
   }
@@ -177,18 +212,48 @@ enum MessageRequestPresentation {
   /// Describes a group invitation: `Invited you to "Title" · 4 members`.
   static func groupInvitationDescription(title: String?, memberCount: Int?) -> String {
     let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    let invitation = trimmed.isEmpty ? "Invited you to a group chat" : "Invited you to \u{201C}\(trimmed)\u{201D}"
-    guard let memberCount, memberCount > 0 else { return invitation }
-    return "\(invitation) · \(memberCount) member\(memberCount == 1 ? "" : "s")"
+    if let memberCount, memberCount > 0 {
+      if trimmed.isEmpty {
+        return String(
+          localized: "Invited you to a group chat · \(memberCount) members",
+          comment: "Preview description for an unnamed group chat invitation with member count (%lld = member count)"
+        )
+      }
+      return String(
+        localized: "Invited you to “\(trimmed)” · \(memberCount) members",
+        comment: "Preview description for a named group chat invitation with member count (%1$@ = group title, %2$lld = member count)"
+      )
+    }
+    if trimmed.isEmpty {
+      return String(
+        localized: "Invited you to a group chat",
+        comment: "Preview description for an unnamed group chat invitation"
+      )
+    }
+    return String(
+      localized: "Invited you to “\(trimmed)”",
+      comment: "Preview description for a named group chat invitation (%@ = group title)"
+    )
   }
 
   /// Compact trailing timestamp: "now", "5m", "3h", "2d", then a short date.
   static func relativeTimestamp(for date: Date, now: Date, calendar: Calendar = .current) -> String {
     let elapsed = now.timeIntervalSince(date)
-    if elapsed < 60 { return "now" }
-    if elapsed < 60 * 60 { return "\(Int(elapsed / 60))m" }
-    if elapsed < 24 * 60 * 60 { return "\(Int(elapsed / (60 * 60)))h" }
-    if elapsed < 7 * 24 * 60 * 60 { return "\(Int(elapsed / (24 * 60 * 60)))d" }
+    if elapsed < 60 {
+      return String(localized: "now", comment: "Compact relative timestamp for less than one minute ago")
+    }
+    if elapsed < 60 * 60 {
+      let minutes = Int(elapsed / 60)
+      return String(localized: "\(minutes)m", comment: "Compact relative timestamp in minutes (%lld = minutes)")
+    }
+    if elapsed < 24 * 60 * 60 {
+      let hours = Int(elapsed / (60 * 60))
+      return String(localized: "\(hours)h", comment: "Compact relative timestamp in hours (%lld = hours)")
+    }
+    if elapsed < 7 * 24 * 60 * 60 {
+      let days = Int(elapsed / (24 * 60 * 60))
+      return String(localized: "\(days)d", comment: "Compact relative timestamp in days (%lld = days)")
+    }
     let style = Date.FormatStyle(calendar: calendar, timeZone: calendar.timeZone).month(.abbreviated).day()
     if calendar.isDate(date, equalTo: now, toGranularity: .year) {
       return date.formatted(style)
@@ -289,15 +354,17 @@ extension MessageRequestItem {
     switch convo.lastMessage {
     case .chatBskyConvoDefsMessageView(let view):
       let text = view.text.trimmingCharacters(in: .whitespacesAndNewlines)
-      return text.isEmpty ? .description("Sent an attachment") : .message(text)
+      return text.isEmpty
+        ? .description(String(localized: "Sent an attachment", comment: "Message request preview when the message has no text"))
+        : .message(text)
     case .chatBskyConvoDefsDeletedMessageView:
-      return .description("Message deleted")
+      return .description(String(localized: "Message deleted", comment: "Message request preview when the latest message was deleted"))
     case .chatBskyConvoDefsSystemMessageView, .unexpected, nil:
       if isGroup {
         return .description(MessageRequestPresentation.groupInvitationDescription(
           title: convo.groupMetadata?.name, memberCount: convo.groupMetadata?.memberCount ?? convo.members.count))
       }
-      return .description("Wants to chat")
+      return .description(String(localized: "Wants to chat", comment: "Message request preview when no message has been sent yet"))
     }
   }
 }
@@ -420,7 +487,7 @@ struct RequestRow: View {
           }
         }
         if let handle = item.sender?.secondaryHandle {
-          Text(handle)
+          Text(verbatim: handle)
             .designFootnote()
             .foregroundStyle(.secondary)
             .lineLimit(1)
@@ -585,13 +652,21 @@ struct RequestDecisionButtons: View {
   var body: some View {
     HStack(spacing: DesignTokens.Spacing.base) {
       Button(action: onDecline) {
-        buttonLabel("Decline", showsProgress: inFlight == .decline)
+        buttonLabel(
+          "Decline",
+          progressLabel: "Declining",
+          showsProgress: inFlight == .decline
+        )
       }
       .modifier(RequestDeclineButtonStyle(placement: placement))
       .disabled(inFlight != nil || !canDecline)
 
       Button(action: onAccept) {
-        buttonLabel("Accept", showsProgress: inFlight == .accept)
+        buttonLabel(
+          "Accept",
+          progressLabel: "Accepting",
+          showsProgress: inFlight == .accept
+        )
       }
       .modifier(RequestAcceptButtonStyle())
       .disabled(inFlight != nil || !canAccept)
@@ -599,14 +674,18 @@ struct RequestDecisionButtons: View {
     .controlSize(placement == .floating ? .large : .regular)
   }
 
-  private func buttonLabel(_ title: String, showsProgress: Bool) -> some View {
+  private func buttonLabel(
+    _ title: LocalizedStringKey,
+    progressLabel: LocalizedStringKey,
+    showsProgress: Bool
+  ) -> some View {
     ZStack {
       Text(title)
         .fontWeight(.semibold)
         .opacity(showsProgress ? 0 : 1)
       if showsProgress {
         ProgressView()
-          .accessibilityLabel("\(title) in progress")
+          .accessibilityLabel(Text(progressLabel))
       }
     }
     .frame(maxWidth: .infinity, minHeight: 44)

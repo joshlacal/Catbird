@@ -390,6 +390,7 @@ final class MacOSVideoPlayerView: NSView {
         closeButton.bezelStyle = .circular
         closeButton.target = self
         closeButton.action = #selector(closeButtonTapped)
+        closeButton.setAccessibilityLabel(String(localized: "Close Video", comment: "Accessibility label for button to close fullscreen video player"))
         addSubview(closeButton)
         
         // Play/Pause button
@@ -398,6 +399,7 @@ final class MacOSVideoPlayerView: NSView {
         playPauseButton.bezelStyle = .circular
         playPauseButton.target = self
         playPauseButton.action = #selector(playPauseButtonTapped)
+        playPauseButton.setAccessibilityLabel(String(localized: "Play", comment: "Accessibility label for button to play video"))
         controlsContainer.addSubview(playPauseButton)
         
         // Progress slider
@@ -406,11 +408,13 @@ final class MacOSVideoPlayerView: NSView {
         progressSlider.maxValue = 1
         progressSlider.target = self
         progressSlider.action = #selector(progressSliderChanged)
+        progressSlider.setAccessibilityLabel(String(localized: "Video progress", comment: "Accessibility label for video playback progress slider"))
         controlsContainer.addSubview(progressSlider)
         
         // Time label
+        let zeroTime = formatTime(0)
         timeLabel = NSTextField()
-        timeLabel.stringValue = "00:00 / 00:00"
+        timeLabel.stringValue = "\(zeroTime) / \(zeroTime)"
         timeLabel.isEditable = false
         timeLabel.isBezeled = false
         timeLabel.backgroundColor = NSColor.clear
@@ -423,6 +427,7 @@ final class MacOSVideoPlayerView: NSView {
         fullscreenButton.bezelStyle = .circular
         fullscreenButton.target = self
         fullscreenButton.action = #selector(fullscreenButtonTapped)
+        fullscreenButton.setAccessibilityLabel(String(localized: "Toggle Full Screen", comment: "Accessibility label for button to toggle full screen video"))
         controlsContainer.addSubview(fullscreenButton)
     }
     
@@ -531,14 +536,21 @@ final class MacOSVideoPlayerView: NSView {
     
     private func updatePlayPauseButton() {
         guard let player = player else { return }
-        playPauseButton.title = player.rate > 0 ? "⏸" : "▶"
+        let isPlaying = player.rate > 0
+        playPauseButton.title = isPlaying ? "⏸" : "▶"
+        playPauseButton.setAccessibilityLabel(
+            isPlaying
+                ? String(localized: "Pause", comment: "Accessibility label for button to pause video")
+                : String(localized: "Play", comment: "Accessibility label for button to play video")
+        )
     }
     
     private func updateProgress() {
         guard let player = player,
               let currentItem = player.currentItem,
               currentItem.duration.isValid && !currentItem.duration.isIndefinite else {
-            timeLabel.stringValue = "00:00 / 00:00"
+            let zeroTime = formatTime(0)
+            timeLabel.stringValue = "\(zeroTime) / \(zeroTime)"
             progressSlider.doubleValue = 0
             return
         }
@@ -557,12 +569,11 @@ final class MacOSVideoPlayerView: NSView {
     }
     
     private func formatTime(_ seconds: Double) -> String {
-        guard !seconds.isNaN && !seconds.isInfinite else { return "00:00" }
-        
+        guard seconds.isFinite && seconds >= 0 else {
+            return Duration.zero.formatted(.time(pattern: .minuteSecond(padMinuteToLength: 2)))
+        }
         let totalSeconds = Int(seconds)
-        let minutes = totalSeconds / 60
-        let seconds = totalSeconds % 60
-        return String(format: "%02d:%02d", minutes, seconds)
+        return Duration.seconds(totalSeconds).formatted(.time(pattern: .minuteSecond(padMinuteToLength: 2)))
     }
     
     override func mouseEntered(with event: NSEvent) {

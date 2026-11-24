@@ -18,6 +18,7 @@ struct SuggestedProfilesSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.locale) private var locale
     
     private let logger = Logger(subsystem: "blue.catbird", category: "SuggestedProfilesSheet")
     
@@ -130,7 +131,7 @@ struct SuggestedProfilesSheet: View {
                             }
                         }
                     
-                        Text("@\(profile.handle)")
+                        Text(verbatim: "@\(profile.handle)")
                             .appFont(AppTextRole.subheadline)
                             .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
                             .lineLimit(1)
@@ -148,7 +149,10 @@ struct SuggestedProfilesSheet: View {
                         HStack(spacing: 12) {
                             if let viewer = profile.viewer, let knownFollowers = viewer.knownFollowers, knownFollowers.count > 0 {
                                 Label {
-                                    Text("\(knownFollowers.count) mutual")
+                                    Text(
+                                        "\(knownFollowers.count) mutuals",
+                                        comment: "Number of mutual followers on a suggested profile card"
+                                    )
                                         .appFont(AppTextRole.caption)
                                 } icon: {
                                     Image(systemName: "person.2.fill")
@@ -159,7 +163,10 @@ struct SuggestedProfilesSheet: View {
                         
                             if let createdAt = profile.createdAt {
                                 Label {
-                                    Text("Joined \(formatJoinDate(createdAt))")
+                                    Text(
+                                        "Joined \(formatJoinDate(createdAt))",
+                                        comment: "Relative join date on a suggested profile card — variable is a relative time phrase"
+                                    )
                                         .appFont(AppTextRole.caption)
                                 } icon: {
                                     Image(systemName: "calendar")
@@ -194,17 +201,11 @@ struct SuggestedProfilesSheet: View {
     }
     
     private func formatJoinDate(_ date: ATProtocolDate) -> String {
-        let now = Date()
-        let joinDate = date.toDate
-        let components = Calendar.current.dateComponents([.year, .month], from: joinDate, to: now)
-        
-        if let years = components.year, years > 0 {
-            return "\(years)y ago"
-        } else if let months = components.month, months > 0 {
-            return "\(months)mo ago"
-        } else {
-            return "recently"
-        }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        formatter.dateTimeStyle = .named
+        formatter.locale = locale
+        return formatter.localizedString(for: date.toDate, relativeTo: Date())
     }
 }
 

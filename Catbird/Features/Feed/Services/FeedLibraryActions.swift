@@ -17,8 +17,10 @@ enum FeedLibraryActionError: LocalizedError {
   case pendingSync(String), wrongAccount
   var errorDescription: String? {
     switch self {
-    case .pendingSync: return FeedLibraryActions.pendingSyncMessage
-    case .wrongAccount: return "You switched accounts. Close this screen and open it again."
+    case .pendingSync:
+      return FeedLibraryActions.pendingSyncMessage
+    case .wrongAccount:
+      return String(localized: "You switched accounts. Close this screen and open it again.", comment: "Error when saving feed preferences after switching accounts")
     }
   }
 }
@@ -29,7 +31,12 @@ enum FeedLibraryActionError: LocalizedError {
 final class FeedLibraryActions {
   /// Shown for changes kept locally until the server accepts them; the raw sync
   /// error is logged, never displayed.
-  nonisolated static let pendingSyncMessage = "Saved on this device. It will sync when you’re back online."
+  nonisolated static var pendingSyncMessage: String {
+    String(
+      localized: "Saved on this device. It will sync when you’re back online.",
+      comment: "Status message when a feed library change is saved locally while offline"
+    )
+  }
 
   let accountDID: String
   @ObservationIgnored private let logger = Logger(subsystem: "blue.catbird", category: "FeedLibraryActions")
@@ -91,7 +98,8 @@ final class FeedLibraryActions {
   }
 
   private static func failureMessage(for error: Error) -> String {
-    (error as? FeedLibraryActionError)?.errorDescription ?? "Couldn’t save this change. Try again."
+    (error as? FeedLibraryActionError)?.errorDescription
+      ?? String(localized: "Couldn’t save this change. Try again.", comment: "Error when saving a feed library change fails")
   }
 
   func refresh() async {
@@ -106,7 +114,7 @@ final class FeedLibraryActions {
       } catch {
         self.logger.error("Refreshing feed library failed: \(error.localizedDescription)")
         self.refreshError = (error as? FeedLibraryActionError)?.errorDescription
-          ?? "Couldn’t load your feeds. Check your connection and try again."
+          ?? String(localized: "Couldn’t load your feeds. Check your connection and try again.", comment: "Error when refreshing the user's saved and pinned feeds fails")
       }
     }
     refreshTask = task

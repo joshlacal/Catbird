@@ -8,7 +8,7 @@
 import Foundation
 import Petrel
 
-func getAvailableLanguages() -> [LanguageCodeContainer] {
+func getAvailableLanguages(in displayLocale: Locale = .current) -> [LanguageCodeContainer] {
   // Define a curated list of common language tags following BCP 47
   let commonLanguageTags = [
     // Common language codes (ISO 639-1)
@@ -37,19 +37,22 @@ func getAvailableLanguages() -> [LanguageCodeContainer] {
   
   // Sort the unique languages by their localized names
   return uniqueLanguages.values.sorted(by: { (a: LanguageCodeContainer, b: LanguageCodeContainer) -> Bool in
-    let aName = Locale.current.localizedString(forLanguageCode: a.lang.languageCode?.identifier ?? "") ?? a.lang.minimalIdentifier
-    let bName = Locale.current.localizedString(forLanguageCode: b.lang.languageCode?.identifier ?? "") ?? b.lang.minimalIdentifier
-    return aName < bName
+    let aName = displayLocale.localizedString(forLanguageCode: a.lang.languageCode?.identifier ?? "") ?? a.lang.minimalIdentifier
+    let bName = displayLocale.localizedString(forLanguageCode: b.lang.languageCode?.identifier ?? "") ?? b.lang.minimalIdentifier
+    return aName.localizedStandardCompare(bName) == .orderedAscending
   })
 }
 
 // Helper function to get a properly formatted display name including region
-func getDisplayName(for locale: Locale) -> String {
-  let languageName = Locale.current.localizedString(forLanguageCode: locale.language.languageCode?.identifier ?? "") ?? locale.identifier
+func getDisplayName(for locale: Locale, in displayLocale: Locale = .current) -> String {
+  if let formatted = displayLocale.localizedString(forIdentifier: locale.identifier) {
+    return formatted
+  }
+  let languageName = displayLocale.localizedString(forLanguageCode: locale.language.languageCode?.identifier ?? "") ?? locale.identifier
   
   // If there's a region code, add it to the display name
   if let regionCode = locale.region?.identifier {
-    let regionName = Locale.current.localizedString(forRegionCode: regionCode) ?? regionCode
+    let regionName = displayLocale.localizedString(forRegionCode: regionCode) ?? regionCode
     return "\(languageName) (\(regionName))"
   }
   

@@ -138,7 +138,7 @@ final class CircleAppViewAuthCoordinator {
     components?.queryItems = [URLQueryItem(name: "did", value: targetDID)]
     guard let startURL = components?.url else {
       guard localGeneration == self.generation, authorizingDID == targetDID else { return }
-      state = .failed("Could not build the Circle authorization URL.")
+      state = .failed(String(localized: "Could not build the Circle authorization URL.", comment: "Error when constructing the OAuth start URL for Circles fails."))
       authorizingDID = nil
       return
     }

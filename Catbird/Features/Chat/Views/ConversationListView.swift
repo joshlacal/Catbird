@@ -168,10 +168,10 @@ struct ConversationListView: View {
       HStack(spacing: DesignTokens.Spacing.base) {
         ChatProfileAvatarView(profile: profileBasic, size: DesignTokens.Size.avatarLG)
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-          Text(profileBasic.displayName ?? "")
+          Text(verbatim: profileBasic.displayName ?? "")
             .designCallout()
             .foregroundColor(.primary)
-          Text("@\(profileBasic.handle.description)")
+          Text(verbatim: "@\(profileBasic.handle.description)")
             .designFootnote()
             .foregroundColor(.secondary)
         }
@@ -215,7 +215,11 @@ struct ConversationListView: View {
           Task { await chatManager.muteConversation(convoId: convo.id) }
         }
       } label: {
-        Label(convo.muted ? "Unmute" : "Mute", systemImage: convo.muted ? "bell" : "bell.slash")
+        if convo.muted {
+          Label("Unmute", systemImage: "bell")
+        } else {
+          Label("Mute", systemImage: "bell.slash")
+        }
       }
       .tint(convo.muted ? .blue : .orange)
     } else {

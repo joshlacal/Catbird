@@ -447,7 +447,8 @@ struct MuteWordsSettingsView: View {
       filterMuteWords()
     } catch {
       guard isCurrent(request, account: account, state: originatingState, manager: manager) else { return }
-      errorMessage = UserFacingError.message(for: error, action: "load your muted words") ?? "Couldn’t load your muted words. Try again."
+      errorMessage = UserFacingError.message(for: error, action: "load your muted words")
+        ?? String(localized: "Couldn’t load your muted words. Try again.", comment: "Error message when loading muted words fails")
     }
   }
 
@@ -480,7 +481,8 @@ struct MuteWordsSettingsView: View {
       } catch {
         guard isCurrent(request, account: account, state: originatingState, manager: manager) else { return }
         hasConfirmedPreferences = false
-        errorMessage = UserFacingError.message(for: error, action: "mute this word") ?? "Couldn’t mute this word. Try again."
+        errorMessage = UserFacingError.message(for: error, action: "mute this word")
+          ?? String(localized: "Couldn’t mute this word. Try again.", comment: "Error message when adding a muted word fails")
       }
     }
   }
@@ -522,16 +524,23 @@ struct MuteWordsSettingsView: View {
         guard isCurrent(request, account: account, state: originatingState, manager: manager) else { return }
         hasConfirmedPreferences = false
         let action = isConfirmingRemoval ? "refresh your muted words" : "remove this muted word"
-        errorMessage = UserFacingError.message(for: error, action: action) ?? "Couldn’t \(action). Try again."
+        let fallback = isConfirmingRemoval
+          ? String(localized: "Couldn’t refresh your muted words. Try again.", comment: "Error message when refreshing muted words after removal fails")
+          : String(localized: "Couldn’t remove this muted word. Try again.", comment: "Error message when removing a muted word fails")
+        errorMessage = UserFacingError.message(for: error, action: action) ?? fallback
       }
     }
   }
 
   /// Plain-language summary of a rule's protocol targets ("content" covers post text and tags).
   private func targetsDescription(_ targets: [String]) -> String {
-    if targets.contains("content") { return "Mutes post text and tags" }
-    if targets.contains("tag") { return "Mutes tags only" }
-    return "Custom rule"
+    if targets.contains("content") {
+      return String(localized: "Mutes post text and tags", comment: "Muted word rule target description covering post text and hashtags")
+    }
+    if targets.contains("tag") {
+      return String(localized: "Mutes tags only", comment: "Muted word rule target description covering hashtags only")
+    }
+    return String(localized: "Custom rule", comment: "Fallback description for a custom muted word target rule")
   }
 
   private func hasUniqueIdentifier(_ id: String) -> Bool {

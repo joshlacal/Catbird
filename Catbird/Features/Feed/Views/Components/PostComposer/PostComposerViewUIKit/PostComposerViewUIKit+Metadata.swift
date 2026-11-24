@@ -94,13 +94,14 @@ extension PostComposerViewUIKit {
         HStack(spacing: 6) {
           ForEach(vm.outlineTags, id: \.self) { tag in
             HStack(spacing: 4) {
-              Text("#\(tag)")
+              Text(verbatim: "#\(tag)")
                 .font(.system(size: 11, weight: .medium))
               Button(action: { removeOutlineTag(tag, vm: vm) }) {
                 Image(systemName: "xmark.circle.fill")
                   .font(.system(size: 10))
                   .foregroundColor(.secondary)
               }
+              .accessibilityLabel(Text("Remove hashtag \(tag)", comment: "Accessibility label to remove a hashtag chip"))
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
@@ -115,6 +116,7 @@ extension PostComposerViewUIKit {
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
             }
+            .accessibilityLabel("Add Hashtag")
           }
         }
         .padding(.horizontal, 1)
@@ -144,14 +146,16 @@ extension PostComposerViewUIKit {
           ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
               ForEach(vm.selectedLanguages, id: \.self) { lang in
+                let langName = locale.localizedString(forLanguageCode: lang.lang.languageCode?.identifier ?? "") ?? lang.lang.minimalIdentifier
                 HStack(spacing: 4) {
-                  Text(Locale.current.localizedString(forLanguageCode: lang.lang.languageCode?.identifier ?? "") ?? lang.lang.minimalIdentifier)
+                  Text(langName)
                     .font(.system(size: 11, weight: .medium))
                   Button(action: { vm.toggleLanguage(lang) }) {
                     Image(systemName: "xmark.circle.fill")
                       .font(.system(size: 10))
                       .foregroundColor(.secondary)
                   }
+                  .accessibilityLabel(Text("Remove language \(langName)", comment: "Accessibility label to remove a selected post language chip"))
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
@@ -170,6 +174,7 @@ extension PostComposerViewUIKit {
       if let suggested = vm.suggestedLanguage,
          !vm.selectedLanguages.contains(suggested),
          !vm.postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        let suggestedName = locale.localizedString(forLanguageCode: suggested.lang.languageCode?.identifier ?? "") ?? suggested.lang.minimalIdentifier
         HStack {
           Button(action: {
             vm.applySuggestedLanguage()
@@ -177,9 +182,9 @@ extension PostComposerViewUIKit {
             HStack(spacing: 6) {
               Image(systemName: "wand.and.stars")
                 .font(.system(size: 10))
-              Text("Detected: \(Locale.current.localizedString(forLanguageCode: suggested.lang.languageCode?.identifier ?? "") ?? suggested.lang.minimalIdentifier)")
+              Text("Detected: \(suggestedName)", comment: "Suggested post language chip; variable is localized language name")
                 .font(.system(size: 11, weight: .medium))
-              Image(systemName: "chevron.right")
+              Image(systemName: "chevron.forward")
                 .font(.system(size: 8))
             }
             .padding(.horizontal, 8)
@@ -239,7 +244,7 @@ extension PostComposerViewUIKit {
         .lineLimit(1)
         .layoutPriority(1)
 
-        Text("@\(quoted.author.handle.description)")
+        Text(verbatim: "@\(quoted.author.handle.description)")
           .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)

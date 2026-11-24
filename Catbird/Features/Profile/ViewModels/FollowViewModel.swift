@@ -85,7 +85,16 @@ import OSLog
               await MainActor.run { 
                 self.isLoadingMore = false 
                 self.hasLoadedFollows = true
-                self.error = NSError(domain: "FollowError", code: responseCode, userInfo: [NSLocalizedDescriptionKey: "Couldn’t load following."])
+                self.error = NSError(
+                  domain: "FollowError",
+                  code: responseCode,
+                  userInfo: [
+                    NSLocalizedDescriptionKey: String(
+                      localized: "Couldn’t load following.",
+                      comment: "Error message when loading the list of accounts a user follows fails."
+                    )
+                  ]
+                )
               }
             }
           } catch {
@@ -134,7 +143,16 @@ import OSLog
                   await MainActor.run { 
                     self.isLoadingMore = false 
                     self.hasLoadedFollowers = true
-                    self.error = NSError(domain: "FollowError", code: responseCode, userInfo: [NSLocalizedDescriptionKey: "Couldn’t load followers."])
+                    self.error = NSError(
+                      domain: "FollowError",
+                      code: responseCode,
+                      userInfo: [
+                        NSLocalizedDescriptionKey: String(
+                          localized: "Couldn’t load followers.",
+                          comment: "Error message when loading a user's followers fails."
+                        )
+                      ]
+                    )
                   }
               }
           } catch {

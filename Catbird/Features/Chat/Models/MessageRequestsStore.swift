@@ -155,7 +155,10 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
     } catch {
       guard isCurrentAccount(generation: generation) else { return }
       logger.error("Failed to load encrypted chat requests: \(error.localizedDescription, privacy: .public)")
-      errorMessage = "Could not load encrypted chat requests. Please try again."
+      errorMessage = String(
+        localized: "Could not load encrypted chat requests. Please try again.",
+        comment: "Error message when loading encrypted chat requests fails"
+      )
     }
   }
 
@@ -169,7 +172,10 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
       guard await appState.chatManager.acceptMessageRequest(convoId: convoID) else {
         // Show the failure in the sheet, not as a Messages alert after it closes
         appState.chatManager.errorState = nil
-        errorMessage = "Couldn’t accept this request. It’s been kept so you can try again."
+        errorMessage = String(
+          localized: "Couldn’t accept this request. It’s been kept so you can try again.",
+          comment: "Error message when accepting a Bluesky message request fails"
+        )
         return nil
       }
       return appState.userDID == accountDID ? .bluesky(convoID: convoID) : nil
@@ -193,7 +199,10 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
       } catch {
         guard isCurrentAccount(generation: generation) else { return nil }
         logger.error("Failed to accept encrypted request: \(error.localizedDescription, privacy: .public)")
-        errorMessage = "Could not accept this chat request. It has been kept so you can try again."
+        errorMessage = String(
+          localized: "Could not accept this chat request. It has been kept so you can try again.",
+          comment: "Error message when accepting an encrypted chat request fails"
+        )
         return nil
       }
     }
@@ -207,7 +216,10 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
       guard await appState.chatManager.declineMessageRequest(convoId: convoID) else {
         // Show the failure in the sheet, not as a Messages alert after it closes
         appState.chatManager.errorState = nil
-        errorMessage = "Couldn’t decline this request. Please try again."
+        errorMessage = String(
+          localized: "Couldn’t decline this request. Please try again.",
+          comment: "Error message when declining a Bluesky message request fails"
+        )
         return false
       }
       return true
@@ -231,7 +243,10 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
       } catch {
         guard isCurrentAccount(generation: generation) else { return false }
         logger.error("Failed to decline encrypted request: \(error.localizedDescription, privacy: .public)")
-        errorMessage = "Could not decline this chat request. Please try again."
+        errorMessage = String(
+          localized: "Could not decline this chat request. Please try again.",
+          comment: "Error message when declining an encrypted chat request fails"
+        )
         return false
       }
     }
@@ -421,11 +436,20 @@ enum MessageRequestStoreError: Error {
   var message: String {
     switch self {
     case .noLongerPending:
-      "This request was already handled, possibly on another device. The list has been refreshed."
+      String(
+        localized: "This request was already handled, possibly on another device. The list has been refreshed.",
+        comment: "Error message when a chat request was already accepted or declined elsewhere"
+      )
     case .senderUnverified:
-      "The verified sender identity is unavailable. Refresh this request and try again."
+      String(
+        localized: "The verified sender identity is unavailable. Refresh this request and try again.",
+        comment: "Error message when the sender of an encrypted request cannot be verified"
+      )
     case .blockFailed:
-      "The sender could not be blocked. Please try again."
+      String(
+        localized: "The sender could not be blocked. Please try again.",
+        comment: "Error message when blocking a chat request sender fails"
+      )
     }
   }
 }

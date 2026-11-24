@@ -37,7 +37,11 @@ struct ProfileBannerHeader: View {
     let isConcealed = moderationPolicy.concealsBanner(did: did, labels: labels)
     bannerImage(isConcealed: isConcealed)
       .contentShape(Rectangle())
-      .accessibilityLabel(isConcealed ? "Profile banner hidden" : "Profile banner")
+      .accessibilityLabel(
+        isConcealed
+          ? Text("Profile banner hidden", comment: "Accessibility label when moderation hides a profile banner.")
+          : Text("Profile banner", comment: "Accessibility label for a user's profile banner image.")
+      )
       .modifier(ConcentricBannerClip())
       .flexibleHeaderContent()
   }

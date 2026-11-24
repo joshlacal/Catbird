@@ -25,14 +25,20 @@ extension PostComposerViewUIKit {
         ProgressView().progressViewStyle(.circular)
       } else {
         Button(action: { submitAction(vm: vm) }) {
-          Text(vm.isThreadMode ? "Post All" : "Post")
-            .appFont(AppTextRole.subheadline)
-            .fontWeight(.semibold)
-            .foregroundColor(.white)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(canSubmit(vm: vm) ? Color.accentColor : Color.systemGray4)
-            .clipShape(RoundedRectangle(cornerRadius: 20))
+          Group {
+            if vm.isThreadMode {
+              Text("Post All", comment: "Button to publish all posts in a thread")
+            } else {
+              Text("Post", comment: "Button to publish a post")
+            }
+          }
+          .appFont(AppTextRole.subheadline)
+          .fontWeight(.semibold)
+          .foregroundColor(.white)
+          .padding(.horizontal, 16)
+          .padding(.vertical, 8)
+          .background(canSubmit(vm: vm) ? Color.accentColor : Color.systemGray4)
+          .clipShape(RoundedRectangle(cornerRadius: 20))
         }
         .disabled(!canSubmit(vm: vm))
         .buttonStyle(PlainButtonStyle())

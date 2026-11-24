@@ -13,6 +13,15 @@ public struct StarterPackWizardView: View {
     public enum WizardMode {
         case create
         case edit(existingPack: AppBskyGraphDefs.StarterPackView)
+        
+        public var title: String {
+            switch self {
+            case .create:
+                return String(localized: "New Starter Pack", comment: "Navigation title when creating a new starter pack.")
+            case .edit:
+                return String(localized: "Edit Starter Pack", comment: "Navigation title when editing an existing starter pack.")
+            }
+        }
     }
     
     public enum WizardStep: Int, CaseIterable, Identifiable {
@@ -24,9 +33,12 @@ public struct StarterPackWizardView: View {
         
         public var title: String {
             switch self {
-            case .details: return "Details"
-            case .profiles: return "People"
-            case .feeds: return "Feeds"
+            case .details:
+                return String(localized: "Details", comment: "Step title for starter pack name and description in creation wizard.")
+            case .profiles:
+                return String(localized: "People", comment: "Step title for selecting profiles in starter pack wizard.")
+            case .feeds:
+                return String(localized: "Feeds", comment: "Step title for selecting custom feeds in starter pack wizard.")
             }
         }
     }
@@ -116,7 +128,11 @@ public struct StarterPackWizardView: View {
             .alert("Couldn’t Save Starter Pack", isPresented: $showingErrorAlert) {
                 Button("OK", role: .cancel) {}
             } message: {
-                Text(errorMessage ?? "Something went wrong. Try again.")
+                if let errorMessage {
+                    Text(errorMessage)
+                } else {
+                    Text("Something went wrong. Try again.", comment: "Fallback error message when saving a starter pack fails.")
+                }
             }
             .task {
                 await preloadEditStateIfNeeded()
@@ -125,12 +141,7 @@ public struct StarterPackWizardView: View {
     }
     
     private var navigationTitle: String {
-        switch mode {
-        case .create:
-            return "New Starter Pack"
-        case .edit:
-            return "Edit Starter Pack"
-        }
+        mode.title
     }
     
     // MARK: - Step Indicator
@@ -143,7 +154,7 @@ public struct StarterPackWizardView: View {
                         .fill(step.rawValue <= currentStep.rawValue ? Color.accentColor : Color.gray.opacity(0.3))
                         .frame(width: 22, height: 22)
                         .overlay(
-                            Text("\(step.rawValue + 1)")
+                            Text(step.rawValue + 1, format: .number)
                                 .appFont(AppTextRole.caption2)
                                 .fontWeight(.bold)
                                 .foregroundColor(step.rawValue <= currentStep.rawValue ? .white : .secondary)
@@ -164,7 +175,12 @@ public struct StarterPackWizardView: View {
         }
         .padding(.horizontal, 24)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Step \(currentStep.rawValue + 1) of \(WizardStep.allCases.count), \(currentStep.title)")
+        .accessibilityLabel(
+            Text(
+                "Step \(currentStep.rawValue + 1) of \(WizardStep.allCases.count), \(currentStep.title)",
+                comment: "VoiceOver step progress indicator in starter pack wizard. First placeholder is current step number, second is total steps, third is step title."
+            )
+        )
     }
     
     // MARK: - Bottom Action Bar
@@ -247,9 +263,9 @@ public struct StarterPackWizardView: View {
     private var submitButtonTitle: String {
         switch mode {
         case .create:
-            return "Create Starter Pack"
+            return String(localized: "Create Starter Pack", comment: "Action button to publish a new starter pack.")
         case .edit:
-            return "Save Changes"
+            return String(localized: "Save Changes", comment: "Action button to save edits to an existing starter pack.")
         }
     }
     
@@ -332,13 +348,17 @@ public struct StarterPackWizardView: View {
     
     private func finishWizard() async {
         guard let client = appState.atProtoClient else {
-            errorMessage = "You’re signed out. Sign in and try again."
+            errorMessage = String(
+                localized: "You’re signed out. Sign in and try again.",
+                comment: "Error when trying to save a starter pack while signed out."
+            )
             showingErrorAlert = true
             return
         }
         let accountDID = appState.userDID
         guard draft.isValid else {
-            errorMessage = draft.validationError ?? "Check the starter pack’s details and try again."
+            errorMessage = draft.validationError
+                ?? String(localized: "Check the starter pack’s details and try again.", comment: "Fallback validation error when saving a starter pack.")
             showingErrorAlert = true
             return
         }
@@ -372,7 +392,7 @@ public struct StarterPackWizardView: View {
         } catch {
             logger.error("Failed to save starter pack: \(error.localizedDescription)")
             errorMessage = UserFacingError.message(for: error, action: "save this starter pack")
-                ?? "Something went wrong. Try again."
+                ?? String(localized: "Something went wrong. Try again.", comment: "Fallback error message when saving a starter pack fails.")
             showingErrorAlert = true
             isSubmitting = false
         }

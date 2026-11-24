@@ -37,7 +37,7 @@ extension PostComposerViewModel {
         for item in items {
             guard let rawData = item.rawData, item.image != nil, !item.isGifConversion else {
                 throw NSError(domain: "ComposerMedia", code: 1, userInfo: [
-                    NSLocalizedDescriptionKey: "An attachment couldn’t be loaded. Retry it or remove it before posting."
+                    NSLocalizedDescriptionKey: String(localized: "An attachment couldn’t be loaded. Retry it or remove it before posting.", comment: "Error when a photo attachment could not be loaded before uploading")
                 ]) 
             }
             sources.append(rawData)
@@ -143,7 +143,9 @@ extension PostComposerViewModel {
         guard !items.isEmpty else { return [] }
         guard let client = appState.atProtoClient else { throw CircleError.clientNotInitialized }
         guard items.count <= CirclePostSealer.maxAttachments else {
-            throw CircleError.invalidParameter("Encrypted Circles allow up to \(CirclePostSealer.maxAttachments) images per post.")
+            throw CircleError.invalidParameter(
+                String(localized: "Encrypted Circles allow up to \(CirclePostSealer.maxAttachments) images per post.", comment: "Error when encrypted Circle post exceeds maximum image count")
+            )
         }
         try await (circleService ?? appState.circleService).requireImages()
 
@@ -151,7 +153,7 @@ extension PostComposerViewModel {
         for item in items {
             guard let rawData = item.rawData, item.image != nil, !item.isGifConversion else {
                 throw NSError(domain: "ComposerMedia", code: 1, userInfo: [
-                    NSLocalizedDescriptionKey: "An attachment couldn’t be loaded. Retry it or remove it before posting."
+                    NSLocalizedDescriptionKey: String(localized: "An attachment couldn’t be loaded. Retry it or remove it before posting.", comment: "Error when a photo attachment could not be loaded before uploading")
                 ])
             }
             sources.append(rawData)

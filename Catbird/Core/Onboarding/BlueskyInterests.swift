@@ -10,14 +10,7 @@ enum BlueskyInterests {
     "pets", "photography", "politics", "science", "sports", "tech", "tv", "writers",
   ]
 
-  private static let displayNames: [String: String] = [
-    "animals": "Animals", "art": "Art", "books": "Books", "comedy": "Comedy",
-    "comics": "Comics", "culture": "Culture", "dev": "Software Dev", "education": "Education",
-    "finance": "Finance", "food": "Food", "gaming": "Video Games", "journalism": "Journalism",
-    "movies": "Movies", "music": "Music", "nature": "Nature", "news": "News",
-    "pets": "Pets", "photography": "Photography", "politics": "Politics", "science": "Science",
-    "sports": "Sports", "tech": "Tech", "tv": "TV", "writers": "Writers",
-  ]
+  private static let knownIDs: Set<String> = Set(ids)
 
   /// Older Catbird builds saved title-case labels; map the ones that have a Bluesky equivalent.
   private static let legacyLabels: [String: String] = [
@@ -26,13 +19,39 @@ enum BlueskyInterests {
   ]
 
   static func displayName(for id: String) -> String {
-    displayNames[id] ?? id.capitalized
+    switch id {
+    case "animals": return String(localized: "Animals", comment: "Bluesky interest topic chip label.")
+    case "art": return String(localized: "Art", comment: "Bluesky interest topic chip label.")
+    case "books": return String(localized: "Books", comment: "Bluesky interest topic chip label.")
+    case "comedy": return String(localized: "Comedy", comment: "Bluesky interest topic chip label.")
+    case "comics": return String(localized: "Comics", comment: "Bluesky interest topic chip label.")
+    case "culture": return String(localized: "Culture", comment: "Bluesky interest topic chip label.")
+    case "dev": return String(localized: "Software Dev", comment: "Bluesky interest topic chip label for software development.")
+    case "education": return String(localized: "Education", comment: "Bluesky interest topic chip label.")
+    case "finance": return String(localized: "Finance", comment: "Bluesky interest topic chip label.")
+    case "food": return String(localized: "Food", comment: "Bluesky interest topic chip label.")
+    case "gaming": return String(localized: "Video Games", comment: "Bluesky interest topic chip label.")
+    case "journalism": return String(localized: "Journalism", comment: "Bluesky interest topic chip label.")
+    case "movies": return String(localized: "Movies", comment: "Bluesky interest topic chip label.")
+    case "music": return String(localized: "Music", comment: "Bluesky interest topic chip label.")
+    case "nature": return String(localized: "Nature", comment: "Bluesky interest topic chip label.")
+    case "news": return String(localized: "News", comment: "Bluesky interest topic chip label.")
+    case "pets": return String(localized: "Pets", comment: "Bluesky interest topic chip label.")
+    case "photography": return String(localized: "Photography", comment: "Bluesky interest topic chip label.")
+    case "politics": return String(localized: "Politics", comment: "Bluesky interest topic chip label.")
+    case "science": return String(localized: "Science", comment: "Bluesky interest topic chip label.")
+    case "sports": return String(localized: "Sports", comment: "Bluesky interest topic chip label.")
+    case "tech": return String(localized: "Tech", comment: "Bluesky interest topic chip label.")
+    case "tv": return String(localized: "TV", comment: "Bluesky interest topic chip label for television.")
+    case "writers": return String(localized: "Writers", comment: "Bluesky interest topic chip label.")
+    default: return id.localizedCapitalized
+    }
   }
 
   /// Returns the Bluesky id for a stored interest, or nil when it has no Bluesky equivalent.
   static func normalizedID(_ stored: String) -> String? {
     let key = stored.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    if displayNames[key] != nil { return key }
+    if knownIDs.contains(key) { return key }
     return legacyLabels[key]
   }
 }

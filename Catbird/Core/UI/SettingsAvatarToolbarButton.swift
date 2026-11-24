@@ -175,7 +175,7 @@ struct AccountMenuLabels: Equatable {
       title = "@\(validHandle)"
       subtitle = nil
     } else {
-      title = "Loading…"
+      title = String(localized: "Loading…", comment: "Placeholder in account switcher menu while account profile is loading.")
       subtitle = nil
     }
   }

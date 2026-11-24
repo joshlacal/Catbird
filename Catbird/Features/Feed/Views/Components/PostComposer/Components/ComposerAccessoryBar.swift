@@ -106,8 +106,8 @@ struct ComposerAccessoryBar: View {
         .contentShape(Circle())
     }
     .buttonStyle(.plain)
-    .accessibilityLabel(isPlusMenuOpen ? "Close Menu" : "Attachments and Post Settings")
-    .accessibilityValue(isPlusMenuOpen ? "Expanded" : "Collapsed")
+    .accessibilityLabel(isPlusMenuOpen ? Text("Close Menu", comment: "Accessibility label to close composer attachments menu") : Text("Attachments and Post Settings", comment: "Accessibility label to open composer attachments and post settings menu"))
+    .accessibilityValue(isPlusMenuOpen ? Text("Expanded", comment: "Accessibility state when menu is expanded") : Text("Collapsed", comment: "Accessibility state when menu is collapsed"))
   }
 
   private var trailingControls: some View {
@@ -208,12 +208,13 @@ struct ComposerAccessoryBar: View {
   }
 
   private func menuRow(
-    _ title: String,
+    _ title: LocalizedStringResource,
     systemImage: String,
     value: String? = nil,
     action: @escaping () -> Void
   ) -> some View {
-    Button {
+    let resolvedTitle = String(localized: title)
+    return Button {
       setMenu(false)
       action()
     } label: {
@@ -238,7 +239,11 @@ struct ComposerAccessoryBar: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
-    .accessibilityLabel(value.map { "\(title), currently \($0)" } ?? title)
+    .accessibilityLabel(
+      value.map {
+        Text("\(resolvedTitle), currently \($0)", comment: "Accessibility label for composer setting row; first variable is setting name, second is current value")
+      } ?? Text(title)
+    )
   }
 
   static func menuAnimation(reduceMotion: Bool) -> Animation? {

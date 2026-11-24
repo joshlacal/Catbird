@@ -52,9 +52,15 @@ public struct PostInteractionSettingsState: Equatable, Sendable {
             return replySummary
         } else {
             if threadgate.allowEverybody {
-                return "No quotes"
+                return String(
+                    localized: "No quotes",
+                    comment: "Post interaction summary chip when quote posts are disabled"
+                )
             } else {
-                return "\(replySummary) · No quotes"
+                return String(
+                    localized: "\(replySummary) · No quotes",
+                    comment: "Post interaction summary chip combining reply rules and disabled quotes — variable is the reply restriction summary"
+                )
             }
         }
     }

@@ -70,7 +70,11 @@ struct AudioVisualizerPreview: View {
       .alert("Generation Error", isPresented: $showingErrorAlert) {
         Button("OK") { }
       } message: {
-        Text(generationError ?? "An unknown error occurred")
+        if let generationError {
+          Text(generationError)
+        } else {
+          Text("An unknown error occurred")
+        }
       }
       .task {
         await loadWaveformData()
@@ -129,12 +133,12 @@ struct AudioVisualizerPreview: View {
             .foregroundColor(.primary)
           
           if let profile = appState.currentUserProfile {
-            Text("@\(profile.handle.description)")
+            Text(verbatim: "@\(profile.handle.description)")
               .font(.subheadline)
               .foregroundColor(.secondary)
           }
           
-          Text("Duration: \(formatDuration(audioDuration))")
+          Text("Duration: \(formatDuration(audioDuration))", comment: "Audio duration label in visualizer preview")
             .font(.caption)
             .foregroundColor(.secondary)
         }
@@ -207,7 +211,7 @@ struct AudioVisualizerPreview: View {
             Spacer()
 
             if let profile = appState.currentUserProfile {
-              Text("@\(profile.handle.description)")
+              Text(verbatim: "@\(profile.handle.description)")
                 .font(.title3)
                 .fontWeight(.medium)
                 .foregroundColor(.white.opacity(0.9))
@@ -366,7 +370,7 @@ struct AudioVisualizerPreview: View {
   
   // MARK: - Computed Properties
   
-  private var progressText: String {
+  private var progressText: LocalizedStringResource {
     let progress = visualizerService.progress
     
     switch progress {
@@ -483,9 +487,8 @@ struct AudioVisualizerPreview: View {
   }
   
   private func formatDuration(_ duration: TimeInterval) -> String {
-    let minutes = Int(duration) / 60
-    let seconds = Int(duration) % 60
-    return String(format: "%d:%02d", minutes, seconds)
+    let safeSeconds = duration.isFinite ? max(0, Int(duration)) : 0
+    return Duration.seconds(safeSeconds).formatted(.time(pattern: .minuteSecond))
   }
 }
 

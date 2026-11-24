@@ -86,7 +86,10 @@ actor VideoServiceTokenProvider {
           }
         }
         guard let result, !result.isEmpty else {
-          throw VideoMultipartTransportError(code: "InvalidServiceToken", message: "The account did not provide video upload authorization.")
+          throw VideoMultipartTransportError(
+            code: "InvalidServiceToken",
+            message: String(localized: "The account did not provide video upload authorization.", comment: "Error when service auth token for video upload is empty")
+          )
         }
         finishRefresh(id, result: .success(result))
       } catch {
@@ -98,7 +101,9 @@ actor VideoServiceTokenProvider {
       do {
         try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
         finishRefresh(id, result: .failure(VideoMultipartTransportError(
-          code: "ServiceAuthTimedOut", message: "Video upload authorization timed out.", retryable: true
+          code: "ServiceAuthTimedOut",
+          message: String(localized: "Video upload authorization timed out.", comment: "Error when requesting video upload authorization times out"),
+          retryable: true
         )))
       } catch { /* A finished or abandoned refresh canceled its deadline. */ }
     }

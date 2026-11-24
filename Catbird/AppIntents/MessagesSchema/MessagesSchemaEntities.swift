@@ -19,72 +19,104 @@ import GeoToolbox
 @available(anyAppleOS 27.0, *)
 @AppEnum(schema: .messages.conversationAttribute)
 enum CatbirdMessagesConversationAttribute: String, AppEnum {
-  case mute
-  case group
-  case pinned
+  case mute = "mute"
+  case group = "group"
+  case pinned = "pinned"
 
   static let caseDisplayRepresentations: [Self: DisplayRepresentation] = [
-    .mute: "Muted",
-    .group: "Group Chat",
-    .pinned: "Pinned"
+    .mute: DisplayRepresentation(
+      title: LocalizedStringResource("Muted", comment: "Conversation attribute indicating notifications are muted.")
+    ),
+    .group: DisplayRepresentation(
+      title: LocalizedStringResource("Group Chat", comment: "Conversation attribute indicating a multi-person group chat.")
+    ),
+    .pinned: DisplayRepresentation(
+      title: LocalizedStringResource("Pinned", comment: "Conversation attribute indicating a pinned conversation.")
+    )
   ]
 }
 
 @available(anyAppleOS 27.0, *)
 @AppEnum(schema: .messages.messageType)
 enum CatbirdMessagesMessageType: String, AppEnum {
-  case text
-  case audio
-  case image
-  case video
-  case unspecified
+  case text = "text"
+  case audio = "audio"
+  case image = "image"
+  case video = "video"
+  case unspecified = "unspecified"
 
   static let caseDisplayRepresentations: [Self: DisplayRepresentation] = [
-    .text: "Text",
-    .audio: "Audio",
-    .image: "Image",
-    .video: "Video",
-    .unspecified: "Unspecified"
+    .text: DisplayRepresentation(
+      title: LocalizedStringResource("Text", comment: "Message type for plain text chat messages.")
+    ),
+    .audio: DisplayRepresentation(
+      title: LocalizedStringResource("Audio", comment: "Message type for audio chat messages.")
+    ),
+    .image: DisplayRepresentation(
+      title: LocalizedStringResource("Image", comment: "Message type for image chat messages.")
+    ),
+    .video: DisplayRepresentation(
+      title: LocalizedStringResource("Video", comment: "Message type for video chat messages.")
+    ),
+    .unspecified: DisplayRepresentation(
+      title: LocalizedStringResource("Unspecified", comment: "Fallback message type when the chat content kind is unspecified.")
+    )
   ]
 }
 
 @available(anyAppleOS 27.0, *)
 @AppEnum(schema: .messages.messageAttribute)
 enum CatbirdMessagesMessageAttribute: String, AppEnum {
-  case none
+  case none = "none"
 
   static let caseDisplayRepresentations: [Self: DisplayRepresentation] = [
-    .none: "None"
+    .none: DisplayRepresentation(
+      title: LocalizedStringResource("None", comment: "Indicates a chat message has no special attributes.")
+    )
   ]
 }
 
 @available(anyAppleOS 27.0, *)
 @AppEnum(schema: .messages.messageEffect)
 enum CatbirdMessagesMessageEffect: String, AppEnum {
-  case none
+  case none = "none"
 
   static let caseDisplayRepresentations: [Self: DisplayRepresentation] = [
-    .none: "None"
+    .none: DisplayRepresentation(
+      title: LocalizedStringResource("None", comment: "Indicates a chat message has no visual effect.")
+    )
   ]
 }
 
 @available(anyAppleOS 27.0, *)
 @AppEnum(schema: .messages.customReaction)
 enum CatbirdMessagesCustomReaction: String, AppEnum {
-  case like
-  case love
-  case laughter
-  case dislike
-  case question
-  case exclamation
+  case like = "like"
+  case love = "love"
+  case laughter = "laughter"
+  case dislike = "dislike"
+  case question = "question"
+  case exclamation = "exclamation"
 
   static let caseDisplayRepresentations: [Self: DisplayRepresentation] = [
-    .like: "Like",
-    .love: "Love",
-    .laughter: "Laughter",
-    .dislike: "Dislike",
-    .question: "Question",
-    .exclamation: "Exclamation"
+    .like: DisplayRepresentation(
+      title: LocalizedStringResource("Like", comment: "Message reaction name for thumbs-up / like.")
+    ),
+    .love: DisplayRepresentation(
+      title: LocalizedStringResource("Love", comment: "Message reaction name for heart / love.")
+    ),
+    .laughter: DisplayRepresentation(
+      title: LocalizedStringResource("Laughter", comment: "Message reaction name for laughing.")
+    ),
+    .dislike: DisplayRepresentation(
+      title: LocalizedStringResource("Dislike", comment: "Message reaction name for thumbs-down / dislike.")
+    ),
+    .question: DisplayRepresentation(
+      title: LocalizedStringResource("Question", comment: "Message reaction name for a question mark.")
+    ),
+    .exclamation: DisplayRepresentation(
+      title: LocalizedStringResource("Exclamation", comment: "Message reaction name for an exclamation mark.")
+    )
   ]
 }
 
@@ -105,7 +137,16 @@ enum CatbirdMessagesDestination: Sendable {
 @available(anyAppleOS 27.0, *)
 @AppEntity(schema: .messages.customAttachment)
 struct CatbirdMessagesCustomAttachment: Identifiable, Hashable, Sendable {
-  static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Catbird Attachment")
+  static var typeDisplayRepresentation = TypeDisplayRepresentation(
+    name: LocalizedStringResource(
+      "Catbird Attachment",
+      comment: "App Intents entity type name for a Catbird chat attachment."
+    ),
+    numericFormat: LocalizedStringResource(
+      "\(placeholder: .int) Catbird attachments",
+      comment: "Pluralized count of Catbird chat attachments."
+    )
+  )
   static var defaultQuery = CatbirdMessagesCustomAttachmentQuery()
 
   var id: String
@@ -127,8 +168,15 @@ struct CatbirdMessagesCustomAttachment: Identifiable, Hashable, Sendable {
   }
 
   var displayRepresentation: DisplayRepresentation {
-    let titleStr = description.map { String($0.characters) } ?? "Attachment"
-    return DisplayRepresentation(title: "\(titleStr)")
+    if let description, !description.characters.isEmpty {
+      return DisplayRepresentation(title: "\(String(description.characters))")
+    }
+    return DisplayRepresentation(
+      title: LocalizedStringResource(
+        "Attachment",
+        comment: "Fallback display title for a Catbird chat attachment with no description."
+      )
+    )
   }
 }
 
@@ -142,7 +190,16 @@ struct CatbirdMessagesCustomAttachmentQuery: EntityQuery {
 @available(anyAppleOS 27.0, *)
 @AppEntity(schema: .messages.conversation)
 struct CatbirdMessagesConversationEntity: Identifiable, Hashable, Sendable {
-  static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Catbird Conversation")
+  static var typeDisplayRepresentation = TypeDisplayRepresentation(
+    name: LocalizedStringResource(
+      "Catbird Conversation",
+      comment: "App Intents entity type name for a Catbird MLS chat conversation."
+    ),
+    numericFormat: LocalizedStringResource(
+      "\(placeholder: .int) Catbird conversations",
+      comment: "Pluralized count of Catbird MLS chat conversations."
+    )
+  )
   static var defaultQuery = CatbirdMessagesConversationQuery()
 
   var id: String
@@ -185,7 +242,10 @@ struct CatbirdMessagesConversationEntity: Identifiable, Hashable, Sendable {
   var displayRepresentation: DisplayRepresentation {
     DisplayRepresentation(
       title: "\(displayName)",
-      subtitle: recipients.count == 1 ? "1 member" : "\(recipients.count) members"
+      subtitle: LocalizedStringResource(
+        "\(recipients.count) members",
+        comment: "Member count subtitle for a Catbird MLS chat conversation in Siri and Shortcuts."
+      )
     )
   }
 }
@@ -235,7 +295,16 @@ struct CatbirdMessagesConversationQuery: EntityStringQuery {
 @available(anyAppleOS 27.0, *)
 @AppEntity(schema: .messages.message)
 struct CatbirdMessagesMessageEntity: Identifiable, Hashable, Sendable {
-  static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Catbird Message")
+  static var typeDisplayRepresentation = TypeDisplayRepresentation(
+    name: LocalizedStringResource(
+      "Catbird Message",
+      comment: "App Intents entity type name for a Catbird MLS chat message."
+    ),
+    numericFormat: LocalizedStringResource(
+      "\(placeholder: .int) Catbird messages",
+      comment: "Pluralized count of Catbird MLS chat messages."
+    )
+  )
   static var defaultQuery = CatbirdMessagesMessageQuery()
 
   var id: String
@@ -307,8 +376,14 @@ struct CatbirdMessagesMessageEntity: Identifiable, Hashable, Sendable {
 
   var displayRepresentation: DisplayRepresentation {
     let textStr = body.map { String($0.characters) } ?? ""
+    let title: LocalizedStringResource = textStr.isEmpty
+      ? LocalizedStringResource(
+          "Message",
+          comment: "Fallback display title for a Catbird chat message with empty text."
+        )
+      : "\(textStr)"
     return DisplayRepresentation(
-      title: "\(textStr.isEmpty ? "Message" : textStr)",
+      title: title,
       subtitle: "\(conversation.displayName)"
     )
   }
@@ -393,7 +468,16 @@ struct CatbirdMessagesMessageQuery: EntityStringQuery {
 @available(anyAppleOS 27.0, *)
 @AppEntity(schema: .messages.messagePerson)
 struct CatbirdMessagesPersonEntity: Identifiable, Hashable, Sendable {
-  static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Catbird Contact")
+  static var typeDisplayRepresentation = TypeDisplayRepresentation(
+    name: LocalizedStringResource(
+      "Catbird Contact",
+      comment: "App Intents entity type name for a Catbird MLS chat participant."
+    ),
+    numericFormat: LocalizedStringResource(
+      "\(placeholder: .int) Catbird contacts",
+      comment: "Pluralized count of Catbird MLS chat participants."
+    )
+  )
   static var defaultQuery = CatbirdMessagesPersonQuery()
 
   var id: String
@@ -424,7 +508,11 @@ struct CatbirdMessagesPersonEntity: Identifiable, Hashable, Sendable {
 
   var displayRepresentation: DisplayRepresentation {
     // Siri shows this in disambiguation lists — a handle, never a raw DID.
-    DisplayRepresentation(title: "\(displayName)", subtitle: handle.map { "@\($0)" })
+    let formattedHandle = handle.map { "@\($0)" }
+    return DisplayRepresentation(
+      title: "\(displayName)",
+      subtitle: formattedHandle.map { "\($0)" }
+    )
   }
 }
 

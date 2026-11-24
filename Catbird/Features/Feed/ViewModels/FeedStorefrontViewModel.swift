@@ -53,13 +53,15 @@ final class FeedStorefrontViewModel {
   }
 
   var followLikedShelfTitle: String {
-    hasDirectFollowLikes ? "Liked by People You Follow" : "Suggested for You"
+    hasDirectFollowLikes
+      ? String(localized: "Liked by People You Follow", comment: "Feed discovery shelf title showing feeds liked by accounts the user follows")
+      : String(localized: "Suggested for You", comment: "Feed discovery shelf title showing personalized feed recommendations")
   }
 
   var followLikedShelfSubtitle: String {
     hasDirectFollowLikes
-      ? "Feeds saved or liked across your follow graph"
-      : "Personalized picks from across Bluesky"
+      ? String(localized: "Feeds saved or liked across your follow graph", comment: "Feed discovery shelf subtitle when feeds are liked by followed accounts")
+      : String(localized: "Personalized picks from across Bluesky", comment: "Feed discovery shelf subtitle for personalized recommendations")
   }
 
   /// Categories that currently have at least one feed bucketed from loaded shelves.

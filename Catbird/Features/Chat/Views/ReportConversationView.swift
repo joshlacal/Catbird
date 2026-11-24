@@ -29,8 +29,13 @@ struct ReportConversationView: View {
         afterReportView
       } else {
         ChatReportFormView(
-          title: "Report Conversation",
-          subtitle: primaryMember.map { "Reporting conversation with \($0.chatDisplayName)" },
+          title: String(localized: "Report Conversation", comment: "Navigation title for reporting a conversation"),
+          subtitle: primaryMember.map {
+            String(
+              localized: "Reporting conversation with \($0.chatDisplayName)",
+              comment: "Subtitle naming the participant in a reported conversation (%@ = participant name)"
+            )
+          },
           isSubmitting: isSubmitting,
           errorMessage: errorMessage,
           onSubmit: { reason, details in
@@ -140,12 +145,18 @@ struct ReportConversationView: View {
 
   private func submitReport(reason: ComAtprotoModerationDefs.ReasonType, details: String) {
     guard let reportingService else {
-      errorMessage = "Sign in to report this conversation."
+      errorMessage = String(
+        localized: "Sign in to report this conversation.",
+        comment: "Error message when attempting to report a conversation while signed out"
+      )
       return
     }
 
     guard let member = primaryMember else {
-      errorMessage = "Couldn’t find who to report in this conversation."
+      errorMessage = String(
+        localized: "Couldn’t find who to report in this conversation.",
+        comment: "Error message when no reportable participant is found in a conversation"
+      )
       return
     }
 
@@ -168,13 +179,19 @@ struct ReportConversationView: View {
           if success {
             self.reportSubmitted = true
           } else {
-            self.errorMessage = "Couldn’t send the report. Please try again."
+            self.errorMessage = String(
+              localized: "Couldn’t send the report. Please try again.",
+              comment: "Error message when submitting a conversation report fails"
+            )
           }
         }
       } catch {
         await MainActor.run {
           self.isSubmitting = false
-          self.errorMessage = UserFacingError.message(for: error, action: "send the report")
+          self.errorMessage = UserFacingError.message(
+            for: error,
+            action: String(localized: "send the report", comment: "Action phrase when submitting a moderation report fails")
+          )
         }
       }
     }
@@ -193,7 +210,10 @@ struct ReportConversationView: View {
           self.dismiss()
         } else {
           self.errorMessage = appState.chatManager.errorState?.localizedDescription
-            ?? "Couldn’t leave this conversation. Please try again."
+            ?? String(
+              localized: "Couldn’t leave this conversation. Please try again.",
+              comment: "Error when leaving a conversation after reporting fails"
+            )
           appState.chatManager.errorState = nil
         }
       }
@@ -217,14 +237,20 @@ struct ReportConversationView: View {
             self.onConversationLeft?()
             self.dismiss()
           } else {
-            self.errorMessage = "Account blocked, but couldn’t leave the conversation. Please try again."
+            self.errorMessage = String(
+              localized: "Account blocked, but couldn’t leave the conversation. Please try again.",
+              comment: "Error when blocking succeeds after a report but leaving the conversation fails"
+            )
             appState.chatManager.errorState = nil
           }
         }
       } catch {
         await MainActor.run {
           self.isPerformingSafetyAction = false
-          self.errorMessage = UserFacingError.message(for: error, action: "block this account")
+          self.errorMessage = UserFacingError.message(
+            for: error,
+            action: String(localized: "block this account", comment: "Action phrase when blocking a reported account fails")
+          )
         }
       }
     }

@@ -148,17 +148,19 @@ struct CircleMediaView: View {
 
   @ViewBuilder
   private func imageView(_ img: PlatformImage) -> some View {
+    let labelText = altText.map { Text(verbatim: $0) }
+      ?? Text("Circle image", comment: "Fallback accessibility label for an image in a private Circle when no alt text was provided.")
     #if os(iOS)
     Image(uiImage: img)
       .resizable()
       .aspectRatio(aspectRatio, contentMode: contentMode)
-      .accessibilityLabel(altText ?? "Circle image")
+      .accessibilityLabel(labelText)
       .accessibilityAddTraits(.isImage)
     #elseif os(macOS)
     Image(nsImage: img)
       .resizable()
       .aspectRatio(aspectRatio, contentMode: contentMode)
-      .accessibilityLabel(altText ?? "Circle image")
+      .accessibilityLabel(labelText)
       .accessibilityAddTraits(.isImage)
     #endif
   }

@@ -42,13 +42,34 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
 
   // MARK: - State
 
+  private enum UnsendStatus {
+    case unsent
+    case failed
+
+    var message: LocalizedStringResource {
+      switch self {
+      case .unsent:
+        return LocalizedStringResource("Message unsent for everyone.")
+      case .failed:
+        return LocalizedStringResource("Message could not be unsent. Try again.")
+      }
+    }
+
+    var systemImage: String {
+      switch self {
+      case .unsent: return "checkmark.circle.fill"
+      case .failed: return "exclamationmark.triangle.fill"
+      }
+    }
+  }
+
   @State private var scrollProxy: ScrollViewProxy?
   @State private var reactionOverlay: (messageID: String, bubbleGlobalFrame: CGRect, isFromCurrentUser: Bool)?
   @State private var reactionBarSize: CGSize = .zero
   @State private var hasPerformedInitialScroll = false
   @State private var lastScrollToBottomTrigger: Int = 0
   @State private var isLoadingOlderMessages = false
-  @State private var unsendStatus: String?
+  @State private var unsendStatus: UnsendStatus?
 
   // MARK: - Body
 
@@ -103,17 +124,16 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
     }
     .overlay(alignment: .top) {
       if let unsendStatus {
-        Label(
-          unsendStatus,
-          systemImage: unsendStatus.hasPrefix("Message unsent")
-            ? "checkmark.circle.fill"
-            : "exclamationmark.triangle.fill"
-        )
+        Label {
+          Text(unsendStatus.message)
+        } icon: {
+          Image(systemName: unsendStatus.systemImage)
+        }
         .font(.footnote)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.regularMaterial, in: Capsule())
-        .accessibilityLabel(unsendStatus)
+        .accessibilityLabel(Text(unsendStatus.message))
         .accessibilityIdentifier("mls-unsend-status")
       }
     }
@@ -250,9 +270,7 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
             Button("Unsend", role: .destructive) {
               Task {
                 await dataSource.deleteMessage(messageID: id)
-                unsendStatus = dataSource.message(for: id) == nil
-                  ? "Message unsent for everyone."
-                  : "Message could not be unsent. Try again."
+                unsendStatus = dataSource.message(for: id) == nil ? .unsent : .failed
               }
             }
           } else if message.canDeleteForMe {
@@ -413,6 +431,6 @@ private struct MacTypingIndicatorView: View {
 }
 
 #Preview {
-  Text("macOS Chat Preview")
+  Text(verbatim: "macOS Chat Preview")
 }
 #endif

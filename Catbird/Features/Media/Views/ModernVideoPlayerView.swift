@@ -355,21 +355,35 @@ struct ModernVideoPlayerView: View {
     }
   }
 
-  private var videoAccessibilityLabel: String {
-    let kind = model.type.isGif ? "GIF" : "Video"
+  private var videoAccessibilityLabel: Text {
     if loadFailed {
-      return "\(kind) unavailable"
+      if model.type.isGif {
+        return Text("GIF unavailable", comment: "Accessibility label when an animated GIF fails to load")
+      } else {
+        return Text("Video unavailable", comment: "Accessibility label when a video fails to load")
+      }
     }
     if let alt = model.alt?.trimmingCharacters(in: .whitespacesAndNewlines), !alt.isEmpty {
-      return "\(kind): \(alt)"
+      if model.type.isGif {
+        return Text("GIF: \(alt)", comment: "Accessibility label for an animated GIF with author-provided alt text")
+      } else {
+        return Text("Video: \(alt)", comment: "Accessibility label for a video with author-provided alt text")
+      }
     }
-    return kind
+    if model.type.isGif {
+      return Text("GIF", comment: "Accessibility label for an animated GIF")
+    } else {
+      return Text("Video", comment: "Accessibility label for a video")
+    }
   }
 
   /// Visual only: the player element's label (`videoAccessibilityLabel`)
   /// already tells VoiceOver this is a GIF.
   private var gifBadge: some View {
-    MediaBadgeLabel(text: "GIF", isLarge: appState.appSettings.largerAltTextBadges)
+    MediaBadgeLabel(
+      text: String(localized: "GIF", comment: "Badge label indicating an animated GIF"),
+      isLarge: appState.appSettings.largerAltTextBadges
+    )
       .padding(10)
       .allowsHitTesting(false)
       .accessibilityHidden(true)
@@ -681,7 +695,11 @@ struct MuteButton: View {
     .padding(4)
     .contentShape(Circle().scale(1.5))
     .buttonStyle(MuteButtonStyle())
-    .accessibilityLabel(model.isMuted ? "Unmute" : "Mute")
+    .accessibilityLabel(
+      model.isMuted
+        ? Text("Unmute", comment: "Accessibility label for button to unmute video audio")
+        : Text("Mute", comment: "Accessibility label for button to mute video audio")
+    )
   }
 
   private func toggleMute() {

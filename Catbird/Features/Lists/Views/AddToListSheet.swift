@@ -337,7 +337,7 @@ struct AddToListSheet: View {
         .fill(.secondary.opacity(0.3))
         .frame(width: 40, height: 40)
         .overlay {
-          Text(String((userDisplayName ?? userHandle).prefix(1)).uppercased())
+          Text(verbatim: String((userDisplayName ?? userHandle).prefix(1)).localizedUppercase)
             .font(.headline)
             .fontWeight(.semibold)
         }
@@ -347,7 +347,7 @@ struct AddToListSheet: View {
           .font(.subheadline)
           .fontWeight(.medium)
         
-        Text("@\(userHandle)")
+        Text(verbatim: "@\(userHandle)")
           .font(.caption)
           .foregroundStyle(.secondary)
       }
@@ -395,7 +395,7 @@ struct ListSelectionRow: View {
             .lineLimit(2)
         }
         
-        Text(MemberCountFormatter.format(count: list.listItemCount ?? 0))
+        Text("\(list.listItemCount ?? 0) members", comment: "Number of members on a user list — %1$lld is the member count.")
           .font(.caption2)
           .foregroundStyle(.tertiary)
       }
@@ -416,7 +416,11 @@ struct ListSelectionRow: View {
       }
       .buttonStyle(.plain)
       .disabled(isOperationInProgress)
-      .accessibilityLabel(isMember ? "Remove from \(list.name)" : "Add to \(list.name)")
+      .accessibilityLabel(
+        isMember
+          ? Text("Remove from \(list.name)", comment: "Accessibility label to remove a user from a list — %1$@ is the list name.")
+          : Text("Add to \(list.name)", comment: "Accessibility label to add a user to a list — %1$@ is the list name.")
+      )
     }
     .contentShape(Rectangle())
     .onTapGesture {

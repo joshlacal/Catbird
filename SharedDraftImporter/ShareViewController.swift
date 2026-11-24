@@ -224,14 +224,33 @@ final class ShareViewController: UIViewController {
   /// When Catbird can't be opened, confirm the save and say where to finish the post.
   private func showSavedAndFinish() {
     presentMessage(
-      title: "Saved to Catbird",
-      message: "Open Catbird to finish your post.",
-      buttonTitle: "Done"
+      title: String(
+        localized: "Saved to Catbird",
+        comment: "Alert title confirming shared content was saved as a draft in Catbird."
+      ),
+      message: String(
+        localized: "Open Catbird to finish your post.",
+        comment: "Alert message instructing the user to open Catbird to publish their shared draft."
+      ),
+      buttonTitle: String(
+        localized: "Done",
+        comment: "Button dismissing the share extension confirmation alert."
+      )
     )
   }
 
   private func showErrorAndFinish(message: String) {
-    presentMessage(title: "Couldn’t Add to Catbird", message: message, buttonTitle: "OK")
+    presentMessage(
+      title: String(
+        localized: "Couldn’t Add to Catbird",
+        comment: "Alert title when shared content cannot be imported into Catbird."
+      ),
+      message: message,
+      buttonTitle: String(
+        localized: "OK",
+        comment: "Button dismissing an error alert in the share extension."
+      )
+    )
   }
 
   private func presentMessage(title: String, message: String, buttonTitle: String) {
@@ -252,14 +271,24 @@ final class ShareViewController: UIViewController {
     let hasText = !(text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
     guard hasText || !urls.isEmpty || !images.isEmpty || !videos.isEmpty else {
       logger.warning("SharedDraftImporter: Nothing shareable was found")
-      showErrorAndFinish(message: "This item can’t be shared to Catbird.")
+      showErrorAndFinish(
+        message: String(
+          localized: "This item can’t be shared to Catbird.",
+          comment: "Error message when a shared item has no supported text, link, image, or video."
+        )
+      )
       return
     }
     if let data = encodePayload(text: text, urls: urls, imageURLs: images, videos: videos) {
       storeDraft(data)
       openComposerInApp()
     } else {
-      showErrorAndFinish(message: "Catbird can share text, links, up to 4 images, or 1 video.")
+      showErrorAndFinish(
+        message: String(
+          localized: "Catbird can share text, links, up to 4 images, or 1 video.",
+          comment: "Error message when shared content exceeds Catbird's attachment size or count limits."
+        )
+      )
     }
   }
 }

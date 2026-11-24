@@ -187,17 +187,17 @@ enum BackupStatus: String, CaseIterable, Codable {
     var displayName: String {
         switch self {
         case .inProgress:
-            return "In Progress"
+            return String(localized: "In Progress", comment: "Backup status when a backup is currently running.")
         case .completed:
-            return "Completed"
+            return String(localized: "Completed", comment: "Backup status when a backup has finished.")
         case .failed:
-            return "Failed"
+            return String(localized: "Failed", comment: "Backup status when a backup failed.")
         case .verifying:
-            return "Verifying"
+            return String(localized: "Verifying", comment: "Backup status while checking backup integrity.")
         case .verified:
-            return "Verified"
+            return String(localized: "Verified", comment: "Backup status when integrity check passed.")
         case .corrupted:
-            return "Corrupted"
+            return String(localized: "Corrupted", comment: "Backup status when integrity check detected corruption.")
         }
     }
 

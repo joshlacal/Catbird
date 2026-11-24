@@ -298,7 +298,7 @@ final class PostManager {
             // Show reply success toast with tap to view
             appState.toastManager.show(
               ToastItem(
-                message: "Reply posted",
+                message: String(localized: "Reply posted", comment: "Toast shown when a reply is published"),
                 icon: "bubble.left.and.bubble.right.fill",
                 duration: 3.0,
 //                action: .navigateToThread(postURI: postURI.uriString())
@@ -313,7 +313,7 @@ final class PostManager {
             // Show post success toast with tap to view
             appState.toastManager.show(
               ToastItem(
-                message: "Post published",
+                message: String(localized: "Post published", comment: "Toast shown when a new post is published"),
                 icon: "paperplane.fill",
                 duration: 3.0,
 //                action: .navigateToPost(postURI: postURI.uriString(), authorHandle: "")
@@ -850,7 +850,11 @@ final class PostManager {
             }
             appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootRef.uri.uriString()))
             appState.toastManager.show(
-              ToastItem(message: "Replies posted", icon: "bubble.left.and.bubble.right.fill", duration: 3.0)
+              ToastItem(
+                message: String(localized: "Replies posted", comment: "Toast shown when a multi-post reply thread is published"),
+                icon: "bubble.left.and.bubble.right.fill",
+                duration: 3.0
+              )
             )
           } else {
             if let tempPost {
@@ -858,7 +862,11 @@ final class PostManager {
             }
             appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootRef.uri.uriString()))
             appState.toastManager.show(
-              ToastItem(message: "Thread published", icon: "paperplane.fill", duration: 3.0)
+              ToastItem(
+                message: String(localized: "Thread published", comment: "Toast shown when a multi-post thread is published"),
+                icon: "paperplane.fill",
+                duration: 3.0
+              )
             )
           }
           appState.stateInvalidationBus.notify(.profileUpdated(did: did))
@@ -1154,10 +1162,16 @@ final class PostManager {
     if hidden {
       if !hiddenURIs.contains(replyURI) {
         if hiddenURIs.count >= Self.maxHiddenReplies {
+          let maxHidden = Self.maxHiddenReplies
           throw NSError(
             domain: "ThreadgateModeration",
             code: 400,
-            userInfo: [NSLocalizedDescriptionKey: "Maximum of \(Self.maxHiddenReplies) hidden replies reached"]
+            userInfo: [
+              NSLocalizedDescriptionKey: String(
+                localized: "Maximum of \(maxHidden) hidden replies reached",
+                comment: "Error when trying to hide more replies than the threadgate limit allows — variable is the maximum count."
+              )
+            ]
           )
         }
         hiddenURIs.append(replyURI)
@@ -1239,11 +1253,11 @@ final class PostManager {
     var errorDescription: String? {
       switch self {
       case .clientNotInitialized:
-        return "You’re signed out. Sign in again and try again."
+        return String(localized: "You’re signed out. Sign in again and try again.", comment: "Error when performing a post action while signed out")
       case .badResponse(429):
-        return "Too many requests. Wait a moment and try again."
+        return String(localized: "Too many requests. Wait a moment and try again.", comment: "Error when rate limited during a post action")
       case .badResponse:
-        return "Something went wrong. Try again."
+        return String(localized: "Something went wrong. Try again.", comment: "Generic error when a post action receives a bad server response")
       }
     }
 
@@ -1263,9 +1277,9 @@ final class PostManager {
     var errorDescription: String? {
       switch self {
       case .invalidImageURI:
-        return "This image couldn’t be attached."
+        return String(localized: "This image couldn’t be attached.", comment: "Error when an image URI cannot be attached to a post")
       case .profileUnavailable:
-        return "Your profile hasn’t loaded yet."
+        return String(localized: "Your profile hasn’t loaded yet.", comment: "Error when user profile data is not yet available for creating a post")
       }
     }
   }

@@ -37,7 +37,7 @@ public struct StarterPackQRCodeCard: View {
            let starterpack = recordValue as? AppBskyGraphStarterpack {
             return starterpack.name
         }
-        return "Starter Pack"
+        return String(localized: "Starter Pack", comment: "Fallback title when a starter pack has no custom name.")
     }
     
     public var body: some View {
@@ -125,7 +125,7 @@ public struct StarterPackQRCodeCard: View {
                         .fontWeight(.bold)
                         .lineLimit(1)
                     
-                    Text("Starter pack by @\(starterPack.creator.handle)")
+                    Text("Starter pack by @\(starterPack.creator.handle.description)", comment: "Creator attribution on starter pack QR code card. Placeholder is the creator's Bluesky handle.")
                         .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                         .lineLimit(1)

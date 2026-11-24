@@ -28,10 +28,18 @@ final class FeedPaginationFooterCell: UICollectionViewCell {
   static let verticalPadding: CGFloat = 24
   /// The space between the failure message and the retry button.
   static let failureSpacing: CGFloat = 8
-  static let loadingAccessibilityLabel = "Loading more posts"
-  static let failureMessage = "Couldn’t load more posts."
-  static let retryTitle = "Try Again"
-  static let endMessage = "You’re all caught up"
+  static var loadingAccessibilityLabel: String {
+    String(localized: "Loading more posts", comment: "VoiceOver label for the pagination spinner at the bottom of a feed")
+  }
+  static var failureMessage: String {
+    String(localized: "Couldn’t load more posts.", comment: "Error message shown at the bottom of a feed when loading the next page fails")
+  }
+  static var retryTitle: String {
+    String(localized: "Try Again", comment: "Button to retry loading the next page of a feed")
+  }
+  static var endMessage: String {
+    String(localized: "You’re all caught up", comment: "Footer message shown when reaching the end of a feed")
+  }
 
   // MARK: - Views
 

@@ -14,6 +14,7 @@ struct PostStatsView: View {
     @Binding var path: NavigationPath
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.locale) private var locale
 
     private static let baseUnit: CGFloat = 3
     
@@ -50,62 +51,66 @@ struct PostStatsView: View {
                 ) {
                     // Replies stat
                     if let replyCount = post.replyCount, replyCount > 0 {
-                        HStack(spacing: 4) {
-                            Text("\(replyCount)")
-                                .fontWeight(.semibold)
-                            Text(statLabel(for: replyCount, singular: "reply", plural: "replies"))
-                                .foregroundColor(.secondary)
-                        }
-                        .accessibilityElement(children: .combine)
+                        Text(styledStatText(
+                            String(
+                                localized: "\(replyCount) replies",
+                                locale: locale,
+                                comment: "Reply count label in post stats — variable is the number of replies."
+                            ),
+                            count: replyCount
+                        ))
                     }
 
                     // Reposts stat with tap gesture
                     if let repostCount = post.repostCount, repostCount > 0 {
-                        HStack(spacing: 4) {
-                            Text("\(repostCount)")
-                                .fontWeight(.semibold)
-                            Text(statLabel(for: repostCount, singular: "repost"))
-                                .foregroundColor(.secondary)
-                        }
+                        Text(styledStatText(
+                            String(
+                                localized: "\(repostCount) reposts",
+                                locale: locale,
+                                comment: "Repost count label in post stats — variable is the number of reposts."
+                            ),
+                            count: repostCount
+                        ))
                         .contentShape(Rectangle())
                         .onTapGesture {
                             path.append(NavigationDestination.postReposts(post.uri.uriString()))
                         }
-                        .accessibilityElement(children: .combine)
                         .accessibilityAddTraits(.isButton)
                         .accessibilityHint("Shows who reposted")
                     }
                     
                     // Likes stat with tap gesture
                     if let likeCount = post.likeCount, likeCount > 0 {
-                        HStack(spacing: 4) {
-                            Text("\(likeCount)")
-                                .fontWeight(.semibold)
-                            Text(statLabel(for: likeCount, singular: "like"))
-                                .foregroundColor(.secondary)
-                        }
+                        Text(styledStatText(
+                            String(
+                                localized: "\(likeCount) likes",
+                                locale: locale,
+                                comment: "Like count label in post stats — variable is the number of likes."
+                            ),
+                            count: likeCount
+                        ))
                         .contentShape(Rectangle())
                         .onTapGesture {
                             path.append(NavigationDestination.postLikes(post.uri.uriString()))
                         }
-                        .accessibilityElement(children: .combine)
                         .accessibilityAddTraits(.isButton)
                         .accessibilityHint("Shows who liked")
                     }
                     
                     // Quotes stat with tap gesture
                     if let quoteCount = post.quoteCount, quoteCount > 0 {
-                        HStack(spacing: 4) {
-                            Text("\(quoteCount)")
-                                .fontWeight(.semibold)
-                            Text(statLabel(for: quoteCount, singular: "quote"))
-                                .foregroundColor(.secondary)
-                        }
+                        Text(styledStatText(
+                            String(
+                                localized: "\(quoteCount) quotes",
+                                locale: locale,
+                                comment: "Quote count label in post stats — variable is the number of quote posts."
+                            ),
+                            count: quoteCount
+                        ))
                         .contentShape(Rectangle())
                         .onTapGesture {
                             path.append(NavigationDestination.postQuotes(post.uri.uriString()))
                         }
-                        .accessibilityElement(children: .combine)
                         .accessibilityAddTraits(.isButton)
                         .accessibilityHint("Shows quotes of this post")
                     }
@@ -127,10 +132,20 @@ struct PostStatsView: View {
 }
 
 private extension PostStatsView {
-    /// Returns a localized-friendly stat label given the count and base word.
-    func statLabel(for count: Int, singular: String, plural: String? = nil) -> String {
-        let resolvedPlural = plural ?? singular + "s"
-        return count == 1 ? singular : resolvedPlural
+    /// Styles the locale-formatted count as primary bold while keeping the surrounding label secondary,
+    /// preserving any language's word order without duplicating digits or emitting bare `"%lld"` keys.
+    func styledStatText(_ localizedText: String, count: Int) -> AttributedString {
+        var attributed = AttributedString(localizedText)
+        attributed.foregroundColor = .secondary
+        let formattedCount = count.formatted(.number.locale(locale))
+        if let range = attributed.range(of: formattedCount) {
+            attributed[range].foregroundColor = .primary
+            attributed[range].inlinePresentationIntent = .stronglyEmphasized
+        } else if let fallbackRange = attributed.range(of: String(count)) {
+            attributed[fallbackRange].foregroundColor = .primary
+            attributed[fallbackRange].inlinePresentationIntent = .stronglyEmphasized
+        }
+        return attributed
     }
 
     @ViewBuilder
@@ -192,15 +207,27 @@ private extension PostStatsView {
 
         let remaining = knownLikers.count - 1
         if remaining <= 0 || actors.count == 1 {
-            return "Liked by \(firstName)"
+            return String(
+                localized: "Liked by \(firstName)",
+                locale: locale,
+                comment: "Attribution when one followed user liked a post — variable is their display name or handle."
+            )
         } else if actors.count == 2 && remaining == 1 {
             let second = actors[1]
             let secondName = second.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
                 ? second.displayName!
                 : "@\(second.handle)"
-            return "Liked by \(firstName) and \(secondName)"
+            return String(
+                localized: "Liked by \(firstName) and \(secondName)",
+                locale: locale,
+                comment: "Attribution when two followed users liked a post — first and second variables are their display names or handles."
+            )
         } else {
-            return "Liked by \(firstName) and \(remaining) \(remaining == 1 ? "other" : "others")"
+            return String(
+                localized: "Liked by \(firstName) and \(remaining) others",
+                locale: locale,
+                comment: "Attribution when multiple users liked a post — first variable is a followed user's name, second is the remaining count."
+            )
         }
     }
 }

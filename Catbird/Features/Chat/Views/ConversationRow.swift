@@ -8,6 +8,7 @@ struct ConversationRow: View {
   let currentUserDID: String  // Current user's DID to identify the other member
 
   @Environment(AppState.self) private var appState
+  @Environment(\.locale) private var locale
 
   private var displayLabel: String {
     convo.displayTitle(currentUserDID: currentUserDID)
@@ -26,29 +27,67 @@ struct ConversationRow: View {
   
   // Accessibility description for screen readers
   private var accessibilityDescription: String {
-    let unreadText = convo.unreadCount > 0 ? ", \(convo.unreadCount) unread message\(convo.unreadCount == 1 ? "" : "s")" : ""
-    let conversationKind = convo.isGroupConversation ? "Group chat" : "Conversation with"
-    let mutedText = convo.muted ? ", muted" : ""
+    var parts: [String] = []
+    if convo.isGroupConversation {
+      parts.append(
+        String(
+          localized: "Group chat \(displayLabel)",
+          comment: "VoiceOver prefix for a group conversation row (%@ = group title)"
+        )
+      )
+    } else {
+      parts.append(
+        String(
+          localized: "Conversation with \(displayLabel)",
+          comment: "VoiceOver prefix for a direct message row (%@ = participant name)"
+        )
+      )
+    }
 
-    var messageText = "No messages yet"
+    if convo.unreadCount > 0 {
+      parts.append(
+        String(
+          localized: "\(convo.unreadCount) unread messages",
+          comment: "VoiceOver unread count for a conversation (%lld = unread message count)"
+        )
+      )
+    }
+
+    if convo.muted {
+      parts.append(String(localized: "Muted", comment: "VoiceOver status when a conversation is muted"))
+    }
+
     if let lastMessage = convo.lastMessage {
-      messageText = LastMessagePreview.previewText(
+      let preview = LastMessagePreview.previewText(
         for: lastMessage,
         currentUserDID: currentUserDID,
         groupMembers: convo.isGroupConversation ? convo.members : []
       )
       if let date = lastMessageDate(lastMessage) {
-        messageText += ", \(formatDate(date))"
+        parts.append(
+          String(
+            localized: "\(preview), \(formatDate(date))",
+            comment: "VoiceOver last message and timestamp (%1$@ = message preview, %2$@ = formatted timestamp)"
+          )
+        )
+      } else {
+        parts.append(preview)
       }
+    } else {
+      parts.append(String(localized: "No messages yet", comment: "Placeholder when a conversation has no messages"))
     }
 
-    return "\(conversationKind) \(displayLabel)\(unreadText)\(mutedText). \(messageText)"
+    return parts.formatted(.list(type: .and, width: .narrow))
   }
 
   var body: some View {
     HStack(spacing: DesignTokens.Spacing.base) {
       avatarView
-        .accessibilityLabel(convo.isGroupConversation ? "\(displayLabel) group picture" : "\(displayLabel) profile picture")
+        .accessibilityLabel(
+          convo.isGroupConversation
+            ? Text("\(displayLabel) group picture", comment: "Accessibility label for group avatar (%@ = group title)")
+            : Text("\(displayLabel) profile picture", comment: "Accessibility label for direct conversation avatar (%@ = participant name)")
+        )
 
       VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
         HStack(spacing: DesignTokens.Spacing.xs) {
@@ -80,13 +119,24 @@ struct ConversationRow: View {
 
           // Unread message count badge
           if convo.unreadCount > 0 {
-            Text(convo.unreadCount > 99 ? "99+" : "\(convo.unreadCount)")
-              .font(.caption2.weight(.bold))
-              .foregroundColor(.white)
-              .padding(.horizontal, 6)
-              .frame(minWidth: 22, minHeight: 22)
-              .background(Capsule().fill(Color.accentColor))
-              .accessibilityLabel("\(convo.unreadCount) unread message\(convo.unreadCount == 1 ? "" : "s")")
+            Group {
+              if convo.unreadCount > 99 {
+                Text("99+", comment: "Badge text when unread message count exceeds 99")
+              } else {
+                Text(convo.unreadCount, format: .number)
+              }
+            }
+            .font(.caption2.weight(.bold))
+            .foregroundColor(.white)
+            .padding(.horizontal, 6)
+            .frame(minWidth: 22, minHeight: 22)
+            .background(Capsule().fill(Color.accentColor))
+            .accessibilityLabel(
+              Text(
+                "\(convo.unreadCount) unread messages",
+                comment: "Accessibility label for unread message count badge (%lld = unread message count)"
+              )
+            )
           }
 
           // Timestamp of the last message
@@ -97,7 +147,12 @@ struct ConversationRow: View {
             .fixedSize(horizontal: true, vertical: false)
               .foregroundColor(convo.unreadCount > 0 ? .accentColor : .secondary)
               .fontWeight(convo.unreadCount > 0 ? .medium : .regular)
-              .accessibilityLabel("Last message \(formatDate(date))")
+              .accessibilityLabel(
+                Text(
+                  "Last message \(formatDate(date))",
+                  comment: "Accessibility label for last message timestamp (%@ = formatted date/time)"
+                )
+              )
           }
         }
 
@@ -164,24 +219,17 @@ struct ConversationRow: View {
     let now = Date()
 
     if calendar.isDateInToday(date) {
-      return date.formatted(date: .omitted, time: .shortened)
+      return date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale))
     } else if calendar.isDateInYesterday(date) {
-      return "Yesterday"
+      return String(localized: "Yesterday", comment: "Timestamp label for messages sent yesterday")
     } else if let daysAgo = calendar.dateComponents([.day], from: date, to: now).day, daysAgo < 7 {
       // Show day name for dates within the last week
-      return Self.weekdayFormatter.string(from: date)
+      return date.formatted(.dateTime.locale(locale).weekday(.wide))
     } else {
       // Short date with a two-digit year, as in Messages ("9/29/26", not "9/29/2026").
-      return date.formatted(.dateTime.month(.defaultDigits).day().year(.twoDigits))
+      return date.formatted(.dateTime.locale(locale).month(.defaultDigits).day().year(.twoDigits))
     }
   }
-
-  private static let weekdayFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.locale = .autoupdatingCurrent
-    formatter.setLocalizedDateFormatFromTemplate("EEEE")
-    return formatter
-  }()
 }
 
 // MARK: - Last Message Preview Helper View
@@ -191,21 +239,17 @@ struct LastMessagePreview: View {
   let lastMessage: ChatBskyConvoDefs.ConvoViewLastMessageUnion
   var groupMembers: [ChatBskyActorDefs.ProfileViewBasic] = []
 
-  private static func senderPrefix(
+  private static func senderFirstName(
     for messageView: ChatBskyConvoDefs.MessageView,
-    currentUserDID: String,
     groupMembers: [ChatBskyActorDefs.ProfileViewBasic]
-  ) -> String {
+  ) -> String? {
     let senderDID = messageView.sender.did.didString()
-    if senderDID == currentUserDID {
-      return "You: "
-    }
     guard let sender = groupMembers.first(where: { $0.did.didString() == senderDID }) else {
-      return ""
+      return nil
     }
     let name = sender.chatDisplayName
     let firstName = name.split(separator: " ").first.map(String.init) ?? name
-    return firstName.isEmpty ? "" : "\(firstName): "
+    return firstName.isEmpty ? nil : firstName
   }
 
   /// Plain-text preview of a conversation's last message, shared by the row
@@ -217,27 +261,73 @@ struct LastMessagePreview: View {
   ) -> String {
     switch lastMessage {
     case .chatBskyConvoDefsMessageView(let messageView):
-      let prefix = senderPrefix(for: messageView, currentUserDID: currentUserDID, groupMembers: groupMembers)
+      let isSelf = messageView.sender.did.didString() == currentUserDID
+      let firstName = isSelf ? nil : senderFirstName(for: messageView, groupMembers: groupMembers)
+
       guard messageView.text.isEmpty, let embed = messageView.embed else {
-        return "\(prefix)\(messageView.text)"
+        if isSelf {
+          return String(
+            localized: "You: \(messageView.text)",
+            comment: "Last message preview when sent by current user (%@ = message text)"
+          )
+        }
+        if let firstName {
+          return String(
+            localized: "\(firstName): \(messageView.text)",
+            comment: "Last message preview in a group chat (%1$@ = sender name, %2$@ = message text)"
+          )
+        }
+        return messageView.text
       }
       switch embed {
       case .chatBskyEmbedJoinLinkView:
-        return "\(prefix)Sent a group invite"
+        if isSelf {
+          return String(
+            localized: "You: Sent a group invite",
+            comment: "Last message preview when the current user sent a group invite"
+          )
+        }
+        if let firstName {
+          return String(
+            localized: "\(firstName): Sent a group invite",
+            comment: "Last message preview in a group when a member sent a group invite (%@ = sender name)"
+          )
+        }
+        return String(
+          localized: "Sent a group invite",
+          comment: "Last message preview when a group invite was sent"
+        )
       default:
-        return "\(prefix)Shared a post"
+        if isSelf {
+          return String(
+            localized: "You: Shared a post",
+            comment: "Last message preview when the current user shared a post"
+          )
+        }
+        if let firstName {
+          return String(
+            localized: "\(firstName): Shared a post",
+            comment: "Last message preview in a group when a member shared a post (%@ = sender name)"
+          )
+        }
+        return String(
+          localized: "Shared a post",
+          comment: "Last message preview when a post was shared"
+        )
       }
     case .chatBskyConvoDefsDeletedMessageView:
-      return "Message deleted"
+      return String(localized: "Message deleted", comment: "Last message preview when the message was deleted")
     case .chatBskyConvoDefsSystemMessageView(let systemMessage):
       let profiles = Dictionary(
         groupMembers.map { ($0.did.didString(), $0) },
         uniquingKeysWith: { first, _ in first }
       )
       let event = BlueskyMessageAdapter.parseSystemEvent(systemMessageView: systemMessage, relatedProfiles: profiles)
-      return event.messageText.isEmpty ? "Group updated" : event.messageText
+      return event.messageText.isEmpty
+        ? String(localized: "Group updated", comment: "Fallback last message preview for a group system event")
+        : event.messageText
     case .unexpected:
-      return "Unsupported message"
+      return String(localized: "Unsupported message", comment: "Last message preview for an unsupported message type")
     }
   }
 

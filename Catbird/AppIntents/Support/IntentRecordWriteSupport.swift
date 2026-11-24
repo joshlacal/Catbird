@@ -16,7 +16,11 @@ enum IntentRecordWriteSupport {
   static func recordKey(fromViewerURI uri: ATProtocolURI) throws -> RecordKey {
     guard let rkey = uri.recordKey, !rkey.isEmpty else {
       throw IntentError.invalidParameter(
-        "Catbird couldn’t find the existing like, repost or follow to undo.")
+        LocalizedStringResource(
+          "Catbird couldn’t find the existing like, repost or follow to undo.",
+          comment: "Error spoken by Siri or shown in Shortcuts when an undo action cannot extract a record key."
+        )
+      )
     }
     return try RecordKey(keyString: rkey)
   }

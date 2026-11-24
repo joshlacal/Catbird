@@ -66,22 +66,37 @@ public struct StarterPackDraft: Sendable, Equatable {
     
     public var validationError: String? {
         if trimmedName.isEmpty {
-            return "Name cannot be empty."
+            return String(localized: "Name cannot be empty.", comment: "Validation error when starter pack name is empty.")
         }
         if trimmedName.count > Self.maxNameLength {
-            return "Name must be \(Self.maxNameLength) characters or fewer."
+            return String(
+                localized: "Name must be \(Self.maxNameLength) characters or fewer.",
+                comment: "Validation error when starter pack name exceeds maximum character limit."
+            )
         }
         if description.count > Self.maxDescriptionLength {
-            return "Description must be \(Self.maxDescriptionLength) characters or fewer."
+            return String(
+                localized: "Description must be \(Self.maxDescriptionLength) characters or fewer.",
+                comment: "Validation error when starter pack description exceeds maximum character limit."
+            )
         }
         if profiles.count < Self.minProfilesCount {
-            return "Please select at least \(Self.minProfilesCount) profile."
+            return String(
+                localized: "Please select at least \(Self.minProfilesCount) profiles.",
+                comment: "Validation error when starter pack has fewer than the minimum required profiles."
+            )
         }
         if profiles.count > Self.maxProfilesCount {
-            return "Maximum of \(Self.maxProfilesCount) profiles allowed."
+            return String(
+                localized: "Maximum of \(Self.maxProfilesCount) profiles allowed.",
+                comment: "Validation error when starter pack exceeds the maximum allowed profiles."
+            )
         }
         if feeds.count > Self.maxFeedsCount {
-            return "Maximum of \(Self.maxFeedsCount) feeds allowed."
+            return String(
+                localized: "Maximum of \(Self.maxFeedsCount) feeds allowed.",
+                comment: "Validation error when starter pack exceeds the maximum allowed custom feeds."
+            )
         }
         return nil
     }

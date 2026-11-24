@@ -324,7 +324,7 @@ struct LinkPreviewAnimator: View {
             
             // Link details
             VStack(alignment: .leading, spacing: 4) {
-                Text(url.host ?? "Link")
+                Text(url.host ?? String(localized: "Link", comment: "Fallback title for a URL preview when host is unavailable"))
                     .font(.subheadline)
                     .fontWeight(.medium)
                     .opacity(textOpacity)

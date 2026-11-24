@@ -80,7 +80,7 @@ struct RepostsView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
             }
         }
-        .navigationTitle("Reposts")
+        .navigationTitle(Text("Reposts", comment: "Navigation bar title for users who reposted this post"))
         .task {
             // `.task` restarts each time the screen reappears, such as on the way
             // back from a reposter's profile; keep the loaded pages and scroll position.

@@ -20,6 +20,14 @@ public struct TopicFeedView: View {
     case latest = "Latest"
 
     public var id: String { rawValue }
+    var localizedTitle: LocalizedStringResource {
+      switch self {
+      case .top:
+        return LocalizedStringResource("Top", comment: "Topic feed sort segment showing top posts")
+      case .latest:
+        return LocalizedStringResource("Latest", comment: "Topic feed sort segment showing most recent posts")
+      }
+    }
     var sortKey: String {
       switch self {
       case .top: return "top"
@@ -46,7 +54,7 @@ public struct TopicFeedView: View {
     VStack(spacing: 0) {
       Picker("Sort", selection: $selectedTab) {
         ForEach(Tab.allCases) { tab in
-          Text(tab.rawValue).tag(tab)
+          Text(tab.localizedTitle).tag(tab)
         }
       }
       .pickerStyle(.segmented)
@@ -249,7 +257,7 @@ final class TopicTabState {
     topic: String, cursor: String?, appState: AppState
   ) async -> (posts: [AppBskyFeedDefs.PostView], cursor: String?)? {
     guard let client = appState.atProtoClient else {
-      errorMessage = "Couldn’t load posts. Sign in again and try again."
+      errorMessage = String(localized: "Couldn’t load posts. Sign in again and try again.", comment: "Error message when topic posts cannot load due to missing session")
       return nil
     }
 
@@ -264,7 +272,7 @@ final class TopicTabState {
       )
       guard (200...299).contains(responseCode), let data else {
         logger.error("Topic search failed with status \(responseCode)")
-        errorMessage = "Couldn’t load posts. Pull to try again."
+        errorMessage = String(localized: "Couldn’t load posts. Pull to try again.", comment: "Error message when topic search returns a server error")
         return nil
       }
       let settings = await appState.buildFilterSettings()

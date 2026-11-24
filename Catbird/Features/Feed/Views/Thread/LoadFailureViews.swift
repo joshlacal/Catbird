@@ -14,13 +14,20 @@ enum LoadFailureCopy {
 
   static func suggestion(for kind: UserFacingError.Kind) -> String {
     switch kind {
-    case .offline: return "Check your connection and try again."
-    case .timedOut: return "The server took too long to respond. Try again."
-    case .rateLimited: return "Wait a moment and try again."
-    case .signInRequired: return "Sign in again and try again."
-    case .server: return "The server is having trouble right now. Try again later."
-    case .notFound: return "This post may have been deleted."
-    case .cancelled, .notAllowed, .other: return "Something went wrong. Try again."
+    case .offline:
+      return String(localized: "Check your connection and try again.", comment: "Recovery suggestion when loading fails due to being offline")
+    case .timedOut:
+      return String(localized: "The server took too long to respond. Try again.", comment: "Recovery suggestion when a request times out")
+    case .rateLimited:
+      return String(localized: "Wait a moment and try again.", comment: "Recovery suggestion when rate limited")
+    case .signInRequired:
+      return String(localized: "Sign in again and try again.", comment: "Recovery suggestion when authentication has expired")
+    case .server:
+      return String(localized: "The server is having trouble right now. Try again later.", comment: "Recovery suggestion when the server returns an error")
+    case .notFound:
+      return String(localized: "This post may have been deleted.", comment: "Recovery suggestion when a post is not found")
+    case .cancelled, .notAllowed, .other:
+      return String(localized: "Something went wrong. Try again.", comment: "Generic recovery suggestion when loading fails")
     }
   }
 
@@ -31,7 +38,7 @@ enum LoadFailureCopy {
 
 /// Full-screen state shown when the first page of a list fails to load.
 struct ListLoadFailureView: View {
-  let title: String
+  let title: LocalizedStringKey
   let error: Error
   let onRetry: () -> Void
 

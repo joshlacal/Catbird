@@ -389,7 +389,7 @@ class EnhancedVideoPlayerController {
     private func setupNowPlayingInfo() {
         // iOS 18: Enhanced now playing info
         var nowPlayingInfo = [String: Any]()
-        nowPlayingInfo[MPMediaItemPropertyTitle] = "Video Title"
+        nowPlayingInfo[MPMediaItemPropertyTitle] = String(localized: "Video", comment: "Fallback Now Playing title for video playback")
         nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
         nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
         nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = player.rate
@@ -466,10 +466,10 @@ enum PlaybackSpeed: CaseIterable {
     
     var label: String {
         switch self {
-        case .slow: return "0.5x"
-        case .normal: return "1x"
-        case .fast: return "1.5x"
-        case .veryFast: return "2x"
+        case .slow: return String(localized: "0.5x", comment: "Half-speed video playback multiplier")
+        case .normal: return String(localized: "1x", comment: "Normal-speed video playback multiplier")
+        case .fast: return String(localized: "1.5x", comment: "1.5x video playback speed multiplier")
+        case .veryFast: return String(localized: "2x", comment: "Double-speed video playback multiplier")
         }
     }
     
@@ -577,6 +577,7 @@ struct CustomVideoControlsOverlay: View {
                             Image(systemName: "square.and.arrow.up")
                                 .foregroundColor(.white)
                         }
+                        .accessibilityLabel("Share Video")
                         
                         // Fullscreen toggle
                         Button {
@@ -585,6 +586,7 @@ struct CustomVideoControlsOverlay: View {
                             Image(systemName: isFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
                                 .foregroundColor(.white)
                         }
+                        .accessibilityLabel(isFullScreen ? "Exit Full Screen" : "Enter Full Screen")
                     }
                     .padding()
                     .background(LinearGradient(
@@ -617,6 +619,7 @@ struct CustomVideoControlsOverlay: View {
                                     .font(.title2)
                                     .foregroundColor(.white)
                             }
+                            .accessibilityLabel("Skip Back 15 Seconds")
                             
                             // Play/Pause
                             Button {
@@ -626,6 +629,11 @@ struct CustomVideoControlsOverlay: View {
                                     .font(.largeTitle)
                                     .foregroundColor(.white)
                             }
+                            .accessibilityLabel(
+                                playerController.isPlaying
+                                    ? Text("Pause", comment: "Accessibility label for button to pause video")
+                                    : Text("Play", comment: "Accessibility label for button to play video")
+                            )
                             
                             // Skip forward
                             Button {
@@ -635,6 +643,7 @@ struct CustomVideoControlsOverlay: View {
                                     .font(.title2)
                                     .foregroundColor(.white)
                             }
+                            .accessibilityLabel("Skip Forward 15 Seconds")
                             
                             Spacer()
                             
@@ -655,6 +664,7 @@ struct CustomVideoControlsOverlay: View {
                                     .background(Color.white.opacity(0.2))
                                     .clipShape(Capsule())
                             }
+                            .accessibilityLabel("Playback Speed")
                         }
                         .padding(.horizontal)
                     }
@@ -689,7 +699,7 @@ struct CustomVideoControlsOverlay: View {
 
 struct HDRBadge: View {
     var body: some View {
-        Text("HDR")
+        Text(verbatim: "HDR")
             .font(.caption.bold())
             .foregroundColor(.white)
             .padding(.horizontal, 8)
@@ -721,7 +731,7 @@ struct VideoBitrateIndicator: View {
     }
     
     var body: some View {
-        Text(qualityLabel)
+        Text(verbatim: qualityLabel)
             .font(.caption.bold())
             .foregroundColor(.white)
             .padding(.horizontal, 8)
@@ -739,6 +749,7 @@ struct VideoProgressBar: View {
   let onSeek: (Double) -> Void
 
   @Environment(\.isEnabled) private var environmentIsEnabled
+  @Environment(\.locale) private var locale
   @GestureState private var isDragging = false
   @State private var dragTime: Double = 0
 
@@ -802,7 +813,12 @@ struct VideoProgressBar: View {
     .opacity(canSeek ? 1 : 0.5)
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("Video progress")
-    .accessibilityValue("\(timeDescription(displayTime)) of \(timeDescription(duration))")
+    .accessibilityValue(
+      Text(
+        "\(timeDescription(displayTime)) of \(timeDescription(duration))",
+        comment: "Accessibility value for video progress bar showing elapsed time and total duration"
+      )
+    )
     .accessibilityAdjustableAction { direction in
       guard canSeek else { return }
       let delta: Double
@@ -817,9 +833,9 @@ struct VideoProgressBar: View {
 
   private func timeDescription(_ value: Double) -> String {
     let totalSeconds = Int(min(Double(Int.max / 2), VideoPlaybackTimeline.duration(value)))
-    let minutes = totalSeconds / 60
-    let seconds = totalSeconds % 60
-    return seconds < 10 ? "\(minutes):0\(seconds)" : "\(minutes):\(seconds)"
+    return Duration.seconds(totalSeconds).formatted(
+      Duration.TimeFormatStyle(pattern: .minuteSecond).locale(locale)
+    )
   }
 }
 

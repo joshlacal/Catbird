@@ -30,15 +30,15 @@ final class StreamplaceService {
       return components.url!
     }
     var formattedDuration: String {
-      let totalSeconds = (video.duration ?? 0) / 1_000_000_000
-      let hours = totalSeconds / 3600
-      let minutes = (totalSeconds % 3600) / 60
-      let seconds = totalSeconds % 60
-      if hours > 0 {
-        return String(format: "%dh %dm", hours, minutes)
-      } else {
-        return String(format: "%dm %ds", minutes, seconds)
-      }
+      formattedDuration(locale: .current)
+    }
+
+    func formattedDuration(locale: Locale) -> String {
+      let totalSeconds = max(0, (video.duration ?? 0) / 1_000_000_000)
+      let allowed: Set<Duration.UnitsFormatStyle.Unit> = totalSeconds >= 3600 ? [.hours, .minutes] : [.minutes, .seconds]
+      return Duration.seconds(totalSeconds).formatted(
+        Duration.UnitsFormatStyle(allowedUnits: allowed, width: .narrow).locale(locale)
+      )
     }
 
     static func == (lhs: VideoRecord, rhs: VideoRecord) -> Bool {

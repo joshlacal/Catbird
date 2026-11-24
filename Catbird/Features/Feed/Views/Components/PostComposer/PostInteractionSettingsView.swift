@@ -93,7 +93,7 @@ public struct PostInteractionSettingsView: View {
                 .frame(width: 24)
                 .foregroundStyle(.primary)
 
-              Text(ThreadgateSettings.ReplyOption.everybody.rawValue)
+              Text(ThreadgateSettings.ReplyOption.everybody.localizedTitle)
                 .foregroundStyle(.primary)
 
               Spacer()
@@ -121,7 +121,7 @@ public struct PostInteractionSettingsView: View {
                 .frame(width: 24)
                 .foregroundStyle(.primary)
 
-              Text(ThreadgateSettings.ReplyOption.nobody.rawValue)
+              Text(ThreadgateSettings.ReplyOption.nobody.localizedTitle)
                 .foregroundStyle(.primary)
 
               Spacer()
@@ -165,7 +165,7 @@ public struct PostInteractionSettingsView: View {
                     .frame(width: 24)
                     .foregroundStyle(.primary)
 
-                  Text(option.rawValue)
+                  Text(option.localizedTitle)
                     .foregroundStyle(.primary)
 
                   Spacer()
@@ -262,10 +262,12 @@ public struct PostInteractionSettingsView: View {
             if isSaving {
               ProgressView()
             } else {
-              Button("Save") {
+              Button {
                 Task {
                   await savePostPublishSettings()
                 }
+              } label: {
+                Text("Save", comment: "Button to save post interaction settings")
               }
               .disabled(isLoadingRecords || loadFailed)
             }
@@ -373,7 +375,7 @@ public struct PostInteractionSettingsView: View {
           existingTg = nil
         } else {
           loadFailed = true
-          errorMessage = "Couldn’t load reply settings. Try again."
+          errorMessage = String(localized: "Couldn’t load reply settings. Try again.", comment: "Error when loading post reply and quote settings fails")
           return
         }
       }
@@ -400,7 +402,7 @@ public struct PostInteractionSettingsView: View {
           existingPg = nil
         } else {
           loadFailed = true
-          errorMessage = "Couldn’t load reply settings. Try again."
+          errorMessage = String(localized: "Couldn’t load reply settings. Try again.", comment: "Error when loading post reply and quote settings fails")
           return
         }
       }
@@ -435,7 +437,7 @@ public struct PostInteractionSettingsView: View {
       await MainActor.run {
         appState.toastManager.show(
           ToastItem(
-            message: "Interaction settings updated",
+            message: String(localized: "Interaction settings updated", comment: "Toast shown when post reply and quote settings are saved"),
             icon: "checkmark.circle.fill",
             duration: 2.5
           )
@@ -445,7 +447,7 @@ public struct PostInteractionSettingsView: View {
         dismiss()
       }
     } catch {
-      errorMessage = "Couldn’t update reply settings. Try again."
+      errorMessage = String(localized: "Couldn’t update reply settings. Try again.", comment: "Error when saving post reply and quote settings fails")
       isSaving = false
     }
   }

@@ -22,15 +22,20 @@ enum SidebarItem: Hashable, Sendable {
     }
   }
 
+  /// Localized display label resource for sidebar row
+  var localizedLabel: LocalizedStringResource {
+    switch self {
+    case .search: return LocalizedStringResource("Search", comment: "macOS sidebar item label for Search.")
+    case .notifications: return LocalizedStringResource("Notifications", comment: "macOS sidebar item label for Notifications.")
+    case .chat: return LocalizedStringResource("Chat", comment: "macOS sidebar item label for Chat.")
+    case .profile: return LocalizedStringResource("Profile", comment: "macOS sidebar item label for Profile.")
+    case .feed: return LocalizedStringResource("Feed", comment: "macOS sidebar fallback item label for a feed.")
+    }
+  }
+
   /// Display label for sidebar row
   var label: String {
-    switch self {
-    case .search: return "Search"
-    case .notifications: return "Notifications"
-    case .chat: return "Chat"
-    case .profile: return "Profile"
-    case .feed: return "Feed" // Overridden by feed-specific name in sidebar
-    }
+    String(localized: localizedLabel)
   }
 }
 #endif

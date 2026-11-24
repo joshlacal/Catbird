@@ -129,8 +129,22 @@ struct UnifiedSystemMessageView: View {
     .buttonStyle(.plain)
     .frame(maxWidth: .infinity)
     .padding(.vertical, 4)
-    .accessibilityLabel("\(message.systemGroupEvents?.count ?? 0) chat updates, \(message.isExpanded ? "expanded" : "collapsed")")
-    .accessibilityHint("Double tap to \(message.isExpanded ? "collapse" : "expand")")
+    .accessibilityLabel(
+      message.isExpanded
+        ? Text(
+          "\(message.systemGroupEvents?.count ?? 0) chat updates, expanded",
+          comment: "Accessibility label for an expanded group of system chat updates. %lld is the number of updates."
+        )
+        : Text(
+          "\(message.systemGroupEvents?.count ?? 0) chat updates, collapsed",
+          comment: "Accessibility label for a collapsed group of system chat updates. %lld is the number of updates."
+        )
+    )
+    .accessibilityHint(
+      message.isExpanded
+        ? Text("Double tap to collapse", comment: "Accessibility hint to collapse grouped chat updates")
+        : Text("Double tap to expand", comment: "Accessibility hint to expand grouped chat updates")
+    )
   }
 }
 

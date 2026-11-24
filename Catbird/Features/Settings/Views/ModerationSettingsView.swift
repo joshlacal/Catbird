@@ -306,7 +306,7 @@ struct ModerationListView<T: Identifiable>: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .listRowBackground(Color.clear)
             } else if accounts.isEmpty {
-                Text("No \(isBlocked ? "blocked" : "muted") accounts")
+                Text(isBlocked ? "No blocked accounts" : "No muted accounts")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .listRowBackground(Color.clear)
@@ -341,7 +341,7 @@ struct ModerationListView<T: Identifiable>: View {
     
     private func removeModerationAction(forId id: String) async {
         guard let client = appState.atProtoClient else {
-            errorMessage = "Client not available"
+            errorMessage = String(localized: "Client not available", comment: "Error when ATProto client is unavailable.")
             return
         }
         
@@ -360,7 +360,7 @@ struct ModerationListView<T: Identifiable>: View {
                 let response = try await client.com.atproto.repo.deleteRecord(input: input)
                 
                 if response.responseCode != 200 {
-                    errorMessage = "Couldn’t unblock this account. Try again."
+                    errorMessage = String(localized: "Couldn’t unblock this account. Try again.", comment: "Error when unblocking an account fails.")
                     return
                 }
             } else {
@@ -369,7 +369,7 @@ struct ModerationListView<T: Identifiable>: View {
                 let code = try await client.app.bsky.graph.unmuteActor(input: input)
                 
                 if code != 200 {
-                    errorMessage = "Couldn’t unmute this account. Try again."
+                    errorMessage = String(localized: "Couldn’t unmute this account. Try again.", comment: "Error when unmuting an account fails.")
                     return
                 }
             }
@@ -416,7 +416,7 @@ struct ModerationAccountRow: View {
                         .fontWeight(.medium)
                 }
                 
-                Text("@\(handle)")
+                Text(verbatim: "@\(handle)")
                     .appFont(AppTextRole.callout)
                     .foregroundStyle(.secondary)
             }
@@ -436,7 +436,7 @@ struct ModerationAccountRow: View {
                     ProgressView()
                         .controlSize(.small)
                 } else {
-                    Text(isBlocked ? "Unblock" : "Unmute")
+                    Text(isBlocked ? "Unblock" : "Unmute", comment: "Action button to unblock or unmute an account.")
                         .appFont(AppTextRole.callout)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
@@ -528,34 +528,34 @@ struct AddLabelerView: View {
         Task { @MainActor in
             defer { isAdding = false }
             guard let client = appState.atProtoClient else {
-                errorMessage = "You’re signed out. Sign in and try again."
+                errorMessage = String(localized: "You’re signed out. Sign in and try again.", comment: "Error when user is signed out while adding a moderation service.")
                 return
             }
             
             let did: DID
             if requested.lowercased().hasPrefix("did:") {
                 guard let parsed = try? DID(didString: requested) else {
-                    errorMessage = "Couldn’t find a moderation service with that handle."
+                    errorMessage = String(localized: "Couldn’t find a moderation service with that handle.", comment: "Error when moderation service handle/DID cannot be resolved.")
                     return
                 }
                 did = parsed
             } else {
                 let handleString = (requested.hasPrefix("@") ? String(requested.dropFirst()) : requested).lowercased()
                 guard let handle = try? Handle(handleString: handleString) else {
-                    errorMessage = "Enter a handle like moderation.example.com."
+                    errorMessage = String(localized: "Enter a handle like moderation.example.com.", comment: "Validation error when moderation service handle format is invalid.")
                     return
                 }
                 do {
                     let (code, output) = try await client.com.atproto.identity.resolveHandle(input: .init(handle: handle))
                     guard code == 200, let output else {
-                        errorMessage = "Couldn’t find a moderation service with that handle."
+                        errorMessage = String(localized: "Couldn’t find a moderation service with that handle.", comment: "Error when moderation service handle/DID cannot be resolved.")
                         return
                     }
                     did = output.did
                 } catch {
                     guard manager.accountDID == account, appState.userDID == account else { return }
                     if UserFacingError.kind(of: error) == .other || UserFacingError.kind(of: error) == .notFound {
-                        errorMessage = "Couldn’t find a moderation service with that handle."
+                        errorMessage = String(localized: "Couldn’t find a moderation service with that handle.", comment: "Error when moderation service handle/DID cannot be resolved.")
                     } else {
                         errorMessage = UserFacingError.message(for: error, action: "add this moderation service")
                     }
@@ -567,14 +567,14 @@ struct AddLabelerView: View {
                 let (code, output) = try await client.app.bsky.labeler.getServices(input: .init(dids: [did], detailed: false))
                 guard manager.accountDID == account, appState.userDID == account else { return }
                 guard code == 200, let output, !output.views.isEmpty else {
-                    errorMessage = "This account isn’t a moderation service."
+                    errorMessage = String(localized: "This account isn’t a moderation service.", comment: "Error when entered handle resolves to a regular account rather than a labeler.")
                     return
                 }
                 
                 try await manager.addLabeler(did, expectedAccountDID: account)
                 guard manager.accountDID == account, appState.userDID == account else { return }
                 
-                successMessage = "Moderation service added."
+                successMessage = String(localized: "Moderation service added.", comment: "Confirmation message after subscribing to a moderation service.")
                 
                 // Clear the input field
                 serviceInput = ""
@@ -760,7 +760,7 @@ struct LabelPreferenceStatusRow: View {
     let title: String
     let description: String
     let value: LabelPreference?
-    let note: String
+    let note: LocalizedStringKey
     let systemImage: String
 
     var body: some View {

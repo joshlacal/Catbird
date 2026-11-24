@@ -39,17 +39,49 @@ struct SettingsCategoryIcon: View {
 }
 
 struct SettingsNavigationRow: View {
-    let title: String
-    var summary: String? = nil
+    private let titleText: Text
+    private let summaryText: Text?
     let systemImage: String
     let family: SettingsIconFamily
+
+    init(title: LocalizedStringKey, summary: LocalizedStringKey? = nil, systemImage: String, family: SettingsIconFamily) {
+        self.titleText = Text(title)
+        self.summaryText = summary.map { Text($0) }
+        self.systemImage = systemImage
+        self.family = family
+    }
+
+    @_disfavoredOverload
+    init(title: LocalizedStringKey, summary: String?, systemImage: String, family: SettingsIconFamily) {
+        self.titleText = Text(title)
+        self.summaryText = (summary?.isEmpty == false) ? summary.map { Text($0) } : nil
+        self.systemImage = systemImage
+        self.family = family
+    }
+
+    @_disfavoredOverload
+    init(title: String, summary: LocalizedStringKey, systemImage: String, family: SettingsIconFamily) {
+        self.titleText = Text(title)
+        self.summaryText = Text(summary)
+        self.systemImage = systemImage
+        self.family = family
+    }
+
+    @_disfavoredOverload
+    init(title: String, summary: String? = nil, systemImage: String, family: SettingsIconFamily) {
+        self.titleText = Text(title)
+        self.summaryText = (summary?.isEmpty == false) ? summary.map { Text($0) } : nil
+        self.systemImage = systemImage
+        self.family = family
+    }
+
     var body: some View {
         HStack(alignment: .center, spacing: DesignTokens.Spacing.base) {
             SettingsCategoryIcon(systemImage: systemImage, family: family)
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                 // Concrete colors: inside a Button label, hierarchical styles pick up the button tint.
-                Text(title).appFont(AppTextRole.body).foregroundStyle(Color.primary).fixedSize(horizontal: false, vertical: true)
-                if let summary, !summary.isEmpty { Text(summary).appFont(AppTextRole.subheadline).foregroundStyle(Color.secondary).fixedSize(horizontal: false, vertical: true) }
+                titleText.appFont(AppTextRole.body).foregroundStyle(Color.primary).fixedSize(horizontal: false, vertical: true)
+                if let summaryText { summaryText.appFont(AppTextRole.subheadline).foregroundStyle(Color.secondary).fixedSize(horizontal: false, vertical: true) }
             }
         }
         .accessibilityElement(children: .combine)
@@ -113,15 +145,36 @@ struct SettingsScopeSection: View {
     var scope: String = "Current account"
     var body: some View {
         Section {
-            LabeledContent("Applies to", value: appliesTo)
+            LabeledContent {
+                if let handle = currentHandle {
+                    Text(verbatim: "@\(handle)")
+                } else {
+                    Text(localizedScope)
+                }
+            } label: {
+                Text("Applies to", comment: "Settings row label indicating whether a setting applies to the current account or this device.")
+            }
         }
     }
 
-    /// The current account's handle when known, otherwise the scope label.
-    private var appliesTo: String {
-        guard scope == "Current account",
-              let handle = AppStateManager.shared.authentication.getCachedProfileData(for: appState.userDID)?.handle else { return scope }
-        return "@" + handle
+    private var currentHandle: String? {
+        guard scope == "Current account" else { return nil }
+        return AppStateManager.shared.authentication.getCachedProfileData(for: appState.userDID)?.handle
+    }
+
+    private var localizedScope: String {
+        switch scope {
+        case "Current account":
+            String(localized: "Current account", comment: "Scope value indicating a setting applies to the signed-in account.")
+        case "This device":
+            String(localized: "This device", comment: "Scope value indicating a setting applies to all accounts on this device.")
+        case "Current account on this device":
+            String(localized: "Current account on this device", comment: "Scope value indicating a setting applies to this account on the current device only.")
+        case "New posts for this account":
+            String(localized: "New posts for this account", comment: "Scope value indicating a setting applies to future posts composed on this account.")
+        default:
+            scope
+        }
     }
 }
 

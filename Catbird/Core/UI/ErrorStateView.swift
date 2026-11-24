@@ -70,29 +70,29 @@ struct ErrorStateView: View {
   private var errorDescription: String {
     switch UserFacingError.kind(of: error) {
     case .offline:
-      return "You’re offline. Check your connection and try again."
+      return String(localized: "You’re offline. Check your connection and try again.", comment: "Error state explanation when device has no internet connection.")
     case .timedOut:
-      return "This is taking longer than usual. Try again in a moment."
+      return String(localized: "This is taking longer than usual. Try again in a moment.", comment: "Error state explanation when network request times out.")
     case .rateLimited:
-      return "Too many requests. Wait a moment and try again."
+      return String(localized: "Too many requests. Wait a moment and try again.", comment: "Error state explanation when server rate-limits requests.")
     case .notFound:
-      return "This content isn’t available. It may have been deleted."
+      return String(localized: "This content isn’t available. It may have been deleted.", comment: "Error state explanation when requested content is 404/missing.")
     case .notAllowed:
-      return "You don’t have permission to view this."
+      return String(localized: "You don’t have permission to view this.", comment: "Error state explanation when access is forbidden.")
     case .signInRequired:
-      return "Sign in again to continue."
+      return String(localized: "Sign in again to continue.", comment: "Error state explanation when session requires re-authentication.")
     case .server:
-      return "The server is having trouble right now. Try again in a moment."
+      return String(localized: "The server is having trouble right now. Try again in a moment.", comment: "Error state explanation when server returns 5xx error.")
     case .cancelled, .other:
       // View models often wrap a bad HTTP response in an NSError whose code is the status.
       let code = (error as NSError).code
       if code == 429 {
-        return "Too many requests. Wait a moment and try again."
+        return String(localized: "Too many requests. Wait a moment and try again.", comment: "Error state explanation when server rate-limits requests.")
       }
       if (500...599).contains(code) {
-        return "The server is having trouble right now. Try again in a moment."
+        return String(localized: "The server is having trouble right now. Try again in a moment.", comment: "Error state explanation when server returns 5xx error.")
       }
-      return "Please try again."
+      return String(localized: "Please try again.", comment: "Generic fallback error state explanation.")
     }
   }
 }
@@ -224,7 +224,7 @@ let message: String
   
   // MARK: - Initialization
   
-  init(message: String = "Loading…", showProgress: Bool = true) {
+  init(message: String = String(localized: "Loading…", comment: "Default loading state message."), showProgress: Bool = true) {
     self.message = message
     self.showProgress = showProgress
   }
@@ -256,7 +256,7 @@ extension ErrorStateView {
   static func networkError(retryAction: @escaping () -> Void) -> ErrorStateView {
     ErrorStateView(
       error: NetworkError.connectionFailed,
-      context: "Please check your internet connection and try again.",
+      context: String(localized: "Please check your internet connection and try again.", comment: "Network error context message."),
       retryAction: retryAction
     )
   }
@@ -265,7 +265,7 @@ extension ErrorStateView {
   static func authenticationError(retryAction: (() -> Void)? = nil) -> ErrorStateView {
     ErrorStateView(
       error: AuthenticationError.sessionExpired,
-      context: "Your session has expired. Please log in again.",
+      context: String(localized: "Your session has expired. Please log in again.", comment: "Authentication error context message."),
       retryAction: retryAction
     )
   }
@@ -280,29 +280,31 @@ extension ContentUnavailableStateView {
       && feedName.lowercased() != "feed"
       && !feedName.hasPrefix("Feed: ")
       && !feedName.hasPrefix("List: ")
-    let title = hasName ? "No Posts in \(feedName)" : "No Posts Yet"
+    let title = hasName
+      ? String(localized: "No Posts in \(feedName)", comment: "Empty state title for a named feed — variable is feed name.")
+      : String(localized: "No Posts Yet", comment: "Empty state title when a feed has no posts.")
     if let onExplore = onExplore {
       return ContentUnavailableStateView(
         title: title,
-        description: "This feed doesn’t have any posts yet. Try refreshing, or explore other feeds to discover new posts.",
+        description: String(localized: "This feed doesn’t have any posts yet. Try refreshing, or explore other feeds to discover new posts.", comment: "Empty feed state description with explore option."),
         systemImage: "tray",
-        actionTitle: "Explore Feeds"
+        actionTitle: String(localized: "Explore Feeds", comment: "Button to browse feeds from empty feed state.")
       ) {
         onExplore()
       }
     } else if let onRefresh = onRefresh {
       return ContentUnavailableStateView(
         title: title,
-        description: "This feed doesn’t have any posts yet. Pull down to refresh or try again later.",
+        description: String(localized: "This feed doesn’t have any posts yet. Pull down to refresh or try again later.", comment: "Empty feed state description with refresh option."),
         systemImage: "tray",
-        actionTitle: "Refresh"
+        actionTitle: String(localized: "Refresh", comment: "Button to refresh an empty feed.")
       ) {
         onRefresh()
       }
     } else {
       return ContentUnavailableStateView(
         title: title,
-        description: "This feed doesn’t have any posts yet. Check back later for new posts.",
+        description: String(localized: "This feed doesn’t have any posts yet. Check back later for new posts.", comment: "Empty feed state description."),
         systemImage: "tray"
       )
     }
@@ -311,10 +313,10 @@ extension ContentUnavailableStateView {
   /// Create an empty following feed state view
   static func emptyFollowingFeed(onDiscover: @escaping () -> Void) -> ContentUnavailableStateView {
     ContentUnavailableStateView(
-      title: "Your Timeline is Empty",
-      description: "Follow some people to see their posts in your timeline. Discover interesting accounts to get started.",
+      title: String(localized: "Your Timeline is Empty", comment: "Empty state title when user's Following timeline has no posts."),
+      description: String(localized: "Follow some people to see their posts in your timeline. Discover interesting accounts to get started.", comment: "Empty Following timeline description."),
       systemImage: "person.2",
-      actionTitle: "Discover People"
+      actionTitle: String(localized: "Discover People", comment: "Button to discover accounts to follow from empty timeline.")
     ) {
       onDiscover()
     }
@@ -323,10 +325,10 @@ extension ContentUnavailableStateView {
   /// Create a content filtered state view
   static func contentFiltered(onAdjustFilters: @escaping () -> Void) -> ContentUnavailableStateView {
     ContentUnavailableStateView(
-      title: "All Content Filtered",
-      description: "Your current content filters are hiding all posts in this feed. You can adjust your filter settings to see more content.",
+      title: String(localized: "All Content Filtered", comment: "Empty state title when all posts in a feed are hidden by content filters."),
+      description: String(localized: "Your current content filters are hiding all posts in this feed. You can adjust your filter settings to see more content.", comment: "Empty state description when content filters hide all posts."),
       systemImage: "eye.slash",
-      actionTitle: "Adjust Filters"
+      actionTitle: String(localized: "Adjust Filters", comment: "Button to open content filter settings.")
     ) {
       onAdjustFilters()
     }
@@ -335,10 +337,10 @@ extension ContentUnavailableStateView {
   /// Create a network error state view for feeds
   static func feedNetworkError(onRetry: @escaping () -> Void) -> ContentUnavailableStateView {
     ContentUnavailableStateView(
-      title: "Can’t Load Feed",
-      description: "There was a problem loading this feed. Check your internet connection and try again.",
+      title: String(localized: "Can’t Load Feed", comment: "Error state title when a feed fails to load."),
+      description: String(localized: "There was a problem loading this feed. Check your internet connection and try again.", comment: "Error state description when a feed fails to load."),
       systemImage: "wifi.slash",
-      actionTitle: "Try Again"
+      actionTitle: String(localized: "Try Again", comment: "Retry button when feed fails to load.")
     ) {
       onRetry()
     }
@@ -355,11 +357,11 @@ enum NetworkError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .connectionFailed:
-      return "Unable to connect to the server"
+      return String(localized: "Unable to connect to the server", comment: "Network error description when connection fails.")
     case .requestTimeout:
-      return "The request timed out"
+      return String(localized: "The request timed out", comment: "Network error description when request times out.")
     case .serverError(let code):
-      return "Server error (\(code))"
+      return String(localized: "Server error (\(code))", comment: "Network error description with HTTP status code.")
     }
   }
 }
@@ -372,33 +374,33 @@ enum AuthenticationError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .sessionExpired:
-      return "Your session has expired"
+      return String(localized: "Your session has expired", comment: "Auth error description when session expires.")
     case .invalidCredentials:
-      return "Invalid username or password"
+      return String(localized: "Invalid username or password", comment: "Auth error description for invalid login credentials.")
     case .accountSuspended:
-      return "Your account has been suspended"
+      return String(localized: "Your account has been suspended", comment: "Auth error description when account is suspended.")
     }
   }
   
   var failureReason: String? {
     switch self {
     case .sessionExpired:
-      return "Your authentication session has timed out for security reasons."
+      return String(localized: "Your authentication session has timed out for security reasons.", comment: "Auth error failure reason when session expires.")
     case .invalidCredentials:
-      return "The username or password you entered is incorrect."
+      return String(localized: "The username or password you entered is incorrect.", comment: "Auth error failure reason for invalid credentials.")
     case .accountSuspended:
-      return "Your account access has been restricted due to policy violations."
+      return String(localized: "Your account access has been restricted due to policy violations.", comment: "Auth error failure reason when account is suspended.")
     }
   }
   
   var recoverySuggestion: String? {
     switch self {
     case .sessionExpired:
-      return "Please log out and log back in to continue."
+      return String(localized: "Please log out and log back in to continue.", comment: "Auth error recovery suggestion when session expires.")
     case .invalidCredentials:
-      return "Please check your username and password and try again."
+      return String(localized: "Please check your username and password and try again.", comment: "Auth error recovery suggestion for invalid credentials.")
     case .accountSuspended:
-      return "Please contact support for assistance with your account."
+      return String(localized: "Please contact support for assistance with your account.", comment: "Auth error recovery suggestion when account is suspended.")
     }
   }
 }

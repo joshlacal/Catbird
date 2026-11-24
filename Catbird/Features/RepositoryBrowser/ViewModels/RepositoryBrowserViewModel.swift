@@ -39,9 +39,11 @@ struct RepositoryData: Identifiable {
     }
 
     var successRate: String {
-        guard totalRecordCount > 0 else { return "0%" }
-        let percentage = Double(successfullyParsedCount) / Double(totalRecordCount) * 100
-        return String(format: "%.1f%%", percentage)
+        guard totalRecordCount > 0 else {
+            return 0.0.formatted(.percent.precision(.fractionLength(0)))
+        }
+        let ratio = Double(successfullyParsedCount) / Double(totalRecordCount)
+        return ratio.formatted(.percent.precision(.fractionLength(1)))
     }
 
     var parsingAgeDescription: String {
@@ -170,7 +172,10 @@ final class RepositoryBrowserViewModel {
             } catch {
                 await MainActor.run {
                     self.logger.error("Failed to load repositories and backups: \(error.localizedDescription)")
-                    self.errorMessage = "Failed to load repository data: \(error.localizedDescription)"
+                    self.errorMessage = String(
+                        localized: "Failed to load repository data: \(error.localizedDescription)",
+                        comment: "Error shown when loading parsed repository data fails. Placeholder is the error description."
+                    )
                     self.isLoading = false
                 }
             }
@@ -442,6 +447,23 @@ enum BrowserTab: String, CaseIterable {
     case search = "Search"
     case export = "Export"
 
+    var displayName: String {
+        switch self {
+        case .overview:
+            return String(localized: "Overview", comment: "Repository browser tab title for overview summary.")
+        case .timeline:
+            return String(localized: "Timeline", comment: "Repository browser tab title for chronological post timeline.")
+        case .connections:
+            return String(localized: "Connections", comment: "Repository browser tab title for social graph connections.")
+        case .media:
+            return String(localized: "Media", comment: "Repository browser tab title for media attachments.")
+        case .search:
+            return String(localized: "Search", comment: "Repository browser tab title for universal record search.")
+        case .export:
+            return String(localized: "Export", comment: "Repository browser tab title for data export.")
+        }
+    }
+
     var systemImage: String {
         switch self {
         case .overview:
@@ -467,6 +489,23 @@ enum DataTypeFilter: String, CaseIterable {
     case connections = "Connections"
     case media = "Media"
     case unknown = "Unknown"
+
+    var displayName: String {
+        switch self {
+        case .all:
+            return String(localized: "All", comment: "Filter option showing all repository record types.")
+        case .posts:
+            return String(localized: "Posts", comment: "Filter option showing only post records.")
+        case .profiles:
+            return String(localized: "Profiles", comment: "Filter option showing only profile records.")
+        case .connections:
+            return String(localized: "Connections", comment: "Filter option showing only social connection records.")
+        case .media:
+            return String(localized: "Media", comment: "Filter option showing only media records.")
+        case .unknown:
+            return String(localized: "Unknown", comment: "Filter option showing unrecognized record types.")
+        }
+    }
 }
 
 enum SortOrder: String, CaseIterable {
@@ -474,6 +513,19 @@ enum SortOrder: String, CaseIterable {
     case dateDescending = "Date (Newest First)"
     case alphabetical = "Alphabetical"
     case confidence = "Parse Confidence"
+
+    var displayName: String {
+        switch self {
+        case .dateAscending:
+            return String(localized: "Date (Oldest First)", comment: "Sort order option from oldest to newest.")
+        case .dateDescending:
+            return String(localized: "Date (Newest First)", comment: "Sort order option from newest to oldest.")
+        case .alphabetical:
+            return String(localized: "Alphabetical", comment: "Alphabetical sort order option.")
+        case .confidence:
+            return String(localized: "Parse Confidence", comment: "Sort order option by record parsing confidence score.")
+        }
+    }
 
     var systemImage: String {
         switch self {

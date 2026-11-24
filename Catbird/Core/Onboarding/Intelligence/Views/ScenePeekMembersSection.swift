@@ -22,7 +22,10 @@ struct ScenePeekMembersSection: View {
         memberGroup(
           title: lineupHeading,
           systemImage: "person.crop.circle.badge.checkmark",
-          caption: "Picking this scene follows these accounts, in this order.",
+          caption: String(
+            localized: "Picking this scene follows these accounts, in this order.",
+            comment: "Caption under the lineup accounts section inside the scene peek sheet."
+          ),
           members: sections.lineup,
           inLineup: isScenePicked,
           identifier: "intel.peek.lineupMembers"
@@ -30,9 +33,15 @@ struct ScenePeekMembersSection: View {
       }
       if !sections.more.isEmpty {
         memberGroup(
-          title: "More from this scene",
+          title: String(
+            localized: "More from this scene",
+            comment: "Section heading for additional community members beyond the default lineup."
+          ),
           systemImage: "person.3.sequence.fill",
-          caption: "Pin anyone here to add them too.",
+          caption: String(
+            localized: "Pin anyone here to add them too.",
+            comment: "Caption explaining how to pin additional scene members."
+          ),
           members: sections.more,
           inLineup: false,
           identifier: "intel.peek.moreMembers"
@@ -40,7 +49,10 @@ struct ScenePeekMembersSection: View {
       }
     } else if !sections.more.isEmpty {
       memberGroup(
-        title: "Representative Voices by Role",
+        title: String(
+          localized: "Representative Voices by Role",
+          comment: "Section heading for scene members when no fixed lineup count is reported."
+        ),
         systemImage: "person.3.sequence.fill",
         caption: nil,
         members: sections.more,
@@ -99,7 +111,9 @@ struct ScenePeekMemberRow: View {
 
   private var role: CommunityRole { CommunityRole(rawRole: member.role) }
   private var tierLabel: String? { SceneOnboardingViewModel.tierLabel(member.tier) }
-  private var displayName: String { profile?.displayName ?? "Community Creator" }
+  private var displayName: String {
+    profile?.displayName ?? String(localized: "Community Creator", comment: "Fallback display name for a community member whose profile is loading.")
+  }
 
   var body: some View {
     HStack(spacing: 12) {
@@ -135,7 +149,7 @@ struct ScenePeekMemberRow: View {
           }
         }
         if let handle = profile?.handle {
-          Text("@\(handle)")
+          Text(verbatim: "@\(handle)")
             .font(.caption)
             .foregroundStyle(.secondary)
             .lineLimit(1)
@@ -164,21 +178,39 @@ struct ScenePeekMemberRow: View {
       Image(systemName: "checkmark.circle.fill")
         .font(.title3)
         .foregroundStyle(Color.accentColor)
-        .accessibilityLabel("In your lineup")
+        .accessibilityLabel(Text("In your lineup", comment: "Accessibility label indicating member is already included in the starting lineup."))
     } else {
       Button(action: onTogglePin) {
-        Label(isPinned ? "Pinned" : "Pin", systemImage: isPinned ? "pin.fill" : "pin")
-          .font(.caption.weight(.semibold))
-          .foregroundStyle(isPinned ? .white : Color.accentColor)
-          .padding(.horizontal, 10)
-          .padding(.vertical, 6)
-          .background(
-            isPinned ? Color.accentColor : Color.accentColor.opacity(0.12),
-            in: Capsule()
-          )
+        Group {
+          if isPinned {
+            Label {
+              Text("Pinned", comment: "Button state showing creator is pinned into the starting lineup.")
+            } icon: {
+              Image(systemName: "pin.fill")
+            }
+          } else {
+            Label {
+              Text("Pin", comment: "Button action to pin a creator into the starting lineup.")
+            } icon: {
+              Image(systemName: "pin")
+            }
+          }
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(isPinned ? .white : Color.accentColor)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+          isPinned ? Color.accentColor : Color.accentColor.opacity(0.12),
+          in: Capsule()
+        )
       }
       .buttonStyle(.plain)
-      .accessibilityLabel(isPinned ? "Unpin \(displayName)" : "Pin \(displayName)")
+      .accessibilityLabel(
+        isPinned
+          ? Text("Unpin \(displayName)", comment: "Accessibility action to unpin a creator — variable is display name.")
+          : Text("Pin \(displayName)", comment: "Accessibility action to pin a creator — variable is display name.")
+      )
     }
   }
 }

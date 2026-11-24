@@ -110,13 +110,13 @@ struct MacOSBlueskyConversationView: View {
 
   private var conversationTitle: String {
     guard let convo = chatManager.conversations.first(where: { $0.id == convoId }) else {
-      return "Messages"
+      return String(localized: "Messages", comment: "Fallback navigation title for a direct message conversation on macOS")
     }
     let otherMembers = convo.members.filter { $0.did.description != appState.userDID }
     if let first = otherMembers.first {
       return first.displayName ?? first.handle.description
     }
-    return "Messages"
+    return String(localized: "Messages", comment: "Fallback navigation title for a direct message conversation on macOS")
   }
 
   /// Verified badge for a 1:1 conversation header only (single other member).

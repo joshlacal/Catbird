@@ -9,8 +9,12 @@ enum VideoUploadTransportMode {
 enum VideoUploadPolicy {
   static let maximumBytes: Int64 = 300_000_000
   static let maximumDuration: TimeInterval = 600
-  static let sizeMessage = "Videos must be 300 MB or smaller."
-  static let durationMessage = "Videos must be 10 minutes or shorter."
+  static var sizeMessage: String {
+    String(localized: "Videos must be 300 MB or smaller.", comment: "Validation message when selected video exceeds 300 MB size limit")
+  }
+  static var durationMessage: String {
+    String(localized: "Videos must be 10 minutes or shorter.", comment: "Validation message when selected video exceeds 10 minute duration limit")
+  }
 
   static func mimeType(for url: URL) -> String? {
     switch url.pathExtension.lowercased() {

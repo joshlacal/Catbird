@@ -66,7 +66,7 @@ final class ModeratedAccountsModel {
       let previousCursors = refresh ? Set<String>() : consumedCursors
       if let next = page.cursor, next == requestCursor || previousCursors.contains(next) {
         throw NSError(domain: "ModeratedAccounts", code: 1,
-                      userInfo: [NSLocalizedDescriptionKey: "The account list returned a repeated page. Try refreshing."])
+                      userInfo: [NSLocalizedDescriptionKey: String(localized: "The account list returned a repeated page. Try refreshing.", comment: "Error when paginated blocked/muted account list repeats a cursor.")])
       }
       var merged = refresh ? [] : entries
       for entry in page.entries {
@@ -80,7 +80,7 @@ final class ModeratedAccountsModel {
       hasLoaded = true
     } catch {
       guard generation == requestGeneration, transport.isCurrent() else { return }
-      errorMessage = UserFacingError.message(for: error, action: "load these accounts") ?? "Couldn’t load these accounts. Try again."
+      errorMessage = UserFacingError.message(for: error, action: "load these accounts") ?? String(localized: "Couldn’t load these accounts. Try again.", comment: "Error when loading blocked or muted accounts fails.")
     }
   }
 
@@ -95,14 +95,14 @@ final class ModeratedAccountsModel {
     do {
       guard try await transport.remove(entry.did) else {
         throw NSError(domain: "ModeratedAccounts", code: 2,
-                      userInfo: [NSLocalizedDescriptionKey: "The account couldn’t be removed. Try again."])
+                      userInfo: [NSLocalizedDescriptionKey: String(localized: "The account couldn’t be removed. Try again.", comment: "Error when unblocking or unmuting an account fails.")])
       }
       guard generation == requestGeneration, transport.isCurrent() else { return }
       entries.removeAll { $0.did == entry.did }
       retryRemoval = nil
     } catch {
       guard generation == requestGeneration, transport.isCurrent() else { return }
-      errorMessage = UserFacingError.message(for: error, action: "update this account") ?? "Couldn’t update this account. Try again."
+      errorMessage = UserFacingError.message(for: error, action: "update this account") ?? String(localized: "Couldn’t update this account. Try again.", comment: "Error when updating moderation state for an account fails.")
     }
   }
   func retry() async {
@@ -114,8 +114,19 @@ final class ModeratedAccountsModel {
 struct ModeratedAccountsSettingsView: View {
   enum Kind {
     case muted, blocked
-    var title: String { self == .blocked ? "Blocked Accounts" : "Muted Accounts" }
-    var action: String { self == .blocked ? "Unblock" : "Unmute" }
+    var title: String {
+      self == .blocked
+        ? String(localized: "Blocked Accounts", comment: "Settings screen title for blocked accounts.")
+        : String(localized: "Muted Accounts", comment: "Settings screen title for muted accounts.")
+    }
+    var action: LocalizedStringResource {
+      self == .blocked
+        ? LocalizedStringResource("Unblock", comment: "Button action to unblock an account.")
+        : LocalizedStringResource("Unmute", comment: "Button action to unmute an account.")
+    }
+    var confirmationTitle: LocalizedStringKey {
+      self == .blocked ? "Unblock Account?" : "Unmute Account?"
+    }
     var control: String { self == .blocked ? "moderation.blockedAccounts" : "moderation.mutedAccounts" }
   }
 
@@ -133,7 +144,7 @@ struct ModeratedAccountsSettingsView: View {
             ProfileAvatarView(url: entry.avatar, fallbackText: String(entry.handle.prefix(1).uppercased()), size: 40)
             VStack(alignment: .leading) {
               Text(entry.displayName ?? entry.handle)
-              Text("@\(entry.handle)").appFont(AppTextRole.subheadline).foregroundStyle(.secondary)
+              Text(verbatim: "@\(entry.handle)").appFont(AppTextRole.subheadline).foregroundStyle(.secondary)
             }
             Spacer()
             if model.removing.contains(entry.did) { ProgressView().controlSize(.small) }
@@ -141,7 +152,7 @@ struct ModeratedAccountsSettingsView: View {
               Button(kind.action) { selectedEntry = entry; showConfirmation = true }
                 .buttonStyle(.borderless)
                 .disabled(model.isLoading || !model.removing.isEmpty)
-                .accessibilityLabel("\(kind.action) @\(entry.handle)")
+                .accessibilityLabel(kind == .blocked ? Text("Unblock @\(entry.handle)", comment: "Accessibility label to unblock an account by handle.") : Text("Unmute @\(entry.handle)", comment: "Accessibility label to unmute an account by handle."))
             }
           }
         }
@@ -173,13 +184,19 @@ struct ModeratedAccountsSettingsView: View {
       await model.loadNextPage()
     }
     .refreshable { await model.loadNextPage(refresh: true) }
-    .confirmationDialog("\(kind.action) Account?", isPresented: $showConfirmation, titleVisibility: .visible) {
+    .confirmationDialog(kind.confirmationTitle, isPresented: $showConfirmation, titleVisibility: .visible) {
       Button(kind.action, role: .destructive) {
         if let entry = selectedEntry { Task { await model.remove(entry) } }
       }
       Button("Cancel", role: .cancel) { selectedEntry = nil }
     } message: {
-      if let entry = selectedEntry { Text("\(kind.action) @\(entry.handle)?") }
+      if let entry = selectedEntry {
+        if kind == .blocked {
+          Text("Unblock @\(entry.handle)?", comment: "Confirmation message asking whether to unblock an account by handle.")
+        } else {
+          Text("Unmute @\(entry.handle)?", comment: "Confirmation message asking whether to unmute an account by handle.")
+        }
+      }
     }
   }
 

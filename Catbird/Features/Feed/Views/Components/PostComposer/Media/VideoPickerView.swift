@@ -19,6 +19,7 @@ struct VideoPickerView: View {
     var onUpdateCaption: ((VideoCaption?) -> Void)? = nil
     var onRemoveCaption: (() -> Void)? = nil
     @State private var showingCaptionEditor: Bool = false
+    @Environment(\.locale) private var locale
 
     init(
         videoItem: Binding<PostComposerViewModel.MediaItem?>,
@@ -69,11 +70,18 @@ struct VideoPickerView: View {
                             VStack(spacing: 6) {
                                 // Alt text status
                                 HStack {
-                                    Text(videoItem.altText.isEmpty ? "Add description" : videoItem.altText)
-                                        .appFont(AppTextRole.caption)
-                                        .foregroundColor(videoItem.altText.isEmpty ? .gray : .primary)
-                                        .lineLimit(1)
-                                        .truncationMode(.tail)
+                                    Group {
+                                        if videoItem.altText.isEmpty {
+                                            Text("Add description")
+                                                .foregroundColor(.gray)
+                                        } else {
+                                            Text(videoItem.altText)
+                                                .foregroundColor(.primary)
+                                        }
+                                    }
+                                    .appFont(AppTextRole.caption)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
                                     
                                     Spacer()
                                     
@@ -92,13 +100,13 @@ struct VideoPickerView: View {
                                 HStack {
                                     if let caption = videoItem.caption {
                                         let langCode = caption.lang.lang.languageCode?.identifier ?? caption.lang.lang.minimalIdentifier
-                                        let langName = Locale.current.localizedString(forLanguageCode: langCode) ?? caption.lang.lang.minimalIdentifier
+                                        let langName = locale.localizedString(forLanguageCode: langCode) ?? caption.lang.lang.minimalIdentifier
                                         
                                         Image(systemName: "captions.bubble.fill")
                                             .appFont(AppTextRole.caption)
                                             .foregroundStyle(.tint)
                                         
-                                        Text("\(langName) (\(caption.filename))")
+                                        Text(verbatim: "\(langName) (\(caption.filename))")
                                             .appFont(AppTextRole.caption)
                                             .lineLimit(1)
                                             .truncationMode(.tail)
@@ -158,6 +166,7 @@ struct VideoPickerView: View {
                                     .fill(Color.black.opacity(0.3))
                             )
                     }
+                    .accessibilityLabel("Remove Video")
                     .padding(8)
                     .disabled(isUploading)
                 }
@@ -168,13 +177,13 @@ struct VideoPickerView: View {
                         switch uploadManager.uploadStatus {
                         case .uploading(let progress):
                             ProgressView(value: progress) {
-                                Text("Uploading video: \(Int(progress * 100))%")
+                                Text("Uploading video: \(progress, format: .percent.precision(.fractionLength(0)))", comment: "Progress label while uploading video; variable is formatted percentage")
                                     .appFont(AppTextRole.caption)
                             }
                             .progressViewStyle(.linear)
                         case .processing(let progress):
                             ProgressView(value: progress) {
-                                Text("Processing video: \(Int(progress * 100))%")
+                                Text("Processing video: \(progress, format: .percent.precision(.fractionLength(0)))", comment: "Progress label while server processes uploaded video; variable is formatted percentage")
                                     .appFont(AppTextRole.caption)
                             }
                             .progressViewStyle(.linear)
@@ -186,7 +195,7 @@ struct VideoPickerView: View {
                             HStack {
                                 Image(systemName: "exclamationmark.triangle.fill")
                                     .foregroundStyle(.red)
-                                Text("Error: \(error)")
+                                Text("Error: \(error)", comment: "Video upload error message; variable is error description")
                                     .appFont(AppTextRole.caption)
                                     .foregroundStyle(.red)
                             }

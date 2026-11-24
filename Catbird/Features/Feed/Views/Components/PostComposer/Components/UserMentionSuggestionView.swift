@@ -244,7 +244,7 @@ struct MentionSuggestionRow: View {
           .fontWeight(.medium)
           .lineLimit(1)
         
-        Text("@\(suggestion.handle)")
+        Text(verbatim: "@\(suggestion.handle)")
           .appFont(AppTextRole.caption)
           .foregroundColor(.secondary)
           .lineLimit(1)

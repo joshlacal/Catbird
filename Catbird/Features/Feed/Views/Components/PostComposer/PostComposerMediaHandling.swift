@@ -30,13 +30,18 @@ extension PostComposerViewModel {
 
         guard isVideo else {
             logger.debug("DEBUG: Selected item is not a video")
-            alertItem = AlertItem(title: "Not a Video", message: "Choose a video to attach.")
+            alertItem = AlertItem(
+                title: String(localized: "Not a Video", comment: "Alert title when selected media item is not a video"),
+                message: String(localized: "Choose a video to attach.", comment: "Alert message prompting user to select a video")
+            )
             return
         }
 
         guard mediaItems.isEmpty, videoItem == nil, selectedGif == nil else {
-            alertItem = AlertItem(title: "One Kind of Media per Post",
-                message: "Remove the existing attachments before adding a video.")
+            alertItem = AlertItem(
+                title: String(localized: "One Kind of Media per Post", comment: "Alert title when mixing incompatible media types on a post"),
+                message: String(localized: "Remove the existing attachments before adding a video.", comment: "Alert message instructing user to remove existing attachments before adding a video")
+            )
             return
         }
 
@@ -70,8 +75,10 @@ extension PostComposerViewModel {
             // Use only the first video
             let videoPickerItem = videoItems[0]
             guard mediaItems.isEmpty, videoItem == nil, selectedGif == nil else {
-                alertItem = AlertItem(title: "One Kind of Media per Post",
-                    message: "Remove the existing attachments before adding a video.")
+                alertItem = AlertItem(
+                    title: String(localized: "One Kind of Media per Post", comment: "Alert title when mixing incompatible media types on a post"),
+                    message: String(localized: "Remove the existing attachments before adding a video.", comment: "Alert message instructing user to remove existing attachments before adding a video")
+                )
                 return
             }
             let context = mediaLoadContext()
@@ -84,8 +91,8 @@ extension PostComposerViewModel {
             guard !Task.isCancelled, ownsMediaLoad(context), self.videoItem?.id == newVideoItem.id else { return }
             if videoItems.count > 1 {
                 alertItem = AlertItem(
-                    title: "One Video per Post",
-                    message: "Only the first video was added. Videos can’t be combined with other media."
+                    title: String(localized: "One Video per Post", comment: "Alert title when user selects multiple videos for a single post"),
+                    message: String(localized: "Only the first video was added. Videos can’t be combined with other media.", comment: "Alert message explaining only one video can be attached per post")
                 )
             }
         } else {
@@ -101,10 +108,26 @@ extension PostComposerViewModel {
     /// Explains that only some of the chosen images were added.
     func imageLimitAlert() -> AlertItem {
         let remaining = max(0, maxImagesAllowed - mediaItems.count)
-        let added = remaining == 1 ? "Only 1 more was added." : "Only \(remaining) more were added."
+        let message: String
+        if remaining == 0 {
+            message = String(
+                localized: "A post can have up to \(maxImagesAllowed) images. No more images were added.",
+                comment: "Alert message when image limit is already full; variable is maximum images allowed per post"
+            )
+        } else {
+            let limitSentence = String(
+                localized: "A post can have up to \(maxImagesAllowed) images.",
+                comment: "Alert message stating maximum number of images allowed per post"
+            )
+            let added = String(
+                localized: "Only \(remaining) more were added.",
+                comment: "Sentence explaining how many additional images were added before hitting the post image limit"
+            )
+            message = "\(limitSentence) \(added)"
+        }
         return AlertItem(
-            title: "Image Limit Reached",
-            message: "A post can have up to \(maxImagesAllowed) images. \(remaining == 0 ? "No more images were added." : added)"
+            title: String(localized: "Image Limit Reached", comment: "Alert title when post image limit is reached"),
+            message: message
         )
     }
 
@@ -128,8 +151,10 @@ extension PostComposerViewModel {
     @MainActor
     func processGIFAsVideoFromData(_ gifData: Data) async {
       guard mediaItems.isEmpty, videoItem == nil, selectedGif == nil else {
-        alertItem = AlertItem(title: "GIF Needs Its Own Post",
-          message: "Remove the existing attachments before adding an animated GIF.")
+        alertItem = AlertItem(
+          title: String(localized: "GIF Needs Its Own Post", comment: "Alert title when attaching an animated GIF while other media is present"),
+          message: String(localized: "Remove the existing attachments before adding an animated GIF.", comment: "Alert message instructing user to remove existing attachments before adding a GIF")
+        )
         return
       }
       var item = MediaItem()
@@ -328,7 +353,8 @@ extension PostComposerViewModel {
             let permission = await manager.preflightUploadPermission(force: true)
             try Task.checkCancellation()
             if !permission.allowed {
-                prepared.blockedReason = permission.message ?? "Video uploads are currently unavailable"
+                prepared.blockedReason = permission.message
+                  ?? String(localized: "Video uploads are currently unavailable", comment: "Fallback message when video upload eligibility check blocks uploads")
                 prepared.blockedCode = permission.code
             }
         }

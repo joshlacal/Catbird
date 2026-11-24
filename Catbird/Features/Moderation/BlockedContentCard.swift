@@ -354,7 +354,7 @@ private struct BlockedContentIdentityRow: View {
               .fontWeight(.medium)
               .lineLimit(1)
           }
-          Text("@\(identity.handle)")
+          Text(verbatim: "@\(identity.handle)")
             .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
             .lineLimit(1)

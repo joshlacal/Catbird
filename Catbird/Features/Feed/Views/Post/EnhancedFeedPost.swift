@@ -209,7 +209,7 @@ private struct FeedEntryContent: View {
         .foregroundColor(.secondary)
         .appFont(AppTextRole.subheadline)
 
-      Text("Pinned")
+      Text("Pinned", comment: "Badge above a post indicating it is pinned to the author's profile")
         .appFont(AppTextRole.body)
         .textScale(.secondary)
         .foregroundColor(.secondary)

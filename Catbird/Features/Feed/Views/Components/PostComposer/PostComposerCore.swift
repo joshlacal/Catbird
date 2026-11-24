@@ -398,14 +398,17 @@ extension PostComposerViewModel {
     @MainActor
     func handleMediaPaste(_ items: [NSItemProvider]) async {
         guard videoItem == nil, selectedGif == nil else {
-            alertItem = AlertItem(title: "Can’t Add Image", message: "Remove the video or GIF to add images.")
+            alertItem = AlertItem(
+                title: String(localized: "Can’t Add Image", comment: "Alert title when pasting an image while a video or GIF is already attached"),
+                message: String(localized: "Remove the video or GIF to add images.", comment: "Alert message instructing user to remove video or GIF before pasting images")
+            )
             return
         }
         for item in items {
             guard mediaItems.count < maxImagesAllowed else {
                 alertItem = AlertItem(
-                    title: "Image Limit Reached",
-                    message: "A post can have up to \(maxImagesAllowed) images."
+                    title: String(localized: "Image Limit Reached", comment: "Alert title when post image limit is reached"),
+                    message: String(localized: "A post can have up to \(maxImagesAllowed) images.", comment: "Alert message stating maximum number of images per post")
                 )
                 return
             }
@@ -435,15 +438,18 @@ extension PostComposerViewModel {
                         guard mediaItems.count < maxImagesAllowed else {
                             releaseUnusedDraftImageFile(draftFile)
                             alertItem = AlertItem(
-                                title: "Image Limit Reached",
-                                message: "A post can have up to \(maxImagesAllowed) images."
+                                title: String(localized: "Image Limit Reached", comment: "Alert title when post image limit is reached"),
+                                message: String(localized: "A post can have up to \(maxImagesAllowed) images.", comment: "Alert message stating maximum number of images per post")
                             )
                             return
                         }
                         guard videoItem == nil, selectedGif == nil,
                               !mediaItems.contains(where: { $0.isGifConversion }) else {
                             releaseUnusedDraftImageFile(draftFile)
-                            alertItem = AlertItem(title: "Can’t Add Image", message: "Remove the video or GIF to add images.")
+                            alertItem = AlertItem(
+                                title: String(localized: "Can’t Add Image", comment: "Alert title when pasting an image while a video or GIF is already attached"),
+                                message: String(localized: "Remove the video or GIF to add images.", comment: "Alert message instructing user to remove video or GIF before pasting images")
+                            )
                             return
                         }
                         mediaItems.append(mediaItem)
@@ -533,7 +539,9 @@ extension PostComposerViewModel {
 
         // ponytail: block thread mode for circles, add circle threading when needed
         guard destination == .public else {
-            throw NSError(domain: "PostError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Thread mode is only supported for public posts"])
+            throw NSError(domain: "PostError", code: 0, userInfo: [
+                NSLocalizedDescriptionKey: String(localized: "Thread mode is only supported for public posts", comment: "Error when attempting to publish a multi-post thread to a Circle")
+            ])
         }
 
         try appState.ageAccess.require(.generalContent)
@@ -562,7 +570,9 @@ extension PostComposerViewModel {
         }
 
         guard !validEntries.isEmpty else {
-            throw NSError(domain: "PostError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Thread has no valid posts"])
+            throw NSError(domain: "PostError", code: 0, userInfo: [
+                NSLocalizedDescriptionKey: String(localized: "Thread has no valid posts", comment: "Error when attempting to publish an empty thread")
+            ])
         }
 
         // Extract just the text from each entry for the batch thread creation

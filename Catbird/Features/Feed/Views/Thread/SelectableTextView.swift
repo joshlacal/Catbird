@@ -377,7 +377,7 @@ struct SelectableTextView: UIViewRepresentable {
     paragraphStyle.lineSpacing = fontManager.getLineSpacing(for: scaledSize) * lineSpacing
     linePlacement?.apply(to: paragraphStyle)
     paragraphStyle.lineBreakMode = .byWordWrapping
-    paragraphStyle.alignment = .left
+    paragraphStyle.alignment = .natural
     
     // Apply letter spacing and paragraph style to entire string
     let letterSpacingValue = fontManager.letterSpacingValue * letterSpacing

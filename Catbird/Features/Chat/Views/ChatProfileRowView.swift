@@ -47,7 +47,7 @@ struct ChatProfileRowView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
-                        Text(profile.displayName?.isEmpty == false ? profile.displayName ?? "" : profile.handle.description)
+                        Text(verbatim: profile.displayName?.isEmpty == false ? profile.displayName ?? "" : profile.handle.description)
                             .appFont(AppTextRole.headline)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -62,7 +62,7 @@ struct ChatProfileRowView: View {
                     }
 
                     HStack(spacing: 4) {
-                        Text("@\(profile.handle.description)")
+                        Text(verbatim: "@\(profile.handle.description)")
                             .appFont(AppTextRole.subheadline)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
@@ -215,7 +215,7 @@ struct ChatProfileRowView: View {
   AsyncPreviewContent { appState in
     VStack {
             // Placeholder for preview
-            Text("ChatProfileRowView Preview")
+            Text(verbatim: "ChatProfileRowView Preview")
                 .padding()
         }
   }

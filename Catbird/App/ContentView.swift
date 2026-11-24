@@ -106,7 +106,7 @@ private extension ContentView {
 
   @ViewBuilder
   var launchingView: some View {
-    ContentViewLoadingView(message: "Loading…")
+    ContentViewLoadingView(message: String(localized: "Loading…", comment: "Loading screen message while Catbird launches."))
   }
 
   @ViewBuilder
@@ -128,9 +128,9 @@ private extension ContentView {
 private extension ContentView {
   func accountSwitchMessage(for appState: AppState) -> String {
     if let label = accountSwitchLabel(for: appState) {
-      return "Switching to \(label)"
+      return String(localized: "Switching to \(label)", comment: "Full-screen loading message while switching accounts — variable is target account display name or @handle.")
     }
-    return "Switching accounts"
+    return String(localized: "Switching accounts", comment: "Full-screen loading message while switching accounts.")
   }
 
   func accountSwitchLabel(for appState: AppState) -> String? {
@@ -194,7 +194,6 @@ struct ContentViewLoadingView: View {
 
         Text(message)
           .appFont(AppTextRole.headline)
-          .textCase(.uppercase)
           .foregroundStyle(.secondary)
           .textScale(.secondary)
       }
@@ -318,7 +317,7 @@ struct MainContentView: View {
     // Parse the saved feed identifier and restore it
     if savedFeedIdentifier == "timeline" {
       selectedFeed = .timeline
-      currentFeedName = "Timeline"
+      currentFeedName = Self.timelineFeedTitle
     } else if savedFeedIdentifier.hasPrefix("feed:") {
       // Saved as "feed:<at-uri>"
       let uriString = String(savedFeedIdentifier.dropFirst("feed:".count))
@@ -365,7 +364,7 @@ struct MainContentView: View {
     } else {
       // Fallback to timeline
       selectedFeed = .timeline
-      currentFeedName = "Timeline"
+      currentFeedName = Self.timelineFeedTitle
     }
   }
   private var tabSelectionBinding: Binding<Int> {
@@ -763,7 +762,7 @@ struct MainContentView: View {
 
         // IMMEDIATELY reset feed synchronously to prevent overlay
         selectedFeed = .timeline
-        currentFeedName = "Timeline"
+        currentFeedName = Self.timelineFeedTitle
 
         // Reset initialization flag
         hasInitializedFeed = false
@@ -787,7 +786,11 @@ struct MainContentView: View {
         // Fetch feed name when selectedFeed changes to a custom feed
         if case .feed(let uri) = selectedFeed {
           // If currentFeedName is already known and valid (not empty and not placeholder "Feed"), skip network fetch
-          if !currentFeedName.isEmpty && currentFeedName != "Feed" && currentFeedName != "Timeline" {
+          if !currentFeedName.isEmpty
+            && currentFeedName != "Feed"
+            && currentFeedName != Self.fallbackFeedTitle
+            && currentFeedName != "Timeline"
+            && currentFeedName != Self.timelineFeedTitle {
             return
           }
           if let cachedName = FetchType.lookupCachedGeneratorName(for: uri) {
@@ -800,7 +803,7 @@ struct MainContentView: View {
               let result = try await client.app.bsky.feed.getFeedGenerator(input: .init(feed: uri))
               if result.responseCode == 200, let data = result.data {
                 await MainActor.run {
-                  currentFeedName = data.view.displayName ?? "Feed"
+                  currentFeedName = data.view.displayName ?? Self.fallbackFeedTitle
                 }
               } else {
                 await MainActor.run {
@@ -816,10 +819,14 @@ struct MainContentView: View {
           }
         } else if case .timeline = selectedFeed {
           await MainActor.run {
-            currentFeedName = "Timeline"
+            currentFeedName = Self.timelineFeedTitle
           }
         } else if case .list(let uri) = selectedFeed {
-          if !currentFeedName.isEmpty && currentFeedName != "List" && currentFeedName != "Timeline" {
+          if !currentFeedName.isEmpty
+            && currentFeedName != "List"
+            && currentFeedName != Self.fallbackListTitle
+            && currentFeedName != "Timeline"
+            && currentFeedName != Self.timelineFeedTitle {
             return
           }
           if let cachedName = FetchType.lookupCachedGeneratorName(for: uri) {
@@ -916,6 +923,18 @@ extension ContentView {
 }
 
 extension MainContentView {
+  private static var timelineFeedTitle: String {
+    String(localized: "Timeline", comment: "Display name for the primary Following timeline feed.")
+  }
+
+  private static var fallbackFeedTitle: String {
+    String(localized: "Feed", comment: "Fallback display name for an unnamed custom feed.")
+  }
+
+  private static var fallbackListTitle: String {
+    String(localized: "List", comment: "Fallback display name for an unnamed list feed.")
+  }
+
   static func bindTabSelection(
     context: SceneNavigationContext,
     selectedTab: Binding<Int>
@@ -966,7 +985,9 @@ extension MainContentView {
     guard !sceneContext.isInvalidated else { return }
     if let claim = session.activeClaim {
       guard session.resume(claim: claim) else {
-        showComposerIssue(session.lastIssue ?? "Could not reopen your draft")
+        showComposerIssue(
+          session.lastIssue ?? String(localized: "Could not reopen your draft", comment: "Toast error when minimized post draft cannot be reopened.")
+        )
         return
       }
       composerEditingClaim = claim
@@ -1040,7 +1061,10 @@ extension MainContentView {
     let result = await stashWorkingDraft()
     guard result.allowsTransition else {
       appState.toastManager.show(
-        ToastItem(message: "Could not save your current draft", icon: "exclamationmark.triangle.fill")
+        ToastItem(
+          message: String(localized: "Could not save your current draft", comment: "Toast error when current post draft cannot be saved before starting a new action."),
+          icon: "exclamationmark.triangle.fill"
+        )
       )
       return
     }
@@ -1081,12 +1105,20 @@ extension MainContentView {
     let cameraAvailable = UIImagePickerController.isSourceTypeAvailable(.camera)
     let result = await stashWorkingDraft(destinationAvailable: cameraAvailable)
     guard result != .destinationUnavailable else {
-      appState.toastManager.show(ToastItem(message: "Camera is unavailable on this device", icon: "camera.fill"))
+      appState.toastManager.show(
+        ToastItem(
+          message: String(localized: "Camera is unavailable on this device", comment: "Toast error when device camera is unavailable."),
+          icon: "camera.fill"
+        )
+      )
       return
     }
     guard result.allowsTransition else {
       appState.toastManager.show(
-        ToastItem(message: "Could not save your current draft", icon: "exclamationmark.triangle.fill")
+        ToastItem(
+          message: String(localized: "Could not save your current draft", comment: "Toast error when current post draft cannot be saved before starting a new action."),
+          icon: "exclamationmark.triangle.fill"
+        )
       )
       return
     }
@@ -1138,7 +1170,9 @@ extension MainContentView {
       clearDraftAction: {
         let session = sceneContext.composerEditingSession
         if let claim = session.activeClaim, !session.discard(claim: claim) {
-          showComposerIssue(session.lastIssue ?? "Could not discard your draft")
+          showComposerIssue(
+            session.lastIssue ?? String(localized: "Could not discard your draft", comment: "Toast error when current post draft cannot be discarded.")
+          )
         }
       }
     )

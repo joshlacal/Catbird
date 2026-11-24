@@ -25,7 +25,7 @@ struct MessageRequestsUIFixture: View {
   var body: some View {
     Group {
       if let appState {
-        Text("Inbox")
+        Text(verbatim: "Inbox")
           .font(.largeTitle.bold())
           .frame(maxWidth: .infinity, maxHeight: .infinity)
           .sheet(isPresented: $isPresented) {

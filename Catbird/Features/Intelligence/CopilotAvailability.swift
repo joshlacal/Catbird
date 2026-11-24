@@ -55,13 +55,13 @@ enum CopilotAvailability {
     case .available:
       return nil
     case .appleIntelligenceNotEnabled:
-      return "Turn on Apple Intelligence in Settings to use Ask Catbird."
+      return String(localized: "Turn on Apple Intelligence in Settings to use Ask Catbird.", comment: "Copilot availability message when Apple Intelligence is disabled.")
     case .modelNotReady:
-      return "Apple Intelligence is still getting ready. Try again later."
+      return String(localized: "Apple Intelligence is still getting ready. Try again later.", comment: "Copilot availability message while on-device model downloads.")
     case .requiresNewerOS:
-      return "Ask Catbird requires iOS 26 or later."
+      return String(localized: "Ask Catbird requires iOS 26 or later.", comment: "Copilot availability message on older OS versions.")
     case .disabled, .deviceNotEligible:
-      return "Ask Catbird isn’t available on this device."
+      return String(localized: "Ask Catbird isn’t available on this device.", comment: "Copilot availability message on unsupported devices.")
     }
   }
 }

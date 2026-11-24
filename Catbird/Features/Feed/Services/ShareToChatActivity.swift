@@ -32,7 +32,7 @@
     }
 
     override var activityTitle: String? {
-      return "Send to Bluesky chat"
+      return String(localized: "Send to Bluesky chat", comment: "Share sheet activity title to send a post via Bluesky direct message")
     }
 
     override var activityImage: UIImage? {
@@ -98,7 +98,7 @@
     }
 
     override var activityTitle: String? {
-      return "Share to Secure Chat"
+      return String(localized: "Share to Secure Chat", comment: "Share sheet activity title to share a post to an end-to-end encrypted MLS chat")
     }
 
     override var activityImage: UIImage? {
@@ -190,9 +190,12 @@
 
     var errorDescription: String? {
       switch self {
-      case .unavailable: "This person can’t receive a Bluesky message from this account."
-      case .lookupFailed: "Couldn’t load this chat. Please try again."
-      case .accountChanged: "Your account changed. Open sharing again from the account you want to use."
+      case .unavailable:
+        String(localized: "This person can’t receive a Bluesky message from this account.", comment: "Error when the selected recipient cannot receive Bluesky chat messages")
+      case .lookupFailed:
+        String(localized: "Couldn’t load this chat. Please try again.", comment: "Error when resolving or creating a Bluesky chat conversation fails")
+      case .accountChanged:
+        String(localized: "Your account changed. Open sharing again from the account you want to use.", comment: "Error when the active account switches while sharing a post to chat")
       }
     }
 
@@ -202,7 +205,7 @@
         case .accountSuspended, .blockedActor, .blockedSubject, .messagesDisabled, .notFollowedBySender:
           return ShareRecipientError.unavailable.localizedDescription
         case .recipientNotFound:
-          return "This account could not be found. Try another recipient."
+          return String(localized: "This account could not be found. Try another recipient.", comment: "Error when the chat recipient account does not exist")
         }
       }
       if let error = error as? ShareRecipientError { return error.localizedDescription }
@@ -273,7 +276,7 @@
       } catch {
         guard isCurrent, !Task.isCancelled, generation == searchGeneration,
               !(error is CancellationError) else { return }
-        errorMessage = "Couldn’t search for people. Please try again."
+        errorMessage = String(localized: "Couldn’t search for people. Please try again.", comment: "Error when searching for chat recipients fails")
       }
     }
 
@@ -422,8 +425,13 @@
 
           VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
-              Text(appState.currentUserProfile.map { "Sharing as @\($0.handle.description)" } ?? "Sharing from your account")
-                .font(.subheadline.weight(.semibold))
+              if let profile = appState.currentUserProfile {
+                Text("Sharing as @\(profile.handle.description)", comment: "Header showing which account is sharing a post to chat — variable is the user's handle.")
+                  .font(.subheadline.weight(.semibold))
+              } else {
+                Text("Sharing from your account", comment: "Header showing the current account is sharing a post to chat")
+                  .font(.subheadline.weight(.semibold))
+              }
               Text("Choose a chat, then review the post and press Send.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -529,7 +537,7 @@
       ScrollView {
         LazyVStack(spacing: 0) {
           if searchText.isEmpty && !recentConversations.isEmpty {
-            sectionHeader("Recent")
+            sectionHeader(LocalizedStringResource("RECENT", comment: "Uppercase section header for recent chat conversations"))
             ScrollView(.horizontal, showsIndicators: false) {
               HStack(spacing: 16) {
                 ForEach(recentConversations) { conversation in
@@ -547,7 +555,8 @@
               ModernRecipientRow(
                 title: profile.displayName ?? profile.handle.description,
                 subtitle: ShareRecipientSelectionModel.canMessage(profile)
-                  ? "@\(profile.handle)" : "Not available for messages",
+                  ? "@\(profile.handle)"
+                  : String(localized: "Not available for messages", comment: "Subtitle when a search result cannot receive Bluesky chat messages"),
                 avatarURL: profile.avatar?.uriString(),
                 isSelected: false,
                 showDivider: profile.did != model.searchResults.last?.did,
@@ -561,7 +570,7 @@
           // Existing conversations
           if searchText.isEmpty || (!searchText.isEmpty && !filteredConversations.isEmpty) {
             if !searchText.isEmpty && !model.searchResults.isEmpty {
-              sectionHeader("Conversations")
+              sectionHeader(LocalizedStringResource("CONVERSATIONS", comment: "Uppercase section header for existing chat conversations"))
             }
 
             ForEach(filteredConversations) { conversation in
@@ -580,12 +589,11 @@
       .scrollDismissesKeyboard(.interactively)
     }
 
-    private func sectionHeader(_ title: String) -> some View {
+    private func sectionHeader(_ title: LocalizedStringResource) -> some View {
       HStack {
         Text(title)
           .font(.footnote.weight(.semibold))
           .foregroundStyle(.secondary)
-          .textCase(.uppercase)
         Spacer()
       }
       .padding(.horizontal)
@@ -639,7 +647,7 @@
       ModernRecipientRow(
         title: conversation.displayTitle(currentUserDID: userDID),
         subtitle: isLocked
-          ? "Locked"
+          ? String(localized: "Locked", comment: "Subtitle when a chat conversation is locked for sending")
           : (conversation.displaySubtitle(currentUserDID: userDID) ?? ""),
         avatarURL: conversation.directDisplayMember(currentUserDID: userDID)?
           .avatar?.uriString(),
@@ -872,7 +880,7 @@
               VStack(alignment: .leading, spacing: 2) {
                 Text(post.author.displayName ?? post.author.handle.description)
                   .font(.subheadline.weight(.semibold))
-                Text("@\(post.author.handle)")
+                Text(verbatim: "@\(post.author.handle)")
                   .font(.caption)
                   .foregroundStyle(.secondary)
               }
@@ -890,9 +898,21 @@
 
             // Post stats
             HStack(spacing: 24) {
-              Label("\(post.likeCount ?? 0)", systemImage: "heart")
-              Label("\(post.repostCount ?? 0)", systemImage: "arrow.2.squarepath")
-              Label("\(post.replyCount ?? 0)", systemImage: "bubble.left")
+              Label {
+                Text(post.likeCount ?? 0, format: .number)
+              } icon: {
+                Image(systemName: "heart")
+              }
+              Label {
+                Text(post.repostCount ?? 0, format: .number)
+              } icon: {
+                Image(systemName: "arrow.2.squarepath")
+              }
+              Label {
+                Text(post.replyCount ?? 0, format: .number)
+              } icon: {
+                Image(systemName: "bubble.left")
+              }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -912,6 +932,7 @@
               } label: {
                   Image(systemName: "checkmark")
               }
+              .accessibilityLabel(Text("Done", comment: "Button to close the post preview sheet"))
           }
         }
       }
@@ -1061,7 +1082,7 @@
               .font(.system(size: 10))
               .foregroundColor(.green)
           }
-          Text("\(participants.count) members")
+          Text("\(participants.count) members", comment: "Member count in a secure chat conversation — variable is the number of members.")
             .font(.caption)
             .foregroundStyle(.secondary)
         }
@@ -1078,6 +1099,7 @@
             .foregroundStyle(.secondary)
             .imageScale(.medium)
         }
+        .accessibilityLabel(Text("Deselect conversation", comment: "Button to clear the selected conversation when sharing a post"))
       }
       .padding(.horizontal, 16)
       .padding(.vertical, 12)
@@ -1089,7 +1111,7 @@
     private var messageComposer: some View {
       VStack(alignment: .leading, spacing: 8) {
         HStack {
-          Text("Message")
+          Text("Message", comment: "Field label above the optional message text editor when sharing a post")
             .font(.footnote.weight(.medium))
             .foregroundStyle(.secondary)
 
@@ -1099,12 +1121,16 @@
           Button {
             showingPostPreview = true
           } label: {
-            Label("Preview", systemImage: "eye")
+            Label {
+              Text("Preview", comment: "Button to preview the post being shared")
+            } icon: {
+              Image(systemName: "eye")
+            }
               .font(.caption.weight(.medium))
               .foregroundStyle(.accent)
           }
 
-          Text("\(messageText.count)/1000")
+          Text(verbatim: "\(messageText.count.formatted(.number))/\(1000.formatted(.number.grouping(.never)))")
             .font(.caption2)
             .foregroundStyle(
               messageText.count > 900
@@ -1181,11 +1207,11 @@
       ContentUnavailableView {
         Label("No Secure Conversations", systemImage: "lock.shield")
       } description: {
-        Text(
-          searchText.isEmpty
-            ? "Start a secure conversation first to share posts"
-            : "No secure conversations found for '\(searchText)'"
-        )
+        if searchText.isEmpty {
+          Text("Start a secure conversation first to share posts")
+        } else {
+          Text("No secure conversations found for “\(searchText)”", comment: "Empty state message when searching secure chats yields no matches — variable is the search query.")
+        }
       }
       .padding(.vertical, 60)
     }
@@ -1230,19 +1256,23 @@
 
     private func participantsDisplayName(_ participants: [MLSParticipantViewModel]) -> String {
       if participants.isEmpty {
-        return "Secure Chat"
+        return String(localized: "Secure Chat", comment: "Fallback title for an unnamed end-to-end encrypted chat")
       }
 
       let names = participants.prefix(3).compactMap { $0.displayName ?? $0.handle }
       if names.isEmpty {
-        return "Secure Chat"
+        return String(localized: "Secure Chat", comment: "Fallback title for an unnamed end-to-end encrypted chat")
       }
 
       if participants.count > 3 {
-        return names.joined(separator: ", ") + " +\(participants.count - 3)"
+        let overflow = participants.count - 3
+        return String(
+          localized: "\(names.formatted()) +\(overflow)",
+          comment: "Truncated chat participant list with overflow count — first variable is formatted participant names, second is remaining member count."
+        )
       }
 
-      return names.joined(separator: ", ")
+      return names.formatted()
     }
 
     private func loadMLSConversations() async {
@@ -1377,7 +1407,11 @@
       Task {
         do {
           guard let mlsCoordinator = await appState.getOrOpenMLSCoordinator() else {
-            throw NSError(domain: "MLSChat", code: -1, userInfo: [NSLocalizedDescriptionKey: "MLS service not available"])
+            throw NSError(
+              domain: "MLSChat",
+              code: -1,
+              userInfo: [NSLocalizedDescriptionKey: String(localized: "MLS service not available", comment: "Error description when the end-to-end encrypted chat service is unavailable")]
+            )
           }
 
           let postEmbed = createPostEmbed(from: post)
@@ -1507,19 +1541,23 @@
 
       // Build title from participants
       if participants.isEmpty {
-        return "Secure Chat"
+        return String(localized: "Secure Chat", comment: "Fallback title for an unnamed end-to-end encrypted chat")
       }
 
       let names = participants.prefix(2).compactMap { $0.displayName ?? $0.handle }
       if names.isEmpty {
-        return "Secure Chat"
+        return String(localized: "Secure Chat", comment: "Fallback title for an unnamed end-to-end encrypted chat")
       }
 
       if participants.count > 2 {
-        return names.joined(separator: ", ") + " +\(participants.count - 2)"
+        let overflow = participants.count - 2
+        return String(
+          localized: "\(names.formatted()) +\(overflow)",
+          comment: "Truncated chat participant list with overflow count — first variable is formatted participant names, second is remaining member count."
+        )
       }
 
-      return names.joined(separator: ", ")
+      return names.formatted()
     }
 
     var body: some View {
@@ -1546,7 +1584,7 @@
                 .foregroundColor(.green)
             }
 
-            Text("\(participants.count) members")
+            Text("\(participants.count) members", comment: "Member count in a secure chat conversation — variable is the number of members.")
               .font(.callout)
               .foregroundStyle(.secondary)
               .lineLimit(1)

@@ -33,7 +33,7 @@ final class LabelAppealSubmission {
         if succeeded {
           self.successCount += 1
         } else {
-          self.errorMessage = "Failed to submit your appeal. Your reason is preserved; please try again."
+          self.errorMessage = String(localized: "Failed to submit your appeal. Your reason is preserved; please try again.", comment: "Error when label appeal submission returns false.")
         }
       } catch is CancellationError {
         return

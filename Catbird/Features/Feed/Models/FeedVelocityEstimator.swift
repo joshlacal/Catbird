@@ -9,13 +9,13 @@ struct FeedVelocityEstimate: Equatable, Sendable {
 
   static let empty = FeedVelocityEstimate(
     shortLabel: "—",
-    detailLabel: "No recent posts",
+    detailLabel: String(localized: "No recent posts", comment: "Feed activity detail when there are no recent posts"),
     symbolName: "minus.circle"
   )
 
   static let quiet = FeedVelocityEstimate(
-    shortLabel: "Quiet",
-    detailLabel: "Last post >2w ago",
+    shortLabel: String(localized: "Quiet", comment: "Short feed activity badge when a feed rarely posts"),
+    detailLabel: String(localized: "Last post >2w ago", comment: "Feed activity detail when the latest post is more than two weeks old"),
     symbolName: "moon.zzz"
   )
 }
@@ -67,22 +67,43 @@ enum FeedVelocityEstimator {
 
   private static func singlePostEstimate(ageSeconds: TimeInterval) -> FeedVelocityEstimate {
     if ageSeconds <= 3_600 {
-      return FeedVelocityEstimate(shortLabel: "Active", detailLabel: "Posted <1h ago", symbolName: "bolt.fill")
+      return FeedVelocityEstimate(
+        shortLabel: String(localized: "Active", comment: "Short feed activity badge when a post appeared within the past hour"),
+        detailLabel: String(localized: "Posted <1h ago", comment: "Feed activity detail when the latest post is under an hour old"),
+        symbolName: "bolt.fill"
+      )
     } else if ageSeconds <= 86_400 {
-      return FeedVelocityEstimate(shortLabel: "~1/day", detailLabel: "Recent post", symbolName: "clock.fill")
+      return FeedVelocityEstimate(
+        shortLabel: String(localized: "~1/day", comment: "Short feed activity badge for roughly one post per day"),
+        detailLabel: String(localized: "Recent post", comment: "Feed activity detail when a post appeared within the past day"),
+        symbolName: "clock.fill"
+      )
     }
-    return FeedVelocityEstimate(shortLabel: "~1/wk", detailLabel: "Occasional", symbolName: "calendar")
+    return FeedVelocityEstimate(
+      shortLabel: String(localized: "~1/wk", comment: "Short feed activity badge for roughly one post per week"),
+      detailLabel: String(localized: "Occasional", comment: "Feed activity detail for an occasionally updated feed"),
+      symbolName: "calendar"
+    )
   }
 
   private static func formatRate(postsPerHour: Double) -> FeedVelocityEstimate {
     if postsPerHour >= 100 {
-      return FeedVelocityEstimate(shortLabel: "100+/hr", detailLabel: "Firehose pace", symbolName: "flame.fill")
+      return FeedVelocityEstimate(
+        shortLabel: String(localized: "100+/hr", comment: "Short feed activity badge for 100 or more posts per hour"),
+        detailLabel: String(localized: "Firehose pace", comment: "Feed activity detail for an extremely high-volume feed"),
+        symbolName: "flame.fill"
+      )
     }
     if postsPerHour >= 0.95 {
       let rounded = max(1, Int(postsPerHour.rounded()))
       return FeedVelocityEstimate(
-        shortLabel: "~\(rounded)/hr",
-        detailLabel: rounded >= 20 ? "Very active" : "Active hourly",
+        shortLabel: String(
+          localized: "~\(rounded)/hr",
+          comment: "Short feed activity badge — variable is approximate posts per hour"
+        ),
+        detailLabel: rounded >= 20
+          ? String(localized: "Very active", comment: "Feed activity detail for 20+ posts per hour")
+          : String(localized: "Active hourly", comment: "Feed activity detail for hourly posts"),
         symbolName: rounded >= 20 ? "flame.fill" : "bolt.fill"
       )
     }
@@ -90,15 +111,33 @@ enum FeedVelocityEstimator {
     let postsPerDay = postsPerHour * 24.0
     if postsPerDay >= 0.85 {
       let rounded = max(1, Int(postsPerDay.rounded()))
-      return FeedVelocityEstimate(shortLabel: "~\(rounded)/day", detailLabel: "Daily posts", symbolName: "clock.fill")
+      return FeedVelocityEstimate(
+        shortLabel: String(
+          localized: "~\(rounded)/day",
+          comment: "Short feed activity badge — variable is approximate posts per day"
+        ),
+        detailLabel: String(localized: "Daily posts", comment: "Feed activity detail for feeds posting daily"),
+        symbolName: "clock.fill"
+      )
     }
 
     let postsPerWeek = postsPerDay * 7.0
     if postsPerWeek >= 1.0 {
       let rounded = max(1, Int(postsPerWeek.rounded()))
-      return FeedVelocityEstimate(shortLabel: "~\(rounded)/wk", detailLabel: "Weekly pace", symbolName: "calendar")
+      return FeedVelocityEstimate(
+        shortLabel: String(
+          localized: "~\(rounded)/wk",
+          comment: "Short feed activity badge — variable is approximate posts per week"
+        ),
+        detailLabel: String(localized: "Weekly pace", comment: "Feed activity detail for feeds posting weekly"),
+        symbolName: "calendar"
+      )
     }
 
-    return FeedVelocityEstimate(shortLabel: "<1/wk", detailLabel: "Slow pace", symbolName: "calendar")
+    return FeedVelocityEstimate(
+      shortLabel: String(localized: "<1/wk", comment: "Short feed activity badge for fewer than one post per week"),
+      detailLabel: String(localized: "Slow pace", comment: "Feed activity detail for infrequently updated feeds"),
+      symbolName: "calendar"
+    )
   }
 }

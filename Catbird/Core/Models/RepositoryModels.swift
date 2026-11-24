@@ -129,9 +129,11 @@ final class RepositoryRecord: @unchecked Sendable {
 
     /// Human-readable parsing success rate
     var successRate: String {
-        guard totalRecordCount > 0 else { return "N/A" }
-        let percentage = (Double(successfullyParsedCount) / Double(totalRecordCount)) * 100
-        return String(format: "%.1f%%", percentage)
+        guard totalRecordCount > 0 else {
+            return String(localized: "N/A", comment: "Not applicable placeholder when total record count is zero.")
+        }
+        let ratio = Double(successfullyParsedCount) / Double(totalRecordCount)
+        return ratio.formatted(.percent.precision(.fractionLength(1)))
     }
 
     /// Age of parsing as a formatted string
@@ -379,11 +381,11 @@ final class ParsedPost: @unchecked Sendable {
     /// Post type based on reply/quote status
     var postType: String {
         if replyToRecordKey != nil {
-            return "Reply"
+            return String(localized: "Reply", comment: "Post record type label for a reply post.")
         } else if quotedRecordKey != nil {
-            return "Quote Post"
+            return String(localized: "Quote Post", comment: "Post record type label for a quote post.")
         } else {
-            return "Original Post"
+            return String(localized: "Original Post", comment: "Post record type label for a standalone original post.")
         }
     }
 }
@@ -555,7 +557,9 @@ final class ParsedMedia: @unchecked Sendable {
 
     /// Human-readable media size
     var formattedSize: String {
-        guard let size = size else { return "Unknown size" }
+        guard let size = size else {
+            return String(localized: "Unknown size", comment: "Fallback label when a repository media blob has no recorded byte size.")
+        }
         return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
     }
 }
@@ -699,17 +703,17 @@ enum RepositoryParsingStatus: String, CaseIterable, Codable {
     var displayName: String {
         switch self {
         case .notStarted:
-            return "Not Started"
+            return String(localized: "Not Started", comment: "Repository parsing status before parsing has begun.")
         case .inProgress:
-            return "Parsing..."
+            return String(localized: "Parsing…", comment: "Repository parsing status while parsing is active.")
         case .completed:
-            return "Completed"
+            return String(localized: "Completed", comment: "Repository parsing status when parsing completed.")
         case .failed:
-            return "Failed"
+            return String(localized: "Failed", comment: "Repository parsing status when parsing failed.")
         case .cancelled:
-            return "Cancelled"
+            return String(localized: "Cancelled", comment: "Repository parsing status when parsing was cancelled.")
         case .partiallyCompleted:
-            return "Partially Completed"
+            return String(localized: "Partially Completed", comment: "Repository parsing status when parsing partially succeeded.")
         }
     }
 

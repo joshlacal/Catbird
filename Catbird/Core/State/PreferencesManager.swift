@@ -2192,19 +2192,22 @@ enum PreferencesManagerError: Error, LocalizedError {
   var errorDescription: String? {
     switch self {
     case .invalidData:
-      return "Invalid or missing preferences data"
+      return String(localized: "Invalid or missing preferences data", comment: "Preferences error description.")
     case .clientNotInitialized:
-      return "AT Protocol client not initialized"
+      return String(localized: "AT Protocol client not initialized", comment: "Preferences error description.")
     case .modelContextNotInitialized:
-      return "SwiftData model context not initialized"
+      return String(localized: "SwiftData model context not initialized", comment: "Preferences error description.")
     case .backupFailed:
-      return "Failed to backup preferences"
+      return String(localized: "Failed to backup preferences", comment: "Preferences error description.")
     case .restoreFailed:
-      return "Failed to restore preferences from backup"
+      return String(localized: "Failed to restore preferences from backup", comment: "Preferences error description.")
     case .labelerLimitExceeded:
-      return "You can add up to 19 custom labelers in addition to the default moderation service"
+      return String(
+        localized: "You can add up to 19 custom labelers in addition to the default moderation service",
+        comment: "Error shown when user attempts to subscribe to more than 19 custom moderation labelers."
+      )
     case .accountChanged:
-      return "The account changed. Reload these settings before saving."
+      return String(localized: "The account changed. Reload these settings before saving.", comment: "Preferences error when active account changed while editing settings.")
     }
   }
 }

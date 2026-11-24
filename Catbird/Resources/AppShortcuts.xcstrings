@@ -1,0 +1,3948 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Block someone on ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "ar" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "احظر شخصا في ${applicationName}",
+              "احظر هذا الشخص في ${applicationName}",
+              "احظر هذا الحساب على ${applicationName}"
+            ]
+          }
+        },
+        "ca" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Bloqueja algú a ${applicationName}",
+              "Bloqueja aquesta persona a ${applicationName}",
+              "Bloqueja aquest compte a ${applicationName}"
+            ]
+          }
+        },
+        "cs" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Zablokovat někoho v aplikaci ${applicationName}",
+              "Zablokovat tuto osobu v aplikaci ${applicationName}",
+              "Zablokovat tento účet v aplikaci ${applicationName}"
+            ]
+          }
+        },
+        "da" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Bloker nogen på ${applicationName}",
+              "Bloker denne person på ${applicationName}",
+              "Bloker denne konto på ${applicationName}"
+            ]
+          }
+        },
+        "de" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Jemanden in ${applicationName} blockieren",
+              "Diese Person in ${applicationName} blockieren",
+              "Diesen Account in ${applicationName} blockieren"
+            ]
+          }
+        },
+        "el" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Αποκλεισμός ατόμου στο ${applicationName}",
+              "Αποκλεισμός αυτού του ατόμου στο ${applicationName}",
+              "Αποκλεισμός αυτού του λογαριασμού στο ${applicationName}"
+            ]
+          }
+        },
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Block someone on ${applicationName}",
+              "Block this person on ${applicationName}",
+              "Block this account on ${applicationName}"
+            ]
+          }
+        },
+        "en-AU" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Block someone on ${applicationName}",
+              "Block this person on ${applicationName}",
+              "Block this account on ${applicationName}"
+            ]
+          }
+        },
+        "en-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Block someone on ${applicationName}",
+              "Block this person on ${applicationName}",
+              "Block this account on ${applicationName}"
+            ]
+          }
+        },
+        "en-GB" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Block someone on ${applicationName}",
+              "Block this person on ${applicationName}",
+              "Block this account on ${applicationName}"
+            ]
+          }
+        },
+        "es" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Bloquear a alguien en ${applicationName}",
+              "Bloquear a esta persona en ${applicationName}",
+              "Bloquear esta cuenta en ${applicationName}"
+            ]
+          }
+        },
+        "es-419" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Bloquear a alguien en ${applicationName}",
+              "Bloquear a esta persona en ${applicationName}",
+              "Bloquear esta cuenta en ${applicationName}"
+            ]
+          }
+        },
+        "fi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Estä käyttäjä sovelluksessa ${applicationName}",
+              "Estä tämä henkilö sovelluksessa ${applicationName}",
+              "Estä tämä tili ${applicationName}-sovelluksessa"
+            ]
+          }
+        },
+        "fr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Bloquer quelqu’un sur ${applicationName}",
+              "Bloquer cette personne sur ${applicationName}",
+              "Bloquer ce compte sur ${applicationName}"
+            ]
+          }
+        },
+        "fr-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Bloquer quelqu’un sur ${applicationName}",
+              "Bloquer cette personne sur ${applicationName}",
+              "Bloquer ce compte sur ${applicationName}"
+            ]
+          }
+        },
+        "he" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "חסום מישהו בתוך ${applicationName}",
+              "חסום את האדם הזה בתוך ${applicationName}",
+              "חסום את החשבון הזה בתוך ${applicationName}"
+            ]
+          }
+        },
+        "hi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName} पर किसी को ब्लॉक करें",
+              "${applicationName} पर इस व्यक्ति को ब्लॉक करें",
+              "${applicationName} पर इस अकाउंट को ब्लॉक करें"
+            ]
+          }
+        },
+        "hr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Blokiraj nekoga u aplikaciji ${applicationName}",
+              "Blokiraj ovu osobu u aplikaciji ${applicationName}",
+              "Blokiraj ovaj račun u aplikaciji ${applicationName}"
+            ]
+          }
+        },
+        "hu" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Valaki letiltása a ${applicationName} alkalmazásban",
+              "Személy letiltása a ${applicationName} alkalmazásban",
+              "Fiók letiltása a ${applicationName} alkalmazásban"
+            ]
+          }
+        },
+        "id" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Blokir seseorang di ${applicationName}",
+              "Blokir orang ini di ${applicationName}",
+              "Blokir akun ini di ${applicationName}"
+            ]
+          }
+        },
+        "it" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Blocca qualcuno su ${applicationName}",
+              "Blocca questa persona su ${applicationName}",
+              "Blocca questo account su ${applicationName}"
+            ]
+          }
+        },
+        "ja" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}でユーザーをブロック",
+              "${applicationName}でこの人をブロック",
+              "${applicationName}でこのアカウントをブロック"
+            ]
+          }
+        },
+        "ko" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}에서 사용자 차단해 줘",
+              "${applicationName}에서 이 사람 차단해 줘",
+              "${applicationName}에서 이 계정 차단하기"
+            ]
+          }
+        },
+        "ms" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Sekat seseorang di ${applicationName}",
+              "Sekat pengguna ini di ${applicationName}",
+              "Sekat akaun ini di ${applicationName}"
+            ]
+          }
+        },
+        "nb" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Blokker noen på ${applicationName}",
+              "Blokker denne personen på ${applicationName}",
+              "Blokker denne kontoen på ${applicationName}"
+            ]
+          }
+        },
+        "nl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Blokkeer iemand op ${applicationName}",
+              "Blokkeer deze persoon op ${applicationName}",
+              "Blokkeer dit account op ${applicationName}"
+            ]
+          }
+        },
+        "pl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Zablokuj kogoś w ${applicationName}",
+              "Zablokuj tę osobę w ${applicationName}",
+              "Zablokuj to konto w ${applicationName}"
+            ]
+          }
+        },
+        "pt-BR" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Bloquear alguém no ${applicationName}",
+              "Bloquear esta pessoa no ${applicationName}",
+              "Bloquear esta conta no ${applicationName}"
+            ]
+          }
+        },
+        "pt-PT" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Bloquear alguém no ${applicationName}",
+              "Bloquear esta pessoa no ${applicationName}",
+              "Bloquear esta conta no ${applicationName}"
+            ]
+          }
+        },
+        "ro" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Blochează pe cineva pe ${applicationName}",
+              "Blochează această persoană pe ${applicationName}",
+              "Blochează acest cont pe ${applicationName}"
+            ]
+          }
+        },
+        "ru" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Заблокировать пользователя в ${applicationName}",
+              "Заблокировать этого человека в ${applicationName}",
+              "Заблокировать этот аккаунт в ${applicationName}"
+            ]
+          }
+        },
+        "sk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Zablokovať niekoho v aplikácii ${applicationName}",
+              "Zablokovať túto osobu v aplikácii ${applicationName}",
+              "Zablokovať tento účet v aplikácii ${applicationName}"
+            ]
+          }
+        },
+        "sv" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Blockera någon på ${applicationName}",
+              "Blockera den här personen på ${applicationName}",
+              "Blockera det här kontot på ${applicationName}"
+            ]
+          }
+        },
+        "th" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "บล็อกผู้ใช้บน ${applicationName}",
+              "บล็อกคนนี้บน ${applicationName}",
+              "บล็อกบัญชีนี้บน ${applicationName}"
+            ]
+          }
+        },
+        "tr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName} uygulamasında birini engelle",
+              "${applicationName} uygulamasında bu kişiyi engelle",
+              "${applicationName} üzerinde bu hesabı engelle"
+            ]
+          }
+        },
+        "uk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Заблокувати когось у ${applicationName}",
+              "Заблокувати цю людину в ${applicationName}",
+              "Заблокувати цей обліковий запис у ${applicationName}"
+            ]
+          }
+        },
+        "vi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Chặn ai đó trên ${applicationName}",
+              "Chặn người này trên ${applicationName}",
+              "Chặn tài khoản này trên ${applicationName}"
+            ]
+          }
+        },
+        "zh-HK" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "在 ${applicationName} 封鎖某人",
+              "在 ${applicationName} 封鎖這個人",
+              "在 ${applicationName} 上封鎖這個帳戶"
+            ]
+          }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "在 ${applicationName} 上屏蔽某人",
+              "在 ${applicationName} 中屏蔽此人",
+              "在 ${applicationName} 上屏蔽此账号"
+            ]
+          }
+        },
+        "zh-Hant" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "在 ${applicationName} 上封鎖某人",
+              "在 ${applicationName} 封鎖這個人",
+              "在 ${applicationName} 上封鎖這個帳號"
+            ]
+          }
+        }
+      }
+    },
+    "Check my ${applicationName} messages" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "ar" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "تحقق من رسائلي في ${applicationName}",
+              "كم عدد الرسائل غير المقروءة في ${applicationName}"
+            ]
+          }
+        },
+        "ca" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Comprova els meus missatges de ${applicationName}",
+              "Quants missatges sense llegir tinc a ${applicationName}"
+            ]
+          }
+        },
+        "cs" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Zkontrolovat zprávy v aplikaci ${applicationName}",
+              "Kolik mám nepřečtených zpráv v aplikaci ${applicationName}"
+            ]
+          }
+        },
+        "da" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Tjek mine beskeder i ${applicationName}",
+              "Hvor mange ulæste beskeder i ${applicationName}"
+            ]
+          }
+        },
+        "de" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Meine ${applicationName}-Nachrichten prüfen",
+              "Wie viele ungelesene ${applicationName}-Nachrichten habe ich"
+            ]
+          }
+        },
+        "el" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Έλεγχος των μηνυμάτων μου στο ${applicationName}",
+              "Πόσα μη αναγνωσμένα μηνύματα έχω στο ${applicationName};"
+            ]
+          }
+        },
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Check my ${applicationName} messages",
+              "How many unread ${applicationName} messages"
+            ]
+          }
+        },
+        "en-AU" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Check my ${applicationName} messages",
+              "How many unread ${applicationName} messages"
+            ]
+          }
+        },
+        "en-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Check my ${applicationName} messages",
+              "How many unread ${applicationName} messages"
+            ]
+          }
+        },
+        "en-GB" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Check my ${applicationName} messages",
+              "How many unread ${applicationName} messages"
+            ]
+          }
+        },
+        "es" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Consultar mis mensajes de ${applicationName}",
+              "Cuántos mensajes sin leer tengo en ${applicationName}",
+              "Ver mis mensajes en ${applicationName}"
+            ]
+          }
+        },
+        "es-419" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Revisar mis mensajes de ${applicationName}",
+              "Cuántos mensajes sin leer tengo en ${applicationName}",
+              "Ver mis mensajes en ${applicationName}"
+            ]
+          }
+        },
+        "fi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Tarkista viestini sovelluksessa ${applicationName}",
+              "Montako lukematonta viestiä minulla on sovelluksessa ${applicationName}",
+              "Näytä ${applicationName}-sovelluksen viestit"
+            ]
+          }
+        },
+        "fr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Vérifier mes messages ${applicationName}",
+              "Combien de messages non lus dans ${applicationName}",
+              "Consulter mes messages sur ${applicationName}"
+            ]
+          }
+        },
+        "fr-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Vérifier mes messages ${applicationName}",
+              "Combien de messages non lus dans ${applicationName}",
+              "Consulter mes messages sur ${applicationName}"
+            ]
+          }
+        },
+        "he" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "בדוק את ההודעות שלי בתוך ${applicationName}",
+              "כמה הודעות שלא נקראו יש לי בתוך ${applicationName}"
+            ]
+          }
+        },
+        "hi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "मेरे ${applicationName} संदेश देखें",
+              "${applicationName} में कितने अपठित संदेश हैं",
+              "मेरे ${applicationName} मैसेज चेक करें"
+            ]
+          }
+        },
+        "hr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Provjeri moje poruke u aplikaciji ${applicationName}",
+              "Koliko imam nepročitanih poruka u aplikaciji ${applicationName}"
+            ]
+          }
+        },
+        "hu" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}-üzeneteim megtekintése",
+              "Hány olvasatlan ${applicationName}-üzenetem van"
+            ]
+          }
+        },
+        "id" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Cek pesan ${applicationName} saya",
+              "Berapa pesan ${applicationName} yang belum dibaca"
+            ]
+          }
+        },
+        "it" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Controlla i miei messaggi su ${applicationName}",
+              "Quanti messaggi non letti ho su ${applicationName}"
+            ]
+          }
+        },
+        "ja" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}のメッセージを確認",
+              "${applicationName}の未読メッセージは何件"
+            ]
+          }
+        },
+        "ko" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "내 ${applicationName} 메시지 확인해 줘",
+              "읽지 않은 ${applicationName} 메시지 몇 개야"
+            ]
+          }
+        },
+        "ms" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Semak mesej ${applicationName} saya",
+              "Berapa mesej ${applicationName} yang belum dibaca"
+            ]
+          }
+        },
+        "nb" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Sjekk meldingene mine i ${applicationName}",
+              "Hvor mange uleste meldinger i ${applicationName}"
+            ]
+          }
+        },
+        "nl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Bekijk mijn ${applicationName}-berichten",
+              "Hoeveel ongelezen berichten heb ik in ${applicationName}"
+            ]
+          }
+        },
+        "pl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Sprawdź moje wiadomości w ${applicationName}",
+              "Ile mam nieprzeczytanych wiadomości w ${applicationName}"
+            ]
+          }
+        },
+        "pt-BR" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Verificar minhas mensagens do ${applicationName}",
+              "Quantas mensagens não lidas tenho no ${applicationName}"
+            ]
+          }
+        },
+        "pt-PT" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Ver as minhas mensagens no ${applicationName}",
+              "Quantas mensagens por ler tenho no ${applicationName}"
+            ]
+          }
+        },
+        "ro" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Verifică mesajele mele din ${applicationName}",
+              "Câte mesaje necitite am în ${applicationName}"
+            ]
+          }
+        },
+        "ru" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Проверить мои сообщения в ${applicationName}",
+              "Сколько непрочитанных сообщений в ${applicationName}"
+            ]
+          }
+        },
+        "sk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Skontrolovať moje správy v aplikácii ${applicationName}",
+              "Koľko mám neprečítaných správ v aplikácii ${applicationName}"
+            ]
+          }
+        },
+        "sv" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Kolla mina meddelanden i ${applicationName}",
+              "Hur många olästa meddelanden har jag i ${applicationName}"
+            ]
+          }
+        },
+        "th" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "เช็กข้อความ ${applicationName} ของฉัน",
+              "มีข้อความ ${applicationName} ที่ยังไม่ได้อ่านกี่ข้อความ"
+            ]
+          }
+        },
+        "tr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName} mesajlarımı kontrol et",
+              "Kaç okunmamış ${applicationName} mesajım var"
+            ]
+          }
+        },
+        "uk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Перевірити мої повідомлення в ${applicationName}",
+              "Скільки непрочитаних повідомлень у ${applicationName}"
+            ]
+          }
+        },
+        "vi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Kiểm tra tin nhắn ${applicationName} của tôi",
+              "Có bao nhiêu tin nhắn ${applicationName} chưa đọc"
+            ]
+          }
+        },
+        "zh-HK" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "查看我的 ${applicationName} 訊息",
+              "我有幾多則未讀的 ${applicationName} 訊息"
+            ]
+          }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "查看我的 ${applicationName} 消息",
+              "我有多少条未读的 ${applicationName} 消息"
+            ]
+          }
+        },
+        "zh-Hant" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "查看我的 ${applicationName} 訊息",
+              "我有幾則未讀的 ${applicationName} 訊息"
+            ]
+          }
+        }
+      }
+    },
+    "How many unread ${applicationName} notifications" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "ar" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "كم عدد الإشعارات غير المقروءة في ${applicationName}",
+              "تحقق من إشعاراتي في ${applicationName}"
+            ]
+          }
+        },
+        "ca" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Quantes notificacions sense llegir tinc a ${applicationName}",
+              "Comprova les meves notificacions de ${applicationName}"
+            ]
+          }
+        },
+        "cs" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Kolik mám nepřečtených oznámení v aplikaci ${applicationName}",
+              "Zkontrolovat oznámení v aplikaci ${applicationName}"
+            ]
+          }
+        },
+        "da" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Hvor mange ulæste notifikationer i ${applicationName}",
+              "Tjek mine notifikationer i ${applicationName}"
+            ]
+          }
+        },
+        "de" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Wie viele ungelesene ${applicationName}-Mitteilungen habe ich",
+              "Meine ${applicationName}-Mitteilungen prüfen"
+            ]
+          }
+        },
+        "el" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Πόσες μη αναγνωσμένες ειδοποιήσεις έχω στο ${applicationName};",
+              "Έλεγχος των ειδοποιήσεών μου στο ${applicationName}"
+            ]
+          }
+        },
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "How many unread ${applicationName} notifications",
+              "Check my ${applicationName} notifications"
+            ]
+          }
+        },
+        "en-AU" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "How many unread ${applicationName} notifications",
+              "Check my ${applicationName} notifications"
+            ]
+          }
+        },
+        "en-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "How many unread ${applicationName} notifications",
+              "Check my ${applicationName} notifications"
+            ]
+          }
+        },
+        "en-GB" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "How many unread ${applicationName} notifications",
+              "Check my ${applicationName} notifications"
+            ]
+          }
+        },
+        "es" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Cuántas notificaciones sin leer tengo en ${applicationName}",
+              "Consultar mis notificaciones de ${applicationName}",
+              "Ver mis notificaciones en ${applicationName}"
+            ]
+          }
+        },
+        "es-419" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Cuántas notificaciones sin leer tengo en ${applicationName}",
+              "Revisar mis notificaciones de ${applicationName}",
+              "Ver mis notificaciones en ${applicationName}"
+            ]
+          }
+        },
+        "fi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Montako lukematonta ilmoitusta minulla on sovelluksessa ${applicationName}",
+              "Tarkista ilmoitukseni sovelluksessa ${applicationName}",
+              "Näytä ${applicationName}-sovelluksen ilmoitukset"
+            ]
+          }
+        },
+        "fr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Combien de notifications non lues dans ${applicationName}",
+              "Vérifier mes notifications ${applicationName}",
+              "Consulter mes notifications sur ${applicationName}"
+            ]
+          }
+        },
+        "fr-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Combien de notifications non lues dans ${applicationName}",
+              "Vérifier mes notifications ${applicationName}",
+              "Consulter mes notifications sur ${applicationName}"
+            ]
+          }
+        },
+        "he" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "כמה התראות שלא נקראו יש לי בתוך ${applicationName}",
+              "בדוק את ההתראות שלי בתוך ${applicationName}"
+            ]
+          }
+        },
+        "hi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName} में कितनी अपठित सूचनाएँ हैं",
+              "मेरी ${applicationName} सूचनाएँ देखें",
+              "मेरे ${applicationName} नोटिफ़िकेशन चेक करें"
+            ]
+          }
+        },
+        "hr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Koliko imam nepročitanih obavijesti u aplikaciji ${applicationName}",
+              "Provjeri moje obavijesti u aplikaciji ${applicationName}"
+            ]
+          }
+        },
+        "hu" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Hány olvasatlan ${applicationName}-értesítésem van",
+              "${applicationName}-értesítéseim megtekintése"
+            ]
+          }
+        },
+        "id" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Berapa notifikasi ${applicationName} yang belum dibaca",
+              "Cek notifikasi ${applicationName} saya"
+            ]
+          }
+        },
+        "it" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Quante notifiche non lette ho su ${applicationName}",
+              "Controlla le mie notifiche su ${applicationName}"
+            ]
+          }
+        },
+        "ja" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}の未読通知は何件",
+              "${applicationName}の通知を確認"
+            ]
+          }
+        },
+        "ko" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "읽지 않은 ${applicationName} 알림 몇 개야",
+              "내 ${applicationName} 알림 확인해 줘"
+            ]
+          }
+        },
+        "ms" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Berapa pemberitahuan ${applicationName} yang belum dibaca",
+              "Semak pemberitahuan ${applicationName} saya"
+            ]
+          }
+        },
+        "nb" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Hvor mange uleste varsler i ${applicationName}",
+              "Sjekk varslene mine i ${applicationName}"
+            ]
+          }
+        },
+        "nl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Hoeveel ongelezen meldingen heb ik in ${applicationName}",
+              "Bekijk mijn ${applicationName}-meldingen"
+            ]
+          }
+        },
+        "pl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Ile mam nieprzeczytanych powiadomień w ${applicationName}",
+              "Sprawdź moje powiadomienia w ${applicationName}"
+            ]
+          }
+        },
+        "pt-BR" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Quantas notificações não lidas tenho no ${applicationName}",
+              "Verificar minhas notificações do ${applicationName}"
+            ]
+          }
+        },
+        "pt-PT" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Quantas notificações por ler tenho no ${applicationName}",
+              "Ver as minhas notificações no ${applicationName}"
+            ]
+          }
+        },
+        "ro" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Câte notificări necitite am în ${applicationName}",
+              "Verifică notificările mele din ${applicationName}"
+            ]
+          }
+        },
+        "ru" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Сколько непрочитанных уведомлений в ${applicationName}",
+              "Проверить мои уведомления в ${applicationName}"
+            ]
+          }
+        },
+        "sk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Koľko mám neprečítaných upozornení v aplikácii ${applicationName}",
+              "Skontrolovať moje upozornenia v aplikácii ${applicationName}"
+            ]
+          }
+        },
+        "sv" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Hur många olästa notiser har jag i ${applicationName}",
+              "Kolla mina notiser i ${applicationName}"
+            ]
+          }
+        },
+        "th" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "มีการแจ้งเตือน ${applicationName} ที่ยังไม่ได้อ่านกี่รายการ",
+              "เช็กการแจ้งเตือน ${applicationName} ของฉัน"
+            ]
+          }
+        },
+        "tr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Kaç okunmamış ${applicationName} bildirimim var",
+              "${applicationName} bildirimlerimi kontrol et"
+            ]
+          }
+        },
+        "uk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Скільки непрочитаних сповіщень у ${applicationName}",
+              "Перевірити мої сповіщення в ${applicationName}"
+            ]
+          }
+        },
+        "vi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Có bao nhiêu thông báo ${applicationName} chưa đọc",
+              "Kiểm tra thông báo ${applicationName} của tôi"
+            ]
+          }
+        },
+        "zh-HK" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "我有幾多則未讀的 ${applicationName} 通知",
+              "查看我的 ${applicationName} 通知"
+            ]
+          }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "我有多少条未读的 ${applicationName} 通知",
+              "查看我的 ${applicationName} 通知"
+            ]
+          }
+        },
+        "zh-Hant" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "我有幾則未讀的 ${applicationName} 通知",
+              "查看我的 ${applicationName} 通知"
+            ]
+          }
+        }
+      }
+    },
+    "Like this post in ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "ar" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "أعجب بهذا المنشور في ${applicationName}",
+              "سجل إعجابا بمنشور ${applicationName} هذا",
+              "أعجب بمنشور على ${applicationName}"
+            ]
+          }
+        },
+        "ca" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Fes m'agrada a aquesta publicació a ${applicationName}",
+              "Marca m'agrada en aquesta publicació de ${applicationName}",
+              "Fes m'agrada a una publicació a ${applicationName}"
+            ]
+          }
+        },
+        "cs" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Označit tento příspěvek jako To se mi líbí v aplikaci ${applicationName}",
+              "Dát To se mi líbí tomuto příspěvku v aplikaci ${applicationName}",
+              "Dát To se mi líbí příspěvku v aplikaci ${applicationName}"
+            ]
+          }
+        },
+        "da" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Synes godt om dette opslag i ${applicationName}",
+              "Synes godt om opslaget i ${applicationName}",
+              "Synes godt om et opslag på ${applicationName}"
+            ]
+          }
+        },
+        "de" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Diesen Post in ${applicationName} mit Gefällt mir markieren",
+              "Diesen ${applicationName}-Post liken",
+              "Einen Post in ${applicationName} liken"
+            ]
+          }
+        },
+        "el" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Μου αρέσει σε αυτή τη δημοσίευση στο ${applicationName}",
+              "Κάνε Μου αρέσει σε αυτή τη δημοσίευση του ${applicationName}",
+              "Μου αρέσει σε μια δημοσίευση στο ${applicationName}"
+            ]
+          }
+        },
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Like this post in ${applicationName}",
+              "Like this ${applicationName} post",
+              "Like a post on ${applicationName}"
+            ]
+          }
+        },
+        "en-AU" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Like this post in ${applicationName}",
+              "Like this ${applicationName} post",
+              "Like a post on ${applicationName}"
+            ]
+          }
+        },
+        "en-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Like this post in ${applicationName}",
+              "Like this ${applicationName} post",
+              "Like a post on ${applicationName}"
+            ]
+          }
+        },
+        "en-GB" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Like this post in ${applicationName}",
+              "Like this ${applicationName} post",
+              "Like a post on ${applicationName}"
+            ]
+          }
+        },
+        "es" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Dar Me gusta a esta publicación en ${applicationName}",
+              "Indicar que me gusta esta publicación de ${applicationName}",
+              "Dar Me gusta a una publicación en ${applicationName}"
+            ]
+          }
+        },
+        "es-419" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Dar Me gusta a esta publicación en ${applicationName}",
+              "Indicar que me gusta esta publicación de ${applicationName}",
+              "Dar Me gusta a una publicación en ${applicationName}"
+            ]
+          }
+        },
+        "fi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Tykkää tästä julkaisusta sovelluksessa ${applicationName}",
+              "Tykkää tästä ${applicationName}-sovelluksen julkaisusta",
+              "Tykkää julkaisusta sovelluksessa ${applicationName}"
+            ]
+          }
+        },
+        "fr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Aimer cette publication dans ${applicationName}",
+              "Aimer cette publication ${applicationName}",
+              "Aimer une publication sur ${applicationName}"
+            ]
+          }
+        },
+        "fr-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Aimer cette publication dans ${applicationName}",
+              "Aimer cette publication ${applicationName}",
+              "Aimer une publication sur ${applicationName}"
+            ]
+          }
+        },
+        "he" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "סמן לייק לפוסט הזה בתוך ${applicationName}",
+              "תן לייק לפוסט של ${applicationName}",
+              "אהבתי לפוסט בתוך ${applicationName}"
+            ]
+          }
+        },
+        "hi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName} में इस पोस्ट को पसंद करें",
+              "इस ${applicationName} पोस्ट को लाइक करें",
+              "${applicationName} पर पोस्ट पसंद करें"
+            ]
+          }
+        },
+        "hr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Označi da mi se sviđa ova objava u aplikaciji ${applicationName}",
+              "Sviđa mi se ova objava u aplikaciji ${applicationName}",
+              "Označi objavu sa Sviđa mi se na ${applicationName}"
+            ]
+          }
+        },
+        "hu" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Bejegyzés kedvelése a ${applicationName} alkalmazásban",
+              "Ezen ${applicationName}-bejegyzés kedvelése",
+              "Egy bejegyzés kedvelése a ${applicationName} felületén"
+            ]
+          }
+        },
+        "id" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Sukai postingan ini di ${applicationName}",
+              "Sukai postingan ${applicationName} ini",
+              "Sukai postingan pada ${applicationName}"
+            ]
+          }
+        },
+        "it" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Metti Mi piace a questo post su ${applicationName}",
+              "Metti Mi piace a questo post in ${applicationName}",
+              "Metti Mi piace a un post su ${applicationName}"
+            ]
+          }
+        },
+        "ja" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}でこの投稿にいいね",
+              "この${applicationName}の投稿にいいね",
+              "${applicationName}の投稿にいいね"
+            ]
+          }
+        },
+        "ko" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}에서 이 게시물에 좋아요 눌러 줘",
+              "이 ${applicationName} 게시물에 좋아요 표시해 줘",
+              "${applicationName} 게시물에 좋아요 남기기"
+            ]
+          }
+        },
+        "ms" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Suka siaran ini dalam ${applicationName}",
+              "Suka siaran ${applicationName} ini",
+              "Suka satu siaran di ${applicationName}"
+            ]
+          }
+        },
+        "nb" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Lik dette innlegget i ${applicationName}",
+              "Lik dette ${applicationName}-innlegget",
+              "Lik et innlegg på ${applicationName}"
+            ]
+          }
+        },
+        "nl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Vind dit bericht leuk in ${applicationName}",
+              "Vind dit ${applicationName}-bericht leuk",
+              "Vind een bericht leuk op ${applicationName}"
+            ]
+          }
+        },
+        "pl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Polub ten wpis w ${applicationName}",
+              "Polub wpis w ${applicationName}",
+              "Polub bieżący wpis w ${applicationName}"
+            ]
+          }
+        },
+        "pt-BR" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Curtir esta publicação no ${applicationName}",
+              "Curtir este post do ${applicationName}",
+              "Curtir uma publicação no ${applicationName}"
+            ]
+          }
+        },
+        "pt-PT" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Gostar desta publicação no ${applicationName}",
+              "Marcar gosto nesta publicação do ${applicationName}",
+              "Gostar de uma publicação no ${applicationName}"
+            ]
+          }
+        },
+        "ro" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Apreciază această postare în ${applicationName}",
+              "Apreciază această postare din ${applicationName}",
+              "Apreciază o postare pe ${applicationName}"
+            ]
+          }
+        },
+        "ru" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Поставить отметку «Нравится» этому посту в ${applicationName}",
+              "Оценить этот пост в ${applicationName}",
+              "Лайкнуть пост в ${applicationName}"
+            ]
+          }
+        },
+        "sk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Označiť tento príspevok ako Páči sa mi to v aplikácii ${applicationName}",
+              "Dať Páči sa mi to tomuto príspevku v ${applicationName}",
+              "Označiť príspevok v aplikácii ${applicationName} ako Páči sa mi to"
+            ]
+          }
+        },
+        "sv" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Gilla det här inlägget i ${applicationName}",
+              "Gilla detta inlägg på ${applicationName}",
+              "Gilla ett inlägg på ${applicationName}"
+            ]
+          }
+        },
+        "th" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "กดถูกใจโพสต์นี้ใน ${applicationName}",
+              "ถูกใจโพสต์ ${applicationName} นี้",
+              "ถูกใจโพสต์บน ${applicationName}"
+            ]
+          }
+        },
+        "tr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName} uygulamasında bu gönderiyi beğen",
+              "Bu ${applicationName} gönderisini beğen",
+              "${applicationName} üzerinde bir gönderiyi beğen"
+            ]
+          }
+        },
+        "uk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Вподобати цей допис у ${applicationName}",
+              "Поставити вподобання цьому допису в ${applicationName}",
+              "Вподобати допис у ${applicationName}"
+            ]
+          }
+        },
+        "vi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Thích bài đăng này trong ${applicationName}",
+              "Thích bài đăng ${applicationName} này",
+              "Thích một bài đăng trên ${applicationName}"
+            ]
+          }
+        },
+        "zh-HK" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "在 ${applicationName} 讚好這則帖文",
+              "讚好這則 ${applicationName} 帖文",
+              "在 ${applicationName} 上讚好帖文"
+            ]
+          }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "在 ${applicationName} 中给这条帖子点赞",
+              "赞这条 ${applicationName} 帖子",
+              "在 ${applicationName} 上给帖子点赞"
+            ]
+          }
+        },
+        "zh-Hant" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "在 ${applicationName} 中對這則貼文按讚",
+              "對這則 ${applicationName} 貼文按讚",
+              "在 ${applicationName} 上對貼文按讚"
+            ]
+          }
+        }
+      }
+    },
+    "Post to ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "ar" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "انشر في ${applicationName}",
+              "اكتب منشورا في ${applicationName}",
+              "أنشئ منشورا في ${applicationName}"
+            ]
+          }
+        },
+        "ca" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Publica a ${applicationName}",
+              "Escriu una publicació a ${applicationName}",
+              "Crea una publicació a ${applicationName}"
+            ]
+          }
+        },
+        "cs" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Přidat příspěvek do aplikace ${applicationName}",
+              "Napsat příspěvek v aplikaci ${applicationName}",
+              "Vytvořit příspěvek v aplikaci ${applicationName}"
+            ]
+          }
+        },
+        "da" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Slå op på ${applicationName}",
+              "Skriv et opslag i ${applicationName}",
+              "Opret et opslag i ${applicationName}"
+            ]
+          }
+        },
+        "de" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "In ${applicationName} posten",
+              "Einen ${applicationName}-Post schreiben",
+              "Einen Post in ${applicationName} erstellen"
+            ]
+          }
+        },
+        "el" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Δημοσίευση στο ${applicationName}",
+              "Γράψε μια δημοσίευση στο ${applicationName}",
+              "Δημιουργία δημοσίευσης στο ${applicationName}"
+            ]
+          }
+        },
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Post to ${applicationName}",
+              "Write a ${applicationName} post",
+              "Create a post in ${applicationName}"
+            ]
+          }
+        },
+        "en-AU" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Post to ${applicationName}",
+              "Write a ${applicationName} post",
+              "Create a post in ${applicationName}"
+            ]
+          }
+        },
+        "en-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Post to ${applicationName}",
+              "Write a ${applicationName} post",
+              "Create a post in ${applicationName}"
+            ]
+          }
+        },
+        "en-GB" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Post to ${applicationName}",
+              "Write a ${applicationName} post",
+              "Create a post in ${applicationName}"
+            ]
+          }
+        },
+        "es" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Publicar en ${applicationName}",
+              "Escribir una publicación en ${applicationName}",
+              "Crear una publicación en ${applicationName}"
+            ]
+          }
+        },
+        "es-419" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Publicar en ${applicationName}",
+              "Escribir una publicación en ${applicationName}",
+              "Crear una publicación en ${applicationName}"
+            ]
+          }
+        },
+        "fi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Julkaise sovelluksessa ${applicationName}",
+              "Kirjoita julkaisu sovelluksessa ${applicationName}",
+              "Luo uusi julkaisu ${applicationName}-sovelluksessa"
+            ]
+          }
+        },
+        "fr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Publier sur ${applicationName}",
+              "Écrire une publication ${applicationName}",
+              "Créer une publication dans ${applicationName}"
+            ]
+          }
+        },
+        "fr-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Publier sur ${applicationName}",
+              "Écrire une publication ${applicationName}",
+              "Créer une publication dans ${applicationName}"
+            ]
+          }
+        },
+        "he" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "פרסם פוסט דרך ${applicationName}",
+              "כתוב פוסט חדש של ${applicationName}",
+              "צור פוסט בתוך ${applicationName}"
+            ]
+          }
+        },
+        "hi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName} पर पोस्ट करें",
+              "${applicationName} पोस्ट लिखें",
+              "${applicationName} में नया पोस्ट बनाएँ"
+            ]
+          }
+        },
+        "hr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Objavi na ${applicationName}",
+              "Napiši objavu u aplikaciji ${applicationName}",
+              "Izradi objavu u aplikaciji ${applicationName}"
+            ]
+          }
+        },
+        "hu" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Közzététel a ${applicationName} alkalmazásban",
+              "${applicationName}-bejegyzés írása",
+              "Bejegyzés létrehozása a ${applicationName} alkalmazásban"
+            ]
+          }
+        },
+        "id" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Posting ke ${applicationName}",
+              "Tulis postingan ${applicationName}",
+              "Buat postingan di ${applicationName}"
+            ]
+          }
+        },
+        "it" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Pubblica su ${applicationName}",
+              "Scrivi un post su ${applicationName}",
+              "Crea un post in ${applicationName}"
+            ]
+          }
+        },
+        "ja" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}に投稿",
+              "${applicationName}の投稿を作成",
+              "${applicationName}で投稿を書く"
+            ]
+          }
+        },
+        "ko" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}에 게시물 올리기",
+              "${applicationName} 게시물 작성해 줘",
+              "${applicationName}에서 새 게시물 만들기"
+            ]
+          }
+        },
+        "ms" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Siarkan ke ${applicationName}",
+              "Tulis siaran ${applicationName}",
+              "Cipta siaran dalam ${applicationName}"
+            ]
+          }
+        },
+        "nb" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Publiser på ${applicationName}",
+              "Skriv et ${applicationName}-innlegg",
+              "Opprett et innlegg i ${applicationName}"
+            ]
+          }
+        },
+        "nl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Plaats op ${applicationName}",
+              "Schrijf een ${applicationName}-bericht",
+              "Maak een bericht in ${applicationName}"
+            ]
+          }
+        },
+        "pl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Opublikuj wpis w ${applicationName}",
+              "Napisz wpis w ${applicationName}",
+              "Utwórz wpis w ${applicationName}"
+            ]
+          }
+        },
+        "pt-BR" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Publicar no ${applicationName}",
+              "Escrever uma publicação no ${applicationName}",
+              "Criar uma publicação no ${applicationName}"
+            ]
+          }
+        },
+        "pt-PT" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Publicar no ${applicationName}",
+              "Escrever uma publicação no ${applicationName}",
+              "Criar uma publicação no ${applicationName}"
+            ]
+          }
+        },
+        "ro" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Postează pe ${applicationName}",
+              "Scrie o postare pe ${applicationName}",
+              "Creează o postare în ${applicationName}"
+            ]
+          }
+        },
+        "ru" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Опубликовать в ${applicationName}",
+              "Написать пост в ${applicationName}",
+              "Создать пост в ${applicationName}"
+            ]
+          }
+        },
+        "sk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Uverejniť príspevok v aplikácii ${applicationName}",
+              "Napísať príspevok v aplikácii ${applicationName}",
+              "Vytvoriť príspevok v aplikácii ${applicationName}"
+            ]
+          }
+        },
+        "sv" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Publicera på ${applicationName}",
+              "Skriv ett inlägg i ${applicationName}",
+              "Skapa ett inlägg i ${applicationName}"
+            ]
+          }
+        },
+        "th" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "โพสต์ลง ${applicationName}",
+              "เขียนโพสต์ ${applicationName}",
+              "สร้างโพสต์ใน ${applicationName}"
+            ]
+          }
+        },
+        "tr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName} üzerinde gönderi paylaş",
+              "Bir ${applicationName} gönderisi yaz",
+              "${applicationName} uygulamasında gönderi oluştur"
+            ]
+          }
+        },
+        "uk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Опублікувати в ${applicationName}",
+              "Написати допис у ${applicationName}",
+              "Створити допис у ${applicationName}"
+            ]
+          }
+        },
+        "vi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Đăng lên ${applicationName}",
+              "Viết bài đăng ${applicationName}",
+              "Tạo bài đăng trong ${applicationName}"
+            ]
+          }
+        },
+        "zh-HK" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "發佈帖文至 ${applicationName}",
+              "撰寫 ${applicationName} 帖文",
+              "在 ${applicationName} 建立帖文"
+            ]
+          }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "在 ${applicationName} 上发帖",
+              "写一条 ${applicationName} 帖子",
+              "在 ${applicationName} 中创建帖子"
+            ]
+          }
+        },
+        "zh-Hant" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "發佈貼文到 ${applicationName}",
+              "撰寫 ${applicationName} 貼文",
+              "在 ${applicationName} 中建立貼文"
+            ]
+          }
+        }
+      }
+    },
+    "Repost this in ${applicationName}" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "ar" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "أعد نشر هذا في ${applicationName}",
+              "أعد نشر منشور ${applicationName} هذا",
+              "أعد نشر منشور على ${applicationName}"
+            ]
+          }
+        },
+        "ca" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Republica això a ${applicationName}",
+              "Republica aquesta publicació de ${applicationName}",
+              "Republica una publicació a ${applicationName}"
+            ]
+          }
+        },
+        "cs" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Repostovat toto v aplikaci ${applicationName}",
+              "Repostovat tento příspěvek v aplikaci ${applicationName}",
+              "Repostovat příspěvek v aplikaci ${applicationName}"
+            ]
+          }
+        },
+        "da" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Slå dette op igen i ${applicationName}",
+              "Genopslå dette opslag i ${applicationName}",
+              "Slå et opslag op igen på ${applicationName}"
+            ]
+          }
+        },
+        "de" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Diesen Post in ${applicationName} reposten",
+              "Diesen ${applicationName}-Post reposten",
+              "Einen Post in ${applicationName} reposten"
+            ]
+          }
+        },
+        "el" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Αναδημοσίευση αυτού στο ${applicationName}",
+              "Αναδημοσίευση αυτής της δημοσίευσης στο ${applicationName}",
+              "Αναδημοσίευση μιας δημοσίευσης στο ${applicationName}"
+            ]
+          }
+        },
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Repost this in ${applicationName}",
+              "Repost this ${applicationName} post",
+              "Repost a post on ${applicationName}"
+            ]
+          }
+        },
+        "en-AU" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Repost this in ${applicationName}",
+              "Repost this ${applicationName} post",
+              "Repost a post on ${applicationName}"
+            ]
+          }
+        },
+        "en-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Repost this in ${applicationName}",
+              "Repost this ${applicationName} post",
+              "Repost a post on ${applicationName}"
+            ]
+          }
+        },
+        "en-GB" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Repost this in ${applicationName}",
+              "Repost this ${applicationName} post",
+              "Repost a post on ${applicationName}"
+            ]
+          }
+        },
+        "es" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Republicar esto en ${applicationName}",
+              "Republicar esta publicación de ${applicationName}",
+              "Republicar una publicación en ${applicationName}"
+            ]
+          }
+        },
+        "es-419" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Republicar esto en ${applicationName}",
+              "Republicar esta publicación de ${applicationName}",
+              "Republicar una publicación en ${applicationName}"
+            ]
+          }
+        },
+        "fi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Julkaise tämä uudelleen sovelluksessa ${applicationName}",
+              "Julkaise tämä ${applicationName}-julkaisu uudelleen",
+              "Tee uudelleenjulkaisu sovelluksessa ${applicationName}"
+            ]
+          }
+        },
+        "fr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Republier ceci dans ${applicationName}",
+              "Republier cette publication ${applicationName}",
+              "Republier une publication sur ${applicationName}"
+            ]
+          }
+        },
+        "fr-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Republier ceci dans ${applicationName}",
+              "Republier cette publication ${applicationName}",
+              "Republier une publication sur ${applicationName}"
+            ]
+          }
+        },
+        "he" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "פרסם מחדש בתוך ${applicationName}",
+              "פרסם מחדש את הפוסט הזה של ${applicationName}",
+              "שתף מחדש פוסט דרך ${applicationName}"
+            ]
+          }
+        },
+        "hi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName} में इसे रीपोस्ट करें",
+              "इस ${applicationName} पोस्ट को रीपोस्ट करें",
+              "${applicationName} पर पोस्ट रीपोस्ट करें"
+            ]
+          }
+        },
+        "hr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Ponovno objavi ovo u aplikaciji ${applicationName}",
+              "Ponovno objavi ovu objavu u aplikaciji ${applicationName}",
+              "Podijeli objavu ponovno na ${applicationName}"
+            ]
+          }
+        },
+        "hu" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Újraközlés a ${applicationName} alkalmazásban",
+              "Ezen ${applicationName}-bejegyzés újraközlése",
+              "Egy bejegyzés újraközlése a ${applicationName} felületén"
+            ]
+          }
+        },
+        "id" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Posting ulang ini di ${applicationName}",
+              "Posting ulang postingan ${applicationName} ini",
+              "Posting ulang sebuah postingan di ${applicationName}"
+            ]
+          }
+        },
+        "it" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Riposta questo in ${applicationName}",
+              "Riposta questo post su ${applicationName}",
+              "Riposta un post su ${applicationName}"
+            ]
+          }
+        },
+        "ja" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}でこれをリポスト",
+              "この${applicationName}の投稿をリポスト",
+              "${applicationName}の投稿をリポスト"
+            ]
+          }
+        },
+        "ko" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}에서 이 게시물 리포스트해 줘",
+              "이 ${applicationName} 게시물 리포스트하기",
+              "${applicationName}에 게시물 리포스트해 줘"
+            ]
+          }
+        },
+        "ms" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Siar semula ini dalam ${applicationName}",
+              "Siar semula siaran ${applicationName} ini",
+              "Siar semula satu siaran di ${applicationName}"
+            ]
+          }
+        },
+        "nb" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Republiser dette i ${applicationName}",
+              "Republiser dette ${applicationName}-innlegget",
+              "Republiser et innlegg på ${applicationName}"
+            ]
+          }
+        },
+        "nl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Repost dit in ${applicationName}",
+              "Repost dit ${applicationName}-bericht",
+              "Repost een bericht op ${applicationName}"
+            ]
+          }
+        },
+        "pl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Podaj to dalej w ${applicationName}",
+              "Podaj dalej ten wpis w ${applicationName}",
+              "Podaj dalej wpis w ${applicationName}"
+            ]
+          }
+        },
+        "pt-BR" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Repostar isto no ${applicationName}",
+              "Repostar esta publicação do ${applicationName}",
+              "Repostar uma publicação no ${applicationName}"
+            ]
+          }
+        },
+        "pt-PT" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Repostar isto no ${applicationName}",
+              "Repostar esta publicação do ${applicationName}",
+              "Repostar uma publicação no ${applicationName}"
+            ]
+          }
+        },
+        "ro" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Repostează aceasta în ${applicationName}",
+              "Repostează această postare din ${applicationName}",
+              "Repostează o postare pe ${applicationName}"
+            ]
+          }
+        },
+        "ru" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Сделать репост в ${applicationName}",
+              "Репостнуть этот пост в ${applicationName}",
+              "Сделать репост записи в ${applicationName}"
+            ]
+          }
+        },
+        "sk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Repostovať toto v aplikácii ${applicationName}",
+              "Repostovať tento príspevok v aplikácii ${applicationName}",
+              "Repostovať príspevok v ${applicationName}"
+            ]
+          }
+        },
+        "sv" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Återpublicera det här i ${applicationName}",
+              "Återpublicera det här inlägget i ${applicationName}",
+              "Återpublicera ett inlägg på ${applicationName}"
+            ]
+          }
+        },
+        "th" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "รีโพสต์สิ่งนี้ใน ${applicationName}",
+              "รีโพสต์โพสต์ ${applicationName} นี้",
+              "รีโพสต์บน ${applicationName}"
+            ]
+          }
+        },
+        "tr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Bunu ${applicationName} uygulamasında yeniden gönder",
+              "Bu ${applicationName} gönderisini yeniden gönder",
+              "${applicationName} üzerinde bir gönderiyi yeniden gönder"
+            ]
+          }
+        },
+        "uk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Зробити репост у ${applicationName}",
+              "Поширити цей допис у ${applicationName}",
+              "Зробити репост допису в ${applicationName}"
+            ]
+          }
+        },
+        "vi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Đăng lại bài này trong ${applicationName}",
+              "Đăng lại bài đăng ${applicationName} này",
+              "Đăng lại một bài đăng trên ${applicationName}"
+            ]
+          }
+        },
+        "zh-HK" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "在 ${applicationName} 轉發這則帖文",
+              "轉發這則 ${applicationName} 帖文",
+              "在 ${applicationName} 上轉發帖文"
+            ]
+          }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "在 ${applicationName} 中转发此内容",
+              "转发这条 ${applicationName} 帖子",
+              "在 ${applicationName} 上转发帖子"
+            ]
+          }
+        },
+        "zh-Hant" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "在 ${applicationName} 中轉發這則貼文",
+              "轉發這則 ${applicationName} 貼文",
+              "在 ${applicationName} 上轉發貼文"
+            ]
+          }
+        }
+      }
+    },
+    "Search ${applicationName} posts" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "ar" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "ابحث في منشورات ${applicationName}",
+              "ابحث عن منشورات على ${applicationName}"
+            ]
+          }
+        },
+        "ca" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Cerca publicacions a ${applicationName}",
+              "Cerca a les publicacions de ${applicationName}"
+            ]
+          }
+        },
+        "cs" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Hledat příspěvky v aplikaci ${applicationName}",
+              "Vyhledat příspěvky na ${applicationName}"
+            ]
+          }
+        },
+        "da" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Søg efter opslag i ${applicationName}",
+              "Søg i opslag på ${applicationName}"
+            ]
+          }
+        },
+        "de" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}-Posts durchsuchen",
+              "Posts in ${applicationName} suchen"
+            ]
+          }
+        },
+        "el" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Αναζήτηση δημοσιεύσεων στο ${applicationName}",
+              "Ψάξε δημοσιεύσεις στο ${applicationName}"
+            ]
+          }
+        },
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Search ${applicationName} posts",
+              "Search posts on ${applicationName}"
+            ]
+          }
+        },
+        "en-AU" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Search ${applicationName} posts",
+              "Search posts on ${applicationName}"
+            ]
+          }
+        },
+        "en-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Search ${applicationName} posts",
+              "Search posts on ${applicationName}"
+            ]
+          }
+        },
+        "en-GB" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Search ${applicationName} posts",
+              "Search posts on ${applicationName}"
+            ]
+          }
+        },
+        "es" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Buscar publicaciones en ${applicationName}",
+              "Buscar en las publicaciones de ${applicationName}"
+            ]
+          }
+        },
+        "es-419" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Buscar publicaciones en ${applicationName}",
+              "Buscar en las publicaciones de ${applicationName}"
+            ]
+          }
+        },
+        "fi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Etsi julkaisuja sovelluksessa ${applicationName}",
+              "Hae ${applicationName}-sovelluksen julkaisuja"
+            ]
+          }
+        },
+        "fr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Rechercher des publications ${applicationName}",
+              "Rechercher des publications sur ${applicationName}"
+            ]
+          }
+        },
+        "fr-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Rechercher des publications ${applicationName}",
+              "Rechercher des publications sur ${applicationName}"
+            ]
+          }
+        },
+        "he" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "חפש פוסטים בתוך ${applicationName}",
+              "חיפוש פוסטים של ${applicationName}"
+            ]
+          }
+        },
+        "hi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName} पोस्ट खोजें",
+              "${applicationName} पर पोस्ट खोजें"
+            ]
+          }
+        },
+        "hr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Pretraži objave u aplikaciji ${applicationName}",
+              "Pretraži objave na ${applicationName}"
+            ]
+          }
+        },
+        "hu" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}-bejegyzések keresése",
+              "Bejegyzések keresése a ${applicationName} alkalmazásban"
+            ]
+          }
+        },
+        "id" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Cari postingan ${applicationName}",
+              "Cari postingan di ${applicationName}"
+            ]
+          }
+        },
+        "it" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Cerca nei post di ${applicationName}",
+              "Cerca post su ${applicationName}"
+            ]
+          }
+        },
+        "ja" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}の投稿を検索",
+              "${applicationName}で投稿を検索"
+            ]
+          }
+        },
+        "ko" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName} 게시물 검색해 줘",
+              "${applicationName}에서 게시물 찾기"
+            ]
+          }
+        },
+        "ms" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Cari siaran ${applicationName}",
+              "Cari siaran di ${applicationName}"
+            ]
+          }
+        },
+        "nb" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Søk i ${applicationName}-innlegg",
+              "Søk etter innlegg på ${applicationName}"
+            ]
+          }
+        },
+        "nl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Zoek in ${applicationName}-berichten",
+              "Zoek naar berichten op ${applicationName}"
+            ]
+          }
+        },
+        "pl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Szukaj wpisów w ${applicationName}",
+              "Wyszukaj wpisy w ${applicationName}"
+            ]
+          }
+        },
+        "pt-BR" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Buscar publicações no ${applicationName}",
+              "Pesquisar publicações do ${applicationName}"
+            ]
+          }
+        },
+        "pt-PT" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Procurar publicações no ${applicationName}",
+              "Pesquisar publicações no ${applicationName}"
+            ]
+          }
+        },
+        "ro" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Caută postări în ${applicationName}",
+              "Caută postări pe ${applicationName}"
+            ]
+          }
+        },
+        "ru" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Искать посты в ${applicationName}",
+              "Найти посты в ${applicationName}"
+            ]
+          }
+        },
+        "sk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Vyhľadať príspevky v aplikácii ${applicationName}",
+              "Hľadať príspevky v ${applicationName}"
+            ]
+          }
+        },
+        "sv" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Sök efter inlägg i ${applicationName}",
+              "Sök inlägg på ${applicationName}"
+            ]
+          }
+        },
+        "th" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "ค้นหาโพสต์ ${applicationName}",
+              "ค้นหาโพสต์บน ${applicationName}"
+            ]
+          }
+        },
+        "tr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName} gönderilerinde ara",
+              "${applicationName} üzerinde gönderi ara"
+            ]
+          }
+        },
+        "uk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Шукати дописи в ${applicationName}",
+              "Знайти дописи в ${applicationName}"
+            ]
+          }
+        },
+        "vi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Tìm kiếm bài đăng trên ${applicationName}",
+              "Tìm bài đăng ${applicationName}"
+            ]
+          }
+        },
+        "zh-HK" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "搜尋 ${applicationName} 帖文",
+              "在 ${applicationName} 上搜尋帖文"
+            ]
+          }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "搜索 ${applicationName} 帖子",
+              "在 ${applicationName} 上搜索帖子"
+            ]
+          }
+        },
+        "zh-Hant" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "搜尋 ${applicationName} 貼文",
+              "在 ${applicationName} 上搜尋貼文"
+            ]
+          }
+        }
+      }
+    },
+    "Search ${applicationName} profiles" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "ar" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "ابحث في الملفات الشخصية على ${applicationName}",
+              "ابحث عن شخص على ${applicationName}"
+            ]
+          }
+        },
+        "ca" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Cerca perfils a ${applicationName}",
+              "Troba algú a ${applicationName}"
+            ]
+          }
+        },
+        "cs" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Hledat profily v aplikaci ${applicationName}",
+              "Najít někoho v aplikaci ${applicationName}"
+            ]
+          }
+        },
+        "da" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Søg efter profiler i ${applicationName}",
+              "Find nogen på ${applicationName}"
+            ]
+          }
+        },
+        "de" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}-Profile durchsuchen",
+              "Jemanden in ${applicationName} finden"
+            ]
+          }
+        },
+        "el" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Αναζήτηση προφίλ στο ${applicationName}",
+              "Βρες κάποιον στο ${applicationName}"
+            ]
+          }
+        },
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Search ${applicationName} profiles",
+              "Find someone on ${applicationName}"
+            ]
+          }
+        },
+        "en-AU" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Search ${applicationName} profiles",
+              "Find someone on ${applicationName}"
+            ]
+          }
+        },
+        "en-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Search ${applicationName} profiles",
+              "Find someone on ${applicationName}"
+            ]
+          }
+        },
+        "en-GB" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Search ${applicationName} profiles",
+              "Find someone on ${applicationName}"
+            ]
+          }
+        },
+        "es" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Buscar perfiles en ${applicationName}",
+              "Encontrar a alguien en ${applicationName}"
+            ]
+          }
+        },
+        "es-419" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Buscar perfiles en ${applicationName}",
+              "Encontrar a alguien en ${applicationName}"
+            ]
+          }
+        },
+        "fi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Etsi profiileja sovelluksessa ${applicationName}",
+              "Etsi käyttäjiä sovelluksessa ${applicationName}"
+            ]
+          }
+        },
+        "fr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Rechercher des profils ${applicationName}",
+              "Trouver quelqu’un sur ${applicationName}"
+            ]
+          }
+        },
+        "fr-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Rechercher des profils ${applicationName}",
+              "Trouver quelqu’un sur ${applicationName}"
+            ]
+          }
+        },
+        "he" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "חפש פרופילים בתוך ${applicationName}",
+              "מצא מישהו בתוך ${applicationName}"
+            ]
+          }
+        },
+        "hi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName} प्रोफ़ाइल खोजें",
+              "${applicationName} पर किसी को खोजें"
+            ]
+          }
+        },
+        "hr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Pretraži profile u aplikaciji ${applicationName}",
+              "Pronađi nekoga u aplikaciji ${applicationName}"
+            ]
+          }
+        },
+        "hu" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}-profilok keresése",
+              "Személy keresése a ${applicationName} alkalmazásban"
+            ]
+          }
+        },
+        "id" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Cari profil ${applicationName}",
+              "Temukan seseorang di ${applicationName}"
+            ]
+          }
+        },
+        "it" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Cerca profili su ${applicationName}",
+              "Trova qualcuno su ${applicationName}"
+            ]
+          }
+        },
+        "ja" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}のプロフィールを検索",
+              "${applicationName}でユーザーを探す"
+            ]
+          }
+        },
+        "ko" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName} 프로필 검색해 줘",
+              "${applicationName}에서 사람 찾아 줘"
+            ]
+          }
+        },
+        "ms" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Cari profil ${applicationName}",
+              "Cari seseorang di ${applicationName}"
+            ]
+          }
+        },
+        "nb" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Søk i ${applicationName}-profiler",
+              "Finn noen på ${applicationName}"
+            ]
+          }
+        },
+        "nl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Zoek in ${applicationName}-profielen",
+              "Vind iemand op ${applicationName}"
+            ]
+          }
+        },
+        "pl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Szukaj profili w ${applicationName}",
+              "Znajdź kogoś w ${applicationName}"
+            ]
+          }
+        },
+        "pt-BR" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Buscar perfis no ${applicationName}",
+              "Encontrar alguém no ${applicationName}"
+            ]
+          }
+        },
+        "pt-PT" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Procurar perfis no ${applicationName}",
+              "Encontrar alguém no ${applicationName}"
+            ]
+          }
+        },
+        "ro" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Caută profiluri în ${applicationName}",
+              "Găsește pe cineva pe ${applicationName}"
+            ]
+          }
+        },
+        "ru" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Искать профили в ${applicationName}",
+              "Найти пользователя в ${applicationName}"
+            ]
+          }
+        },
+        "sk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Vyhľadať profily v aplikácii ${applicationName}",
+              "Nájsť niekoho v aplikácii ${applicationName}"
+            ]
+          }
+        },
+        "sv" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Sök efter profiler i ${applicationName}",
+              "Hitta någon på ${applicationName}"
+            ]
+          }
+        },
+        "th" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "ค้นหาโปรไฟล์ ${applicationName}",
+              "ค้นหาผู้คนบน ${applicationName}"
+            ]
+          }
+        },
+        "tr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName} profillerinde ara",
+              "${applicationName} üzerinde birini bul"
+            ]
+          }
+        },
+        "uk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Шукати профілі в ${applicationName}",
+              "Знайти когось у ${applicationName}"
+            ]
+          }
+        },
+        "vi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Tìm kiếm hồ sơ trên ${applicationName}",
+              "Tìm ai đó trên ${applicationName}"
+            ]
+          }
+        },
+        "zh-HK" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "搜尋 ${applicationName} 個人檔案",
+              "在 ${applicationName} 上搵人"
+            ]
+          }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "搜索 ${applicationName} 个人资料",
+              "在 ${applicationName} 上找人"
+            ]
+          }
+        },
+        "zh-Hant" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "搜尋 ${applicationName} 個人檔案",
+              "在 ${applicationName} 上找人"
+            ]
+          }
+        }
+      }
+    },
+    "Send a ${applicationName} message" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "ar" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "أرسل رسالة في ${applicationName}",
+              "أرسل رسالة خاصة على ${applicationName}",
+              "راسل شخصا على ${applicationName}"
+            ]
+          }
+        },
+        "ca" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Envia un missatge de ${applicationName}",
+              "Envia un missatge directe a ${applicationName}",
+              "Envia un missatge privat a algú a ${applicationName}"
+            ]
+          }
+        },
+        "cs" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Poslat zprávu v aplikaci ${applicationName}",
+              "Poslat přímou zprávu v aplikaci ${applicationName}",
+              "Napsat někomu zprávu v aplikaci ${applicationName}"
+            ]
+          }
+        },
+        "da" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Send en besked i ${applicationName}",
+              "Send en direkte besked på ${applicationName}",
+              "Skriv en besked på ${applicationName}"
+            ]
+          }
+        },
+        "de" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Eine ${applicationName}-Nachricht senden",
+              "Eine Direktnachricht in ${applicationName} senden",
+              "Jemandem in ${applicationName} schreiben"
+            ]
+          }
+        },
+        "el" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Αποστολή μηνύματος στο ${applicationName}",
+              "Αποστολή προσωπικού μηνύματος στο ${applicationName}",
+              "Στείλε μήνυμα σε κάποιον στο ${applicationName}"
+            ]
+          }
+        },
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Send a ${applicationName} message",
+              "Send a direct message on ${applicationName}",
+              "DM someone on ${applicationName}"
+            ]
+          }
+        },
+        "en-AU" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Send a ${applicationName} message",
+              "Send a direct message on ${applicationName}",
+              "DM someone on ${applicationName}"
+            ]
+          }
+        },
+        "en-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Send a ${applicationName} message",
+              "Send a direct message on ${applicationName}",
+              "DM someone on ${applicationName}"
+            ]
+          }
+        },
+        "en-GB" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Send a ${applicationName} message",
+              "Send a direct message on ${applicationName}",
+              "DM someone on ${applicationName}"
+            ]
+          }
+        },
+        "es" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Enviar un mensaje en ${applicationName}",
+              "Enviar un mensaje directo en ${applicationName}",
+              "Mandar un mensaje directo en ${applicationName}"
+            ]
+          }
+        },
+        "es-419" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Enviar un mensaje en ${applicationName}",
+              "Enviar un mensaje directo en ${applicationName}",
+              "Mandar un mensaje directo en ${applicationName}"
+            ]
+          }
+        },
+        "fi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Lähetä viesti sovelluksessa ${applicationName}",
+              "Lähetä yksityisviesti sovelluksessa ${applicationName}",
+              "Lähetä viesti käyttäjälle ${applicationName}-sovelluksessa"
+            ]
+          }
+        },
+        "fr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Envoyer un message ${applicationName}",
+              "Envoyer un message privé sur ${applicationName}",
+              "Écrire à quelqu’un sur ${applicationName}"
+            ]
+          }
+        },
+        "fr-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Envoyer un message ${applicationName}",
+              "Envoyer un message privé sur ${applicationName}",
+              "Écrire à quelqu’un sur ${applicationName}"
+            ]
+          }
+        },
+        "he" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "שלח הודעה דרך ${applicationName}",
+              "שלח הודעה ישירה בתוך ${applicationName}",
+              "כתוב הודעה פרטית דרך ${applicationName}"
+            ]
+          }
+        },
+        "hi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName} संदेश भेजें",
+              "${applicationName} पर डायरेक्ट मैसेज भेजें",
+              "${applicationName} पर किसी को मैसेज करें"
+            ]
+          }
+        },
+        "hr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Pošalji poruku u aplikaciji ${applicationName}",
+              "Pošalji izravnu poruku u aplikaciji ${applicationName}",
+              "Pošalji privatnu poruku nekome na ${applicationName}"
+            ]
+          }
+        },
+        "hu" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}-üzenet küldése",
+              "Közvetlen üzenet küldése a ${applicationName} alkalmazásban",
+              "Privát üzenet küldése a ${applicationName} alkalmazásban"
+            ]
+          }
+        },
+        "id" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Kirim pesan ${applicationName}",
+              "Kirim pesan langsung di ${applicationName}",
+              "DM seseorang di ${applicationName}"
+            ]
+          }
+        },
+        "it" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Invia un messaggio su ${applicationName}",
+              "Invia un messaggio diretto su ${applicationName}",
+              "Scrivi in privato a qualcuno su ${applicationName}"
+            ]
+          }
+        },
+        "ja" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}でメッセージを送信",
+              "${applicationName}でダイレクトメッセージを送信",
+              "${applicationName}でDMを送る"
+            ]
+          }
+        },
+        "ko" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName} 메시지 보내 줘",
+              "${applicationName}에서 다이렉트 메시지 보내기",
+              "${applicationName}에서 DM 보내 줘"
+            ]
+          }
+        },
+        "ms" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Hantar mesej ${applicationName}",
+              "Hantar mesej langsung di ${applicationName}",
+              "DM seseorang di ${applicationName}"
+            ]
+          }
+        },
+        "nb" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Send en melding i ${applicationName}",
+              "Send en direktemelding på ${applicationName}",
+              "Send direktemelding til noen på ${applicationName}"
+            ]
+          }
+        },
+        "nl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Stuur een ${applicationName}-bericht",
+              "Stuur een privébericht op ${applicationName}",
+              "Stuur iemand een DM op ${applicationName}"
+            ]
+          }
+        },
+        "pl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Wyślij wiadomość w ${applicationName}",
+              "Wyślij wiadomość prywatną w ${applicationName}",
+              "Napisz do kogoś w ${applicationName}"
+            ]
+          }
+        },
+        "pt-BR" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Enviar uma mensagem no ${applicationName}",
+              "Enviar uma mensagem direta no ${applicationName}",
+              "Mandar mensagem para alguém no ${applicationName}"
+            ]
+          }
+        },
+        "pt-PT" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Enviar uma mensagem no ${applicationName}",
+              "Enviar uma mensagem direta no ${applicationName}",
+              "Enviar mensagem a alguém no ${applicationName}"
+            ]
+          }
+        },
+        "ro" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Trimite un mesaj în ${applicationName}",
+              "Trimite un mesaj direct pe ${applicationName}",
+              "Trimite un mesaj privat cuiva pe ${applicationName}"
+            ]
+          }
+        },
+        "ru" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Отправить сообщение в ${applicationName}",
+              "Написать личное сообщение в ${applicationName}",
+              "Отправить ЛС в ${applicationName}"
+            ]
+          }
+        },
+        "sk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Odoslať správu v aplikácii ${applicationName}",
+              "Poslať priamu správu v aplikácii ${applicationName}",
+              "Napísať niekomu správu cez ${applicationName}"
+            ]
+          }
+        },
+        "sv" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Skicka ett meddelande i ${applicationName}",
+              "Skicka ett direktmeddelande på ${applicationName}",
+              "Skicka meddelande till någon på ${applicationName}"
+            ]
+          }
+        },
+        "th" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "ส่งข้อความ ${applicationName}",
+              "ส่งข้อความโดยตรงบน ${applicationName}",
+              "ทักข้อความหาคนบน ${applicationName}"
+            ]
+          }
+        },
+        "tr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName} mesajı gönder",
+              "${applicationName} üzerinden direkt mesaj gönder",
+              "${applicationName} uygulamasında birine mesaj at"
+            ]
+          }
+        },
+        "uk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Надіслати повідомлення в ${applicationName}",
+              "Надіслати приватне повідомлення в ${applicationName}",
+              "Написати комусь у ${applicationName}"
+            ]
+          }
+        },
+        "vi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Gửi tin nhắn trên ${applicationName}",
+              "Gửi tin nhắn trực tiếp trên ${applicationName}",
+              "Nhắn tin cho ai đó trên ${applicationName}"
+            ]
+          }
+        },
+        "zh-HK" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "發送 ${applicationName} 訊息",
+              "在 ${applicationName} 上發送私訊",
+              "在 ${applicationName} 私訊某人"
+            ]
+          }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "发送 ${applicationName} 消息",
+              "在 ${applicationName} 上发送私信",
+              "在 ${applicationName} 上私信某人"
+            ]
+          }
+        },
+        "zh-Hant" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "傳送 ${applicationName} 訊息",
+              "在 ${applicationName} 上傳送私訊",
+              "在 ${applicationName} 私訊某人"
+            ]
+          }
+        }
+      }
+    },
+    "Show my ${applicationName} timeline" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "ar" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "اعرض الخط الزمني في ${applicationName}",
+              "افتح الخط الزمني في ${applicationName}",
+              "اعرض موجزي في ${applicationName}",
+              "ما الجديد على ${applicationName}"
+            ]
+          }
+        },
+        "ca" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Mostra la meva cronologia de ${applicationName}",
+              "Obre la meva cronologia de ${applicationName}",
+              "Mostra el meu canal de ${applicationName}",
+              "Què hi ha de nou a ${applicationName}"
+            ]
+          }
+        },
+        "cs" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Zobrazit mou časovou osu v aplikaci ${applicationName}",
+              "Otevřít mou časovou osu v aplikaci ${applicationName}",
+              "Načíst můj přehled v aplikaci ${applicationName}",
+              "Co je nového v aplikaci ${applicationName}"
+            ]
+          }
+        },
+        "da" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Vis min tidslinje i ${applicationName}",
+              "Åbn min tidslinje i ${applicationName}",
+              "Hent mit feed i ${applicationName}",
+              "Hvad er nyt på ${applicationName}"
+            ]
+          }
+        },
+        "de" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Meine ${applicationName}-Timeline anzeigen",
+              "Meine ${applicationName}-Timeline öffnen",
+              "Meinen ${applicationName}-Feed abrufen",
+              "Was gibt es Neues in ${applicationName}"
+            ]
+          }
+        },
+        "el" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Εμφάνιση του χρονολογίου μου στο ${applicationName}",
+              "Άνοιξε το χρονολόγιό μου στο ${applicationName}",
+              "Δείξε τη ροή μου στο ${applicationName}",
+              "Τι νέο υπάρχει στο ${applicationName};"
+            ]
+          }
+        },
+        "en" : {
+          "stringSet" : {
+            "state" : "new",
+            "values" : [
+              "Show my ${applicationName} timeline",
+              "Open my ${applicationName} timeline",
+              "Get my ${applicationName} feed",
+              "What's new on ${applicationName}"
+            ]
+          }
+        },
+        "en-AU" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Show my ${applicationName} timeline",
+              "Open my ${applicationName} timeline",
+              "Get my ${applicationName} feed",
+              "What's new on ${applicationName}"
+            ]
+          }
+        },
+        "en-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Show my ${applicationName} timeline",
+              "Open my ${applicationName} timeline",
+              "Get my ${applicationName} feed",
+              "What's new on ${applicationName}"
+            ]
+          }
+        },
+        "en-GB" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Show my ${applicationName} timeline",
+              "Open my ${applicationName} timeline",
+              "Get my ${applicationName} feed",
+              "What's new on ${applicationName}"
+            ]
+          }
+        },
+        "es" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Mostrar mi cronología de ${applicationName}",
+              "Abrir mi cronología de ${applicationName}",
+              "Ver mi feed de ${applicationName}",
+              "Qué hay de nuevo en ${applicationName}"
+            ]
+          }
+        },
+        "es-419" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Mostrar mi cronología de ${applicationName}",
+              "Abrir mi cronología de ${applicationName}",
+              "Ver mi feed de ${applicationName}",
+              "Qué hay de nuevo en ${applicationName}"
+            ]
+          }
+        },
+        "fi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Näytä aikajanani sovelluksessa ${applicationName}",
+              "Avaa aikajanani sovelluksessa ${applicationName}",
+              "Hae syötteeni ${applicationName}-sovelluksessa",
+              "Mitä uutta sovelluksessa ${applicationName}"
+            ]
+          }
+        },
+        "fr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Afficher mon fil d’actualité ${applicationName}",
+              "Ouvrir mon fil d’actualité ${applicationName}",
+              "Consulter mon fil ${applicationName}",
+              "Quoi de neuf sur ${applicationName}"
+            ]
+          }
+        },
+        "fr-CA" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Afficher mon fil d’actualité ${applicationName}",
+              "Ouvrir mon fil d’actualité ${applicationName}",
+              "Consulter mon fil ${applicationName}",
+              "Quoi de neuf sur ${applicationName}"
+            ]
+          }
+        },
+        "he" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "הצג את ציר הזמן שלי בתוך ${applicationName}",
+              "פתח את ציר הזמן שלי של ${applicationName}",
+              "הצג את הפיד שלי בתוך ${applicationName}",
+              "מה חדש בתוך ${applicationName}"
+            ]
+          }
+        },
+        "hi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "मेरी ${applicationName} टाइमलाइन दिखाएँ",
+              "मेरी ${applicationName} टाइमलाइन खोलें",
+              "मेरा ${applicationName} फ़ीड दिखाएँ",
+              "${applicationName} पर नया क्या है"
+            ]
+          }
+        },
+        "hr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Prikaži moj sažetak u aplikaciji ${applicationName}",
+              "Otvori moju vremensku crtu u aplikaciji ${applicationName}",
+              "Dohvati moj sažetak na ${applicationName}",
+              "Što ima novo u aplikaciji ${applicationName}"
+            ]
+          }
+        },
+        "hu" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}-idővonalam megjelenítése",
+              "${applicationName}-idővonalam megnyitása",
+              "${applicationName}-hírfolyamom lekérése",
+              "Mi újság a ${applicationName} alkalmazásban"
+            ]
+          }
+        },
+        "id" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Tampilkan linimasa ${applicationName} saya",
+              "Buka linimasa ${applicationName} saya",
+              "Lihat feed ${applicationName} saya",
+              "Apa yang baru di ${applicationName}"
+            ]
+          }
+        },
+        "it" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Mostra la mia timeline di ${applicationName}",
+              "Apri la mia timeline su ${applicationName}",
+              "Mostra il mio feed di ${applicationName}",
+              "Che novità ci sono su ${applicationName}"
+            ]
+          }
+        },
+        "ja" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName}のタイムラインを表示",
+              "${applicationName}のタイムラインを開く",
+              "${applicationName}のフィードを取得",
+              "${applicationName}の最新情報を表示"
+            ]
+          }
+        },
+        "ko" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "내 ${applicationName} 타임라인 보여 줘",
+              "내 ${applicationName} 타임라인 열어 줘",
+              "내 ${applicationName} 피드 가져와 줘",
+              "${applicationName} 새 소식 보여 줘"
+            ]
+          }
+        },
+        "ms" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Tunjukkan garis masa ${applicationName} saya",
+              "Buka garis masa ${applicationName} saya",
+              "Dapatkan suapan ${applicationName} saya",
+              "Apa yang baharu di ${applicationName}"
+            ]
+          }
+        },
+        "nb" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Vis tidslinjen min i ${applicationName}",
+              "Åpne tidslinjen min i ${applicationName}",
+              "Hent feeden min i ${applicationName}",
+              "Hva er nytt på ${applicationName}"
+            ]
+          }
+        },
+        "nl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Toon mijn ${applicationName}-tijdlijn",
+              "Open mijn ${applicationName}-tijdlijn",
+              "Haal mijn ${applicationName}-feed op",
+              "Wat is er nieuw op ${applicationName}"
+            ]
+          }
+        },
+        "pl" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Pokaż moje aktualności w ${applicationName}",
+              "Otwórz moją oś czasu w ${applicationName}",
+              "Pokaż mój kanał w ${applicationName}",
+              "Co nowego w ${applicationName}"
+            ]
+          }
+        },
+        "pt-BR" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Mostrar minha linha do tempo do ${applicationName}",
+              "Abrir minha linha do tempo no ${applicationName}",
+              "Ver meu feed do ${applicationName}",
+              "O que há de novo no ${applicationName}"
+            ]
+          }
+        },
+        "pt-PT" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Mostrar a minha cronologia do ${applicationName}",
+              "Abrir a minha cronologia no ${applicationName}",
+              "Ver o meu feed do ${applicationName}",
+              "O que há de novo no ${applicationName}"
+            ]
+          }
+        },
+        "ro" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Afișează cronologia mea din ${applicationName}",
+              "Deschide cronologia mea din ${applicationName}",
+              "Afișează fluxul meu din ${applicationName}",
+              "Ce este nou pe ${applicationName}"
+            ]
+          }
+        },
+        "ru" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Показать мою ленту в ${applicationName}",
+              "Открыть мою ленту в ${applicationName}",
+              "Показать хронику в ${applicationName}",
+              "Что нового в ${applicationName}"
+            ]
+          }
+        },
+        "sk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Zobraziť moju časovú os v aplikácii ${applicationName}",
+              "Otvoriť moju časovú os v aplikácii ${applicationName}",
+              "Načítať môj kanál v aplikácii ${applicationName}",
+              "Čo je nové v aplikácii ${applicationName}"
+            ]
+          }
+        },
+        "sv" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Visa min tidslinje i ${applicationName}",
+              "Öppna min tidslinje i ${applicationName}",
+              "Hämta mitt flöde i ${applicationName}",
+              "Vad är nytt på ${applicationName}"
+            ]
+          }
+        },
+        "th" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "แสดงไทม์ไลน์ ${applicationName} ของฉัน",
+              "เปิดไทม์ไลน์ ${applicationName} ของฉัน",
+              "ดูฟีด ${applicationName} ของฉัน",
+              "มีอะไรใหม่บน ${applicationName}"
+            ]
+          }
+        },
+        "tr" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "${applicationName} zaman akışımı göster",
+              "${applicationName} zaman akışımı aç",
+              "${applicationName} akışımı getir",
+              "${applicationName} üzerinde neler yeni"
+            ]
+          }
+        },
+        "uk" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Показати мою стрічку в ${applicationName}",
+              "Відкрити мою стрічку в ${applicationName}",
+              "Переглянути мою стрічку в ${applicationName}",
+              "Що нового в ${applicationName}"
+            ]
+          }
+        },
+        "vi" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "Hiển thị dòng thời gian ${applicationName} của tôi",
+              "Mở dòng thời gian ${applicationName} của tôi",
+              "Xem bảng tin ${applicationName} của tôi",
+              "Có gì mới trên ${applicationName}"
+            ]
+          }
+        },
+        "zh-HK" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "顯示我的 ${applicationName} 時間軸",
+              "開啟我的 ${applicationName} 時間軸",
+              "查看我的 ${applicationName} 動態消息",
+              "${applicationName} 有咩新動態"
+            ]
+          }
+        },
+        "zh-Hans" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "显示我的 ${applicationName} 时间线",
+              "打开我的 ${applicationName} 时间线",
+              "获取我的 ${applicationName} 信息流",
+              "看看 ${applicationName} 有什么新动态"
+            ]
+          }
+        },
+        "zh-Hant" : {
+          "stringSet" : {
+            "state" : "translated",
+            "values" : [
+              "顯示我的 ${applicationName} 時間軸",
+              "打開我的 ${applicationName} 時間軸",
+              "查看我的 ${applicationName} 動態消息",
+              "${applicationName} 有什麼新動態"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

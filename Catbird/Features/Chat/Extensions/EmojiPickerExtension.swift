@@ -4,7 +4,7 @@ import EmojiKit
 extension View {
   func customEmojiPicker(
     isPresented: Binding<Bool>,
-    title: String = "Emoji",
+    title: LocalizedStringKey = "Emoji",
     onEmojiSelected: @escaping (String) -> Void
   ) -> some View {
     modifier(
@@ -19,7 +19,7 @@ extension View {
 
 private struct EmojiKitPickerSheetModifier: ViewModifier {
   @Binding var isPresented: Bool
-  let title: String
+  let title: LocalizedStringKey
   let onEmojiSelected: (String) -> Void
 
   func body(content: Content) -> some View {
@@ -37,7 +37,7 @@ private struct EmojiKitPickerSheetModifier: ViewModifier {
 }
 
 private struct EmojiKitPickerSheet: View {
-  let title: String
+  let title: LocalizedStringKey
   let onEmojiSelected: (String) -> Void
 
   @Environment(\.dismiss) private var dismiss
@@ -45,7 +45,7 @@ private struct EmojiKitPickerSheet: View {
   @State private var query = ""
   @State private var selection = Emoji.GridSelection()
 
-  init(title: String, onEmojiSelected: @escaping (String) -> Void) {
+  init(title: LocalizedStringKey, onEmojiSelected: @escaping (String) -> Void) {
     self.title = title
     self.onEmojiSelected = onEmojiSelected
   }
@@ -365,7 +365,7 @@ private struct EmojiKitPickerSheet: View {
 
 #Preview("Emoji Picker") {
   @Previewable @State var showPicker = true
-  Text("Tap to show emoji picker")
+  Text(verbatim: "Tap to show emoji picker")
     .customEmojiPicker(isPresented: $showPicker, title: "Add Reaction") { emoji in
       print(emoji)
     }

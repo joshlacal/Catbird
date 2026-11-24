@@ -12,8 +12,8 @@ public enum AppIconChoice: String, CaseIterable, Identifiable {
     
     public var displayName: String {
         switch self {
-        case .default: return "Default"
-        case .classic: return "Classic"
+        case .default: return String(localized: "Default", comment: "Default Catbird app icon choice.")
+        case .classic: return String(localized: "Classic", comment: "Classic Catbird app icon choice.")
         }
     }
     
@@ -124,7 +124,7 @@ struct AppIconSettingsView: View {
     private func setIcon(_ choice: AppIconChoice) {
         #if os(iOS)
         guard UIApplication.shared.supportsAlternateIcons else {
-            errorMessage = "This device doesn’t support changing the app icon."
+            errorMessage = String(localized: "This device doesn’t support changing the app icon.", comment: "Error when alternate app icons are unsupported.")
             showErrorAlert = true
             return
         }
@@ -142,7 +142,7 @@ struct AppIconSettingsView: View {
             } catch {
                 logger.error("Failed to change alternate app icon: \(error.localizedDescription)")
                 currentIconChoice = previousChoice
-                errorMessage = "Catbird couldn’t change the app icon. Try again."
+                errorMessage = String(localized: "Catbird couldn’t change the app icon. Try again.", comment: "Error when changing the alternate app icon fails.")
                 showErrorAlert = true
             }
         }

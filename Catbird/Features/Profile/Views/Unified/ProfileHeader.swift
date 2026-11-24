@@ -91,7 +91,10 @@ struct ProfileHeader: View {
             if let client = appState.atProtoClient {
                 LabelsOnMeView(
                     labels: inspectedAccountLabels,
-                    targetDescription: "Account @\(profile.handle)",
+                    targetDescription: String(
+                        localized: "Account @\(profile.handle)",
+                        comment: "Target description in the account moderation labels sheet — %1$@ is the account handle (without @)."
+                    ),
                     viewerDID: appState.userDID,
                     reportingService: ReportingService(client: client)
                 )
@@ -146,7 +149,10 @@ struct ProfileHeader: View {
             Button("Cancel", role: .cancel) { }
             Button("Unfollow", role: .destructive) { performUnfollow() }
         } message: {
-            Text("Unfollow @\(profile.handle)? You'll stop seeing their posts in your following feed.")
+            Text(
+                "Unfollow @\(profile.handle)? You'll stop seeing their posts in your following feed.",
+                comment: "Confirmation message when unfollowing a user — %1$@ is the user's handle (without @)."
+            )
         }
         .sheet(isPresented: $showingSuggestedFollows) {
             ContextualSuggestedFollowsSheet(
@@ -252,16 +258,16 @@ struct ProfileHeader: View {
         }
     }
     
-    private var subscriptionButtonAccessibilityLabel: String {
+    private var subscriptionButtonAccessibilityLabel: LocalizedStringResource {
         switch currentActivitySubscriptionState {
         case .none:
-            return "Activity notifications off"
+            return LocalizedStringResource("Activity notifications off", comment: "Accessibility label when activity notifications for a profile are disabled.")
         case .postsOnly:
-            return "Activity notifications for posts"
+            return LocalizedStringResource("Activity notifications for posts", comment: "Accessibility label when activity notifications are enabled for posts only.")
         case .postsAndReplies:
-            return "Activity notifications for posts and replies"
+            return LocalizedStringResource("Activity notifications for posts and replies", comment: "Accessibility label when activity notifications are enabled for both posts and replies.")
         case .repliesOnly:
-            return "Activity notifications for replies"
+            return LocalizedStringResource("Activity notifications for replies", comment: "Accessibility label when activity notifications are enabled for replies only.")
         }
     }
     
@@ -332,7 +338,10 @@ struct ProfileHeader: View {
             } catch {
                 logger.error("Failed to update activity subscription: \(error.localizedDescription)")
                 await MainActor.run {
-                    activitySubscriptionError = "Couldn’t update notifications for this account."
+                    activitySubscriptionError = String(
+                        localized: "Couldn’t update notifications for this account.",
+                        comment: "Error message shown on a profile header when updating activity notification preferences fails."
+                    )
                 }
             }
 
@@ -626,7 +635,7 @@ struct ProfileHeader: View {
 
                 }
                 HStack(spacing: 8) {
-                    Text("@\(profile.handle)")
+                    Text(verbatim: "@\(profile.handle)")
                         .enhancedAppSubheadline()
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -642,7 +651,11 @@ struct ProfileHeader: View {
                     }
 
                     if !viewModel.isCurrentUser && profile.viewer?.muted == true {
-                        Label("Muted", systemImage: "speaker.slash")
+                        Label {
+                            Text("Muted", comment: "Status badge shown on a profile when the viewer has muted this account.")
+                        } icon: {
+                            Image(systemName: "speaker.slash")
+                        }
                             .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 6)
@@ -661,7 +674,7 @@ struct ProfileHeader: View {
                         selectedAccountLabelID = nil
                         showingAccountLabels = true
                     } label: {
-                        Label(visibleAccountLabels.count == 1 ? "1 account label" : "\(visibleAccountLabels.count) account labels", systemImage: "tag")
+                        Label("\(visibleAccountLabels.count) account labels", systemImage: "tag")
                             .font(.subheadline)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -739,23 +752,32 @@ struct ProfileHeader: View {
         Button {
             path.append(ProfileNavigationDestination.following(profile.did.didString()))
         } label: {
-            profileStatistic(count: profile.followsCount?.formatted ?? "0", title: "Following")
+            profileStatistic(
+                count: profile.followsCount ?? 0,
+                title: LocalizedStringResource("Following", comment: "Profile statistic label for the number of accounts this user follows.")
+            )
         }
         .buttonStyle(.plain)
 
         Button {
             path.append(ProfileNavigationDestination.followers(profile.did.didString()))
         } label: {
-            profileStatistic(count: profile.followersCount?.formatted ?? "0", title: "Followers")
+            profileStatistic(
+                count: profile.followersCount ?? 0,
+                title: LocalizedStringResource("Followers", comment: "Profile statistic label for the number of accounts following this user.")
+            )
         }
         .buttonStyle(.plain)
 
         if let postsCount = profile.postsCount {
-            profileStatistic(count: postsCount.formatted, title: "Posts")
+            profileStatistic(
+                count: postsCount,
+                title: LocalizedStringResource("Posts", comment: "Profile statistic label for the number of posts published by this user.")
+            )
         }
     }
 
-    private func profileStatistic(count: String, title: LocalizedStringKey) -> some View {
+    private func profileStatistic(count: Int, title: LocalizedStringResource) -> some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 6) {
                 profileStatisticText(count: count, title: title)
@@ -771,8 +793,8 @@ struct ProfileHeader: View {
     }
 
     @ViewBuilder
-    private func profileStatisticText(count: String, title: LocalizedStringKey) -> some View {
-        Text(count)
+    private func profileStatisticText(count: Int, title: LocalizedStringResource) -> some View {
+        Text(count, format: .number.notation(.compactName))
             .appFont(AppTextRole.subheadline)
             .fontWeight(.semibold)
         Text(title)
@@ -1056,8 +1078,12 @@ struct ProfileHeader: View {
         }
         .buttonStyle(.plain)
         .disabled(isOpeningChat)
-        .accessibilityLabel(isOpeningChat ? "Opening chat with @\(profile.handle)" : "Message @\(profile.handle)")
-        .accessibilityHint("Opens a conversation without sending a message")
+        .accessibilityLabel(
+            isOpeningChat
+                ? Text("Opening chat with @\(profile.handle)", comment: "Accessibility label while opening a chat from a profile — %1$@ is the user's handle (without @).")
+                : Text("Message @\(profile.handle)", comment: "Accessibility label for the button to message a user — %1$@ is the user's handle (without @).")
+        )
+        .accessibilityHint(Text("Opens a conversation without sending a message", comment: "Accessibility hint for the profile message button."))
     }
 
     @ViewBuilder
@@ -1069,7 +1095,7 @@ struct ProfileHeader: View {
             HStack {
                 Image(systemName: "person.crop.circle.badge.xmark")
                     .appFont(AppTextRole.footnote)
-                Text("Blocked")
+                Text("Blocked", comment: "Disabled pill shown in place of the Follow button when a block exists between accounts.")
                     .fixedSize(horizontal: true, vertical: false)
             }
             .appFont(AppTextRole.subheadline)
@@ -1095,7 +1121,7 @@ struct ProfileHeader: View {
                 HStack {
                     Image(systemName: "checkmark")
                         .appFont(AppTextRole.footnote)
-                    Text("Following")
+                    Text("Following", comment: "Active button state indicating the viewer currently follows this profile; tapping unfollows.")
                         .fixedSize(horizontal: true, vertical: false)
                 }
                 .appFont(AppTextRole.subheadline)
@@ -1117,7 +1143,7 @@ struct ProfileHeader: View {
                 HStack {
                     Image(systemName: "plus")
                         .appFont(AppTextRole.footnote)
-                    Text("Follow")
+                    Text("Follow", comment: "Action button verb to start following a user profile.")
                 }
                 .appFont(AppTextRole.subheadline)
                 .fontWeight(.medium)
@@ -1150,7 +1176,10 @@ struct ProfileHeader: View {
                         } catch {
                             logger.error("Error unsubscribing from labeler: \(error.localizedDescription)")
                             appState.toastManager.show(
-                                ToastItem(message: "Couldn’t unsubscribe. Try again.", icon: "exclamationmark.triangle.fill")
+                                ToastItem(
+                                    message: String(localized: "Couldn’t unsubscribe. Try again.", comment: "Toast shown when unsubscribing from a moderation labeler fails."),
+                                    icon: "exclamationmark.triangle.fill"
+                                )
                             )
                         }
                         isSubscribeButtonLoading = false
@@ -1159,7 +1188,7 @@ struct ProfileHeader: View {
                     HStack {
                         Image(systemName: "checkmark")
                             .appFont(AppTextRole.footnote)
-                        Text("Subscribed")
+                        Text("Subscribed", comment: "Active button state indicating the viewer is subscribed to this moderation labeler.")
                             .fixedSize(horizontal: true, vertical: false)
                     }
                     .appFont(AppTextRole.subheadline)
@@ -1182,7 +1211,10 @@ struct ProfileHeader: View {
                         } catch {
                             logger.error("Error subscribing to labeler: \(error.localizedDescription)")
                             appState.toastManager.show(
-                                ToastItem(message: "Couldn’t subscribe. Try again.", icon: "exclamationmark.triangle.fill")
+                                ToastItem(
+                                    message: String(localized: "Couldn’t subscribe. Try again.", comment: "Toast shown when subscribing to a moderation labeler fails."),
+                                    icon: "exclamationmark.triangle.fill"
+                                )
                             )
                         }
                         isSubscribeButtonLoading = false
@@ -1191,7 +1223,7 @@ struct ProfileHeader: View {
                     HStack {
                         Image(systemName: "plus")
                             .appFont(AppTextRole.footnote)
-                        Text("Subscribe")
+                        Text("Subscribe", comment: "Action button verb to subscribe to a moderation labeler.")
                     }
                     .appFont(AppTextRole.subheadline)
                     .fontWeight(.medium)
@@ -1218,7 +1250,10 @@ struct ProfileHeader: View {
                     } catch {
                         logger.error("Error toggling labeler like: \(error.localizedDescription)")
                         appState.toastManager.show(
-                            ToastItem(message: "Couldn’t update like. Try again.", icon: "exclamationmark.triangle.fill")
+                            ToastItem(
+                                message: String(localized: "Couldn’t update like. Try again.", comment: "Toast shown when liking or unliking a moderation labeler fails."),
+                                icon: "exclamationmark.triangle.fill"
+                            )
                         )
                     }
                     isLikeButtonLoading = false
@@ -1244,13 +1279,17 @@ struct ProfileHeader: View {
             }
             .buttonStyle(.plain)
             .disabled(isLikeButtonLoading)
-            .accessibilityLabel(viewModel.isLabelerLiked ? "Unlike labeler" : "Like labeler")
+            .accessibilityLabel(
+                viewModel.isLabelerLiked
+                    ? Text("Unlike labeler", comment: "Accessibility label for button to remove a like from a moderation labeler.")
+                    : Text("Like labeler", comment: "Accessibility label for button to like a moderation labeler.")
+            )
             
             if viewModel.labelerLikeCount > 0, let labelerUri = viewModel.labelerDetails?.uri {
                 Button {
                     path.append(NavigationDestination.postLikes(labelerUri.uriString()))
                 } label: {
-                    Text("\(viewModel.labelerLikeCount)")
+                    Text(viewModel.labelerLikeCount, format: .number)
                         .appCaption()
                         .foregroundColor(.secondary)
                         .padding(.vertical, 6)

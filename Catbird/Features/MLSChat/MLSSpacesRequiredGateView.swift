@@ -21,14 +21,14 @@ struct MLSSpacesRequiredGateView: View {
   @State private var isRequestingPermissions = false
   @State private var permissionFailure: String?
 
-  private var headlineText: String {
+  private var headlineText: LocalizedStringResource {
     switch eligibility.reason {
     case .available:
-      return "ATProto Spaces Ready"
+      return LocalizedStringResource("ATProto Spaces Ready", comment: "Headline when the user's PDS supports ATProto Spaces")
     case .pdsDoesNotSupportSpaces:
-      return "ATProto Spaces Required"
+      return LocalizedStringResource("ATProto Spaces Required", comment: "Headline when the user's PDS does not support ATProto Spaces")
     case .missingOAuthScopes:
-      return "Spaces Permissions Needed"
+      return LocalizedStringResource("Spaces Permissions Needed", comment: "Headline when OAuth session lacks ATProto Spaces scopes")
     }
   }
 
@@ -80,7 +80,11 @@ struct MLSSpacesRequiredGateView: View {
             .foregroundStyle(.secondary)
 
           ForEach(missingScopes, id: \.self) { scope in
-            Label(scope, systemImage: "lock.circle")
+            Label {
+              Text(verbatim: scope)
+            } icon: {
+              Image(systemName: "lock.circle")
+            }
               .font(.caption2.monospaced())
               .foregroundStyle(.primary)
           }

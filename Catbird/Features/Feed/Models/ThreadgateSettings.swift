@@ -11,6 +11,25 @@ public struct ThreadgateSettings: Equatable, Sendable {
 
     public var id: String { self.rawValue }
 
+    public var localizedTitle: LocalizedStringResource {
+      switch self {
+      case .everybody:
+        return LocalizedStringResource("Anyone", comment: "Reply restriction option allowing anyone to reply")
+      case .nobody:
+        return LocalizedStringResource("Nobody", comment: "Reply restriction option disabling all replies")
+      case .mentioned:
+        return LocalizedStringResource("Mentioned users", comment: "Reply restriction option allowing mentioned users to reply")
+      case .following:
+        return LocalizedStringResource("Users you follow", comment: "Reply restriction option allowing followed accounts to reply")
+      case .followers:
+        return LocalizedStringResource("Your followers", comment: "Reply restriction option allowing followers to reply")
+      }
+    }
+
+    public var displayName: String {
+      String(localized: localizedTitle)
+    }
+
     public var iconName: String {
       switch self {
       case .everybody: return "globe"

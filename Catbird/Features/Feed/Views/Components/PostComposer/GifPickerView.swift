@@ -165,11 +165,11 @@ struct GifPickerView: View {
     private var klipyAttributionRow: some View {
         HStack(spacing: 4) {
             Spacer()
-            Text("GIFs by")
+            Text("GIFs by", comment: "Attribution prefix before KLIPY brand link")
                 .appFont(AppTextRole.caption2)
                 .foregroundColor(.secondary)
             Link(destination: URL(string: "https://klipy.com")!) {
-                Text("KLIPY")
+                Text(verbatim: "KLIPY")
                     .appFont(AppTextRole.caption2)
                     .fontWeight(.semibold)
                     .foregroundColor(.secondary)
@@ -578,7 +578,7 @@ struct CategoryCardView: View {
                     Image(systemName: "photo")
                         .appFont(size: 24)
                         .foregroundColor(.secondary)
-                    Text("GIF")
+                    Text("GIF", comment: "Placeholder label for a GIF category tile")
                         .appFont(AppTextRole.caption2)
                         .foregroundColor(.secondary)
                 }

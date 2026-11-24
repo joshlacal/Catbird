@@ -405,9 +405,9 @@ private enum MetalError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .deviceCreationFailed:
-      return "Failed to create Metal device"
+      return String(localized: "Failed to create Metal device", comment: "Error when Metal GPU device initialization fails")
     case .commandQueueCreationFailed:
-      return "Failed to create Metal command queue"
+      return String(localized: "Failed to create Metal command queue", comment: "Error when Metal command queue initialization fails")
     }
   }
 }
