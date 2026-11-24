@@ -638,7 +638,7 @@ struct CircleReportDisclosureTests {
   @Test("Circle reports to Catbird's moderation service name ids only")
   func ozoneSubjectIsIdsOnly() throws {
     let uri = try ATProtocolURI(uriString: "at://did:plc:bob/blue.catbird.circle.post/3l7postaaaaa")
-    let cid = CID.fromDAGCBOR(Data("post".utf8))
+    let cid = CIDString(CID.fromDAGCBOR(Data("post".utf8)))
     guard case .comAtprotoRepoStrongRef(let ref) = CatbirdModeration.circlePostSubject(uri: uri, cid: cid) else {
       Issue.record("a Circle post is reported by strong ref")
       return

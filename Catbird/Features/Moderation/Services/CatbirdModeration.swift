@@ -55,7 +55,7 @@ enum CatbirdModeration {
 
   /// A Circle post, by URI and CID only.
   static func circlePostSubject(
-    uri: ATProtocolURI, cid: CID
+    uri: ATProtocolURI, cid: CIDString
   ) -> ComAtprotoModerationCreateReport.InputSubjectUnion {
     .comAtprotoRepoStrongRef(ComAtprotoRepoStrongRef(uri: uri, cid: cid))
   }
