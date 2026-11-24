@@ -488,7 +488,14 @@ struct ChatTabView: View {
         // sidebar row arrives; list membership must not replace its lifecycle.
         // Before the row arrives, route by id shape so MLS deep links don't open
         // the Bluesky detail view.
-        if isMLSConversation(convoId) {
+        if let recipientDID = MLSDirectDraftRoute.recipientDID(fromSelectionID: convoId) {
+          // No chat with this person yet: the chat screen for them, whose first message
+          // creates the conversation and then selects it.
+          MLSDirectDraftConversationView(recipientDID: recipientDID) { conversationID in
+            showConversation(conversationID)
+          }
+          .id("\(convoId):\(appState.userDID)")
+        } else if isMLSConversation(convoId) {
           MLSRequestConversationGate(conversationID: convoId) {
             MLSConversationDetailView(conversationId: convoId)
           }
@@ -760,6 +767,7 @@ struct ChatTabView: View {
   /// Routes by the coordinator's merged list once the row is present, and by id
   /// shape for deep links that arrive before the lists load.
   private func isMLSConversation(_ convoId: String) -> Bool {
+    if MLSDirectDraftRoute.recipientDID(fromSelectionID: convoId) != nil { return true }
     if let item = coordinator.conversations.first(where: { $0.id == convoId }) {
       return item.isMLS
     }
