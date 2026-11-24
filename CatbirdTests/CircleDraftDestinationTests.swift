@@ -621,10 +621,10 @@ struct CircleDraftDestinationTests {
   private func savedReply() -> CircleDraftDestination.Reply {
     CircleDraftDestination.Reply(AppBskyFeedPost.ReplyRef(
       root: ComAtprotoRepoStrongRef(
-        uri: try! ATProtocolURI(uriString: rootURI), cid: CID.fromDAGCBOR(Data("saved-root".utf8))
+        uri: try! ATProtocolURI(uriString: rootURI), cid: CIDString(CID.fromDAGCBOR(Data("saved-root".utf8)))
       ),
       parent: ComAtprotoRepoStrongRef(
-        uri: try! ATProtocolURI(uriString: parentURI), cid: CID.fromDAGCBOR(Data("saved-parent".utf8))
+        uri: try! ATProtocolURI(uriString: parentURI), cid: CIDString(CID.fromDAGCBOR(Data("saved-parent".utf8)))
       )
     ))
   }
