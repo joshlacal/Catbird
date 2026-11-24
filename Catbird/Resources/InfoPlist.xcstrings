@@ -279,38 +279,38 @@
       "localizations" : {
         "ar" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "يستخدم Catbird جهات اتصالك لمساعدتك في العثور على أصدقائك والتواصل معهم على Bluesky."
+            "state" : "translated",
+            "value" : "عندما تختار البحث عن أصدقائك من جهات الاتصال، يرسل Catbird أرقام هواتفهم إلى خدمة مطابقة جهات الاتصال في Bluesky لإظهار من منهم موجود على Bluesky."
           }
         },
         "ca" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird utilitza els teus contactes per ajudar-te a trobar amics i connectar-hi a Bluesky."
+            "state" : "translated",
+            "value" : "Quan tries trobar amics a partir dels teus contactes, Catbird envia els seus números de telèfon al servei de coincidència de contactes de Bluesky per mostrar quins d'ells són a Bluesky."
           }
         },
         "cs" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird používá vaše kontakty, aby vám pomohl najít přátele na Bluesky a spojit se s nimi."
+            "state" : "translated",
+            "value" : "Když se rozhodnete najít přátele ve svých kontaktech, Catbird odešle jejich telefonní čísla službě Bluesky pro párování kontaktů, aby zobrazil, kdo z nich je na Bluesky."
           }
         },
         "da" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird bruger dine kontakter til at hjælpe dig med at finde og få forbindelse til venner på Bluesky."
+            "state" : "translated",
+            "value" : "Når du vælger at finde venner blandt dine kontakter, sender Catbird deres telefonnumre til Blueskys tjeneste til kontaktmatchning for at vise, hvem af dem der er på Bluesky."
           }
         },
         "de" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird verwendet deine Kontakte, damit du Freunde auf Bluesky finden und dich mit ihnen vernetzen kannst."
+            "state" : "translated",
+            "value" : "Wenn du Freunde über deine Kontakte finden möchtest, sendet Catbird deren Telefonnummern an den Kontaktabgleich-Dienst von Bluesky, um zu zeigen, wer von ihnen auf Bluesky ist."
           }
         },
         "el" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Το Catbird χρησιμοποιεί τις επαφές σας για να σας βοηθήσει να βρείτε και να συνδεθείτε με φίλους στο Bluesky."
+            "state" : "translated",
+            "value" : "Όταν επιλέγετε να βρείτε φίλους από τις επαφές σας, το Catbird στέλνει τους αριθμούς τηλεφώνου τους στην υπηρεσία αντιστοίχισης επαφών του Bluesky, για να δείξει ποιοι από αυτούς βρίσκονται στο Bluesky."
           }
         },
         "en" : {
@@ -321,200 +321,200 @@
         },
         "en-AU" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird uses your contacts to help you find and connect with friends on Bluesky."
+            "state" : "translated",
+            "value" : "When you choose to find friends from your contacts, Catbird sends their phone numbers to Bluesky's contact-matching service to show which of them are on Bluesky."
           }
         },
         "en-CA" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird uses your contacts to help you find and connect with friends on Bluesky."
+            "state" : "translated",
+            "value" : "When you choose to find friends from your contacts, Catbird sends their phone numbers to Bluesky's contact-matching service to show which of them are on Bluesky."
           }
         },
         "en-GB" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird uses your contacts to help you find and connect with friends on Bluesky."
+            "state" : "translated",
+            "value" : "When you choose to find friends from your contacts, Catbird sends their phone numbers to Bluesky's contact-matching service to show which of them are on Bluesky."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird usa tus contactos para ayudarte a encontrar amigos y conectar con ellos en Bluesky."
+            "state" : "translated",
+            "value" : "Cuando eliges buscar amigos entre tus contactos, Catbird envía sus números de teléfono al servicio de coincidencia de contactos de Bluesky para mostrarte cuáles de ellos están en Bluesky."
           }
         },
         "es-419" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird usa tus contactos para ayudarte a encontrar amigos y conectar con ellos en Bluesky."
+            "state" : "translated",
+            "value" : "Cuando eliges buscar amigos entre tus contactos, Catbird envía sus números de teléfono al servicio de coincidencia de contactos de Bluesky para mostrarte cuáles de ellos están en Bluesky."
           }
         },
         "fi" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird käyttää yhteystietojasi auttaakseen sinua löytämään kaverisi Blueskyssa."
+            "state" : "translated",
+            "value" : "Kun valitset kavereiden etsimisen yhteystiedoistasi, Catbird lähettää heidän puhelinnumeronsa Blueskyn yhteystietojen vertailupalveluun näyttääkseen, ketkä heistä ovat Blueskyssa."
           }
         },
         "fr" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird utilise vos contacts pour vous aider à retrouver vos amis et à entrer en contact avec eux sur Bluesky."
+            "state" : "translated",
+            "value" : "Lorsque vous choisissez de retrouver des amis à partir de vos contacts, Catbird envoie leurs numéros de téléphone au service de correspondance de contacts de Bluesky afin d’indiquer lesquels d’entre eux sont sur Bluesky."
           }
         },
         "fr-CA" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird utilise vos contacts pour vous aider à retrouver vos amis et à entrer en contact avec eux sur Bluesky."
+            "state" : "translated",
+            "value" : "Lorsque vous choisissez de retrouver des amis à partir de vos contacts, Catbird envoie leurs numéros de téléphone au service de correspondance de contacts de Bluesky afin d’indiquer lesquels d’entre eux sont sur Bluesky."
           }
         },
         "he" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird משתמשת באנשי הקשר שלך כדי לעזור לך למצוא חברים ולהתחבר אליהם ב-Bluesky."
+            "state" : "translated",
+            "value" : "כשבוחרים למצוא חברים מאנשי הקשר שלך, Catbird שולחת את מספרי הטלפון שלהם לשירות התאמת אנשי הקשר של Bluesky כדי להראות מי מהם נמצא ב-Bluesky."
           }
         },
         "hi" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird आपके संपर्कों का उपयोग Bluesky पर दोस्तों को खोजने और उनसे जुड़ने में आपकी मदद करने के लिए करता है।"
+            "state" : "translated",
+            "value" : "जब आप अपने संपर्कों में से दोस्तों को खोजना चुनते हैं, तो Catbird उनके फ़ोन नंबर Bluesky की संपर्क-मिलान सेवा को भेजता है, ताकि यह दिखाया जा सके कि उनमें से कौन Bluesky पर है।"
           }
         },
         "hr" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird koristi vaše kontakte kako bi vam pomogao pronaći prijatelje i povezati se s njima na usluzi Bluesky."
+            "state" : "translated",
+            "value" : "Kada odlučite pronaći prijatelje među svojim kontaktima, Catbird šalje njihove telefonske brojeve Blueskyjevoj usluzi za uparivanje kontakata kako bi prikazao tko je od njih na usluzi Bluesky."
           }
         },
         "hu" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "A Catbird a névjegyeidet használja, hogy segítsen megtalálni az ismerőseidet a Bluesky-on és kapcsolatba lépni velük."
+            "state" : "translated",
+            "value" : "Ha úgy döntesz, hogy a névjegyeid között keresel ismerősöket, a Catbird elküldi a telefonszámukat a Bluesky névjegyegyeztető szolgáltatásának, hogy megmutassa, kik vannak közülük a Bluesky-on."
           }
         },
         "id" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird menggunakan kontak Anda untuk membantu Anda menemukan dan terhubung dengan teman di Bluesky."
+            "state" : "translated",
+            "value" : "Saat Anda memilih untuk mencari teman dari kontak, Catbird mengirim nomor telepon mereka ke layanan pencocokan kontak Bluesky untuk menunjukkan siapa saja di antara mereka yang ada di Bluesky."
           }
         },
         "it" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird utilizza i tuoi contatti per aiutarti a trovare amici e connetterti con loro su Bluesky."
+            "state" : "translated",
+            "value" : "Quando scegli di trovare amici dai tuoi contatti, Catbird invia i loro numeri di telefono al servizio di corrispondenza dei contatti di Bluesky per mostrarti chi di loro è su Bluesky."
           }
         },
         "ja" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbirdは、Blueskyで友だちを見つけてつながるために連絡先を使用します。"
+            "state" : "translated",
+            "value" : "連絡先から友だちを探すことを選択すると、Catbirdは連絡先の電話番号をBlueskyの連絡先照合サービスに送信し、そのうちBlueskyを利用している人を表示します。"
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird에서 Bluesky의 친구를 찾고 연결할 수 있도록 연락처에 접근합니다."
+            "state" : "translated",
+            "value" : "연락처에서 친구 찾기를 선택하면 Catbird가 연락처의 전화번호를 Bluesky의 연락처 매칭 서비스로 보내 그중 Bluesky를 사용하는 사람을 보여 줍니다."
           }
         },
         "ms" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird menggunakan kenalan anda untuk membantu anda mencari dan berhubung dengan rakan di Bluesky."
+            "state" : "translated",
+            "value" : "Apabila anda memilih untuk mencari rakan daripada kenalan anda, Catbird menghantar nombor telefon mereka ke perkhidmatan pemadanan kenalan Bluesky untuk menunjukkan siapa antara mereka yang berada di Bluesky."
           }
         },
         "nb" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird bruker kontaktene dine for å hjelpe deg med å finne og komme i kontakt med venner på Bluesky."
+            "state" : "translated",
+            "value" : "Når du velger å finne venner blant kontaktene dine, sender Catbird telefonnumrene deres til Blueskys tjeneste for kontaktsamsvar for å vise hvem av dem som er på Bluesky."
           }
         },
         "nl" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird gebruikt je contacten om je te helpen vrienden te vinden en met hen in contact te komen op Bluesky."
+            "state" : "translated",
+            "value" : "Als je ervoor kiest vrienden te zoeken in je contacten, stuurt Catbird hun telefoonnummers naar de contactmatchingdienst van Bluesky om te laten zien wie van hen op Bluesky zit."
           }
         },
         "pl" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird używa Twoich kontaktów, aby pomóc Ci znaleźć znajomych na Bluesky i nawiązać z nimi kontakt."
+            "state" : "translated",
+            "value" : "Gdy zdecydujesz się wyszukać znajomych w kontaktach, Catbird wyśle ich numery telefonów do usługi dopasowywania kontaktów Bluesky, aby pokazać, którzy z nich są na Bluesky."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "O Catbird usa seus contatos para ajudar você a encontrar e se conectar com amigos no Bluesky."
+            "state" : "translated",
+            "value" : "Quando você escolhe encontrar amigos nos seus contatos, o Catbird envia os números de telefone deles ao serviço de correspondência de contatos do Bluesky para mostrar quais deles estão no Bluesky."
           }
         },
         "pt-PT" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "O Catbird utiliza os seus contactos para ajudar a encontrar amigos e a ligar-se a eles no Bluesky."
+            "state" : "translated",
+            "value" : "Quando opta por encontrar amigos nos seus contactos, o Catbird envia os números de telefone deles para o serviço de correspondência de contactos do Bluesky para mostrar quais deles estão no Bluesky."
           }
         },
         "ro" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird vă folosește contactele pentru a vă ajuta să găsiți prieteni și să vă conectați cu ei pe Bluesky."
+            "state" : "translated",
+            "value" : "Când alegeți să găsiți prieteni din contactele dvs., Catbird trimite numerele lor de telefon serviciului de potrivire a contactelor al Bluesky pentru a vă arăta care dintre ei sunt pe Bluesky."
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird использует ваши контакты, чтобы помочь вам найти друзей в Bluesky и подписаться на них."
+            "state" : "translated",
+            "value" : "Если вы решите найти друзей среди контактов, Catbird отправит их номера телефонов в сервис сопоставления контактов Bluesky, чтобы показать, кто из них есть в Bluesky."
           }
         },
         "sk" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird používa vaše kontakty, aby vám pomohol nájsť priateľov na Bluesky a spojiť sa s nimi."
+            "state" : "translated",
+            "value" : "Keď sa rozhodnete nájsť priateľov vo svojich kontaktoch, Catbird odošle ich telefónne čísla službe Bluesky na párovanie kontaktov, aby zobrazil, kto z nich je na Bluesky."
           }
         },
         "sv" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird använder dina kontakter för att hjälpa dig att hitta och få kontakt med vänner på Bluesky."
+            "state" : "translated",
+            "value" : "När du väljer att hitta vänner bland dina kontakter skickar Catbird deras telefonnummer till Blueskys tjänst för kontaktmatchning för att visa vilka av dem som finns på Bluesky."
           }
         },
         "th" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird ใช้รายชื่อติดต่อของคุณเพื่อช่วยค้นหาและเชื่อมต่อกับเพื่อนบน Bluesky"
+            "state" : "translated",
+            "value" : "เมื่อคุณเลือกค้นหาเพื่อนจากรายชื่อติดต่อ Catbird จะส่งหมายเลขโทรศัพท์ของพวกเขาไปยังบริการจับคู่รายชื่อติดต่อของ Bluesky เพื่อแสดงว่าใครบ้างที่ใช้ Bluesky"
           }
         },
         "tr" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird, Bluesky üzerindeki arkadaşlarını bulmana ve onlarla bağlantı kurmana yardımcı olmak için kişilerini kullanır."
+            "state" : "translated",
+            "value" : "Kişilerinden arkadaş bulmayı seçtiğinde Catbird, hangilerinin Bluesky'da olduğunu göstermek için telefon numaralarını Bluesky'ın kişi eşleştirme hizmetine gönderir."
           }
         },
         "uk" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird використовує ваші контакти, щоб допомогти вам знайти друзів у Bluesky та підписатися на них."
+            "state" : "translated",
+            "value" : "Якщо ви вирішите знайти друзів серед контактів, Catbird надішле їхні номери телефонів до сервісу зіставлення контактів Bluesky, щоб показати, хто з них є в Bluesky."
           }
         },
         "vi" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird sử dụng danh bạ của bạn để giúp bạn tìm và kết nối với bạn bè trên Bluesky."
+            "state" : "translated",
+            "value" : "Khi bạn chọn tìm bạn bè từ danh bạ, Catbird sẽ gửi số điện thoại của họ đến dịch vụ đối chiếu danh bạ của Bluesky để cho biết ai trong số họ đang dùng Bluesky."
           }
         },
         "zh-HK" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird 會使用你的通訊錄資料，協助你在 Bluesky 上尋找並聯繫朋友。"
+            "state" : "translated",
+            "value" : "當你選擇從通訊錄尋找朋友時，Catbird 會將他們的電話號碼傳送至 Bluesky 的聯絡人配對服務，以顯示當中哪些人正在使用 Bluesky。"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird 使用你的通讯录帮助你在 Bluesky 上查找并关注好友。"
+            "state" : "translated",
+            "value" : "当你选择从通讯录中查找好友时，Catbird 会将他们的电话号码发送到 Bluesky 的联系人匹配服务，以显示其中哪些人在使用 Bluesky。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird 會使用你的聯絡人資訊，協助你在 Bluesky 上尋找並認識朋友。"
+            "state" : "translated",
+            "value" : "當你選擇從聯絡人中尋找朋友時，Catbird 會將他們的電話號碼傳送至 Bluesky 的聯絡人配對服務，以顯示其中哪些人正在使用 Bluesky。"
           }
         }
       }
@@ -771,38 +771,38 @@
       "localizations" : {
         "ar" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "يستخدم Catbird الميكروفون عند تسجيل الصوت أو الفيديو لمشاركته في منشور."
+            "state" : "translated",
+            "value" : "يستخدم Catbird الميكروفون عند تسجيل صوت أو فيديو لمنشور، أو رسالة صوتية في محادثة."
           }
         },
         "ca" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird utilitza el micròfon quan graves àudio o vídeo per compartir-lo en una publicació."
+            "state" : "translated",
+            "value" : "Catbird utilitza el micròfon quan graves àudio o vídeo per a una publicació, o un missatge de veu en un xat."
           }
         },
         "cs" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird používá mikrofon při nahrávání zvuku nebo videa ke sdílení v příspěvku."
+            "state" : "translated",
+            "value" : "Catbird používá mikrofon, když nahráváte zvuk nebo video do příspěvku nebo hlasovou zprávu v chatu."
           }
         },
         "da" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird bruger mikrofonen, når du optager lyd eller video for at dele det i et opslag."
+            "state" : "translated",
+            "value" : "Catbird bruger mikrofonen, når du optager lyd eller video til et opslag eller en talebesked i en chat."
           }
         },
         "de" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird verwendet das Mikrofon, wenn du Audio oder Videos aufnimmst, um sie in einem Post zu teilen."
+            "state" : "translated",
+            "value" : "Catbird verwendet das Mikrofon, wenn du Audio oder Video für einen Post oder eine Sprachnachricht in einem Chat aufnimmst."
           }
         },
         "el" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Το Catbird χρησιμοποιεί το μικρόφωνο όταν ηχογραφείτε ήχο ή εγγράφετε βίντεο για κοινοποίηση σε μια δημοσίευση."
+            "state" : "translated",
+            "value" : "Το Catbird χρησιμοποιεί το μικρόφωνο όταν ηχογραφείτε ήχο ή βίντεο για μια δημοσίευση ή ένα φωνητικό μήνυμα σε μια συνομιλία."
           }
         },
         "en" : {
@@ -813,200 +813,200 @@
         },
         "en-AU" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird uses the microphone when you record audio or video to share in a post."
+            "state" : "translated",
+            "value" : "Catbird uses the microphone when you record audio or video for a post, or a voice message in a chat."
           }
         },
         "en-CA" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird uses the microphone when you record audio or video to share in a post."
+            "state" : "translated",
+            "value" : "Catbird uses the microphone when you record audio or video for a post, or a voice message in a chat."
           }
         },
         "en-GB" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird uses the microphone when you record audio or video to share in a post."
+            "state" : "translated",
+            "value" : "Catbird uses the microphone when you record audio or video for a post, or a voice message in a chat."
           }
         },
         "es" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird usa el micrófono cuando grabas audio o vídeo para compartirlo en una publicación."
+            "state" : "translated",
+            "value" : "Catbird usa el micrófono cuando grabas audio o vídeo para una publicación, o un mensaje de voz en un chat."
           }
         },
         "es-419" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird usa el micrófono cuando grabas audio o video para compartirlo en una publicación."
+            "state" : "translated",
+            "value" : "Catbird usa el micrófono cuando grabas audio o video para una publicación, o un mensaje de voz en un chat."
           }
         },
         "fi" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird käyttää mikrofonia, kun tallennat ääntä tai videota jaettavaksi julkaisussa."
+            "state" : "translated",
+            "value" : "Catbird käyttää mikrofonia, kun tallennat ääntä tai videota julkaisuun tai ääniviestin keskusteluun."
           }
         },
         "fr" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird utilise le microphone lorsque vous enregistrez de l’audio ou une vidéo à partager dans une publication."
+            "state" : "translated",
+            "value" : "Catbird utilise le microphone lorsque vous enregistrez de l’audio ou une vidéo pour une publication, ou un message vocal dans une discussion."
           }
         },
         "fr-CA" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird utilise le microphone lorsque vous enregistrez de l’audio ou une vidéo à partager dans une publication."
+            "state" : "translated",
+            "value" : "Catbird utilise le microphone lorsque vous enregistrez de l’audio ou une vidéo pour une publication, ou un message vocal dans une discussion."
           }
         },
         "he" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird משתמשת במיקרופון בעת הקלטת שמע או וידאו לשיתוף בפוסט."
+            "state" : "translated",
+            "value" : "Catbird משתמשת במיקרופון בעת הקלטת שמע או וידאו לפוסט, או הודעה קולית בצ'אט."
           }
         },
         "hi" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "पोस्ट में शेयर करने के लिए ऑडियो या वीडियो रिकॉर्ड करते समय Catbird माइक्रोफ़ोन का उपयोग करता है।"
+            "state" : "translated",
+            "value" : "जब आप किसी पोस्ट के लिए ऑडियो या वीडियो, या किसी चैट में वॉइस मैसेज रिकॉर्ड करते हैं, तब Catbird माइक्रोफ़ोन का उपयोग करता है।"
           }
         },
         "hr" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird koristi mikrofon kada snimate zvuk ili videozapis za dijeljenje u objavi."
+            "state" : "translated",
+            "value" : "Catbird koristi mikrofon kada snimate zvuk ili videozapis za objavu ili glasovnu poruku u razgovoru."
           }
         },
         "hu" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "A Catbird a mikrofont használja, amikor hangot vagy videót veszel fel bejegyzésben való megosztáshoz."
+            "state" : "translated",
+            "value" : "A Catbird a mikrofont használja, amikor hangot vagy videót veszel fel egy bejegyzéshez, vagy hangüzenetet egy csevegésben."
           }
         },
         "id" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird menggunakan mikrofon saat Anda merekam audio atau video untuk dibagikan dalam postingan."
+            "state" : "translated",
+            "value" : "Catbird menggunakan mikrofon saat Anda merekam audio atau video untuk postingan, atau pesan suara dalam chat."
           }
         },
         "it" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird utilizza il microfono quando registri audio o video da condividere in un post."
+            "state" : "translated",
+            "value" : "Catbird utilizza il microfono quando registri audio o video per un post, o un messaggio vocale in una chat."
           }
         },
         "ja" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbirdは、投稿で共有する音声や動画を録音・録画する際にマイクを使用します。"
+            "state" : "translated",
+            "value" : "Catbirdは、投稿用の音声や動画、またはチャットのボイスメッセージを録音・録画する際にマイクを使用します。"
           }
         },
         "ko" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird에서 게시물로 공유할 오디오 또는 동영상을 녹음할 때 마이크에 접근합니다."
+            "state" : "translated",
+            "value" : "Catbird에서 게시물용 오디오 또는 동영상이나 채팅 음성 메시지를 녹음할 때 마이크에 접근합니다."
           }
         },
         "ms" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird menggunakan mikrofon apabila anda merakam audio atau video untuk dikongsi dalam siaran."
+            "state" : "translated",
+            "value" : "Catbird menggunakan mikrofon apabila anda merakam audio atau video untuk siaran, atau mesej suara dalam sembang."
           }
         },
         "nb" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird bruker mikrofonen når du tar opp lyd eller video som skal deles i et innlegg."
+            "state" : "translated",
+            "value" : "Catbird bruker mikrofonen når du tar opp lyd eller video til et innlegg, eller en talemelding i en chat."
           }
         },
         "nl" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird gebruikt de microfoon wanneer je audio of video opneemt om te delen in een bericht."
+            "state" : "translated",
+            "value" : "Catbird gebruikt de microfoon wanneer je audio of video opneemt voor een bericht, of een spraakbericht in een chat."
           }
         },
         "pl" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird używa mikrofonu podczas nagrywania dźwięku lub wideo udostępnianego we wpisie."
+            "state" : "translated",
+            "value" : "Catbird używa mikrofonu podczas nagrywania dźwięku lub wideo do wpisu albo wiadomości głosowej na czacie."
           }
         },
         "pt-BR" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "O Catbird usa o microfone quando você grava áudio ou vídeo para compartilhar em uma publicação."
+            "state" : "translated",
+            "value" : "O Catbird usa o microfone quando você grava áudio ou vídeo para uma publicação, ou uma mensagem de voz em um chat."
           }
         },
         "pt-PT" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "O Catbird utiliza o microfone quando grava áudio ou vídeo para partilhar numa publicação."
+            "state" : "translated",
+            "value" : "O Catbird utiliza o microfone quando grava áudio ou vídeo para uma publicação, ou uma mensagem de voz numa conversa."
           }
         },
         "ro" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird folosește microfonul atunci când înregistrați conținut audio sau video pentru a-l partaja într-o postare."
+            "state" : "translated",
+            "value" : "Catbird folosește microfonul atunci când înregistrați conținut audio sau video pentru o postare ori un mesaj vocal într-o conversație."
           }
         },
         "ru" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird использует микрофон при записи аудио или видео для публикации в посте."
+            "state" : "translated",
+            "value" : "Catbird использует микрофон, когда вы записываете аудио или видео для поста либо голосовое сообщение в чате."
           }
         },
         "sk" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird používa mikrofón pri nahrávaní zvuku alebo videa na zdieľanie v príspevku."
+            "state" : "translated",
+            "value" : "Catbird používa mikrofón, keď nahrávate zvuk alebo video do príspevku alebo hlasovú správu v chate."
           }
         },
         "sv" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird använder mikrofonen när du spelar in ljud eller video för att dela i ett inlägg."
+            "state" : "translated",
+            "value" : "Catbird använder mikrofonen när du spelar in ljud eller video till ett inlägg, eller ett röstmeddelande i en chatt."
           }
         },
         "th" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird ใช้ไมโครโฟนเมื่อคุณบันทึกเสียงหรือวิดีโอเพื่อแชร์ในโพสต์"
+            "state" : "translated",
+            "value" : "Catbird ใช้ไมโครโฟนเมื่อคุณบันทึกเสียงหรือวิดีโอสำหรับโพสต์ หรือข้อความเสียงในแชท"
           }
         },
         "tr" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird, bir gönderide paylaşmak üzere ses veya video kaydettiğinde mikrofonu kullanır."
+            "state" : "translated",
+            "value" : "Catbird, bir gönderi için ses veya video ya da sohbette sesli mesaj kaydettiğinde mikrofonu kullanır."
           }
         },
         "uk" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird використовує мікрофон під час запису аудіо чи відео для публікації в дописі."
+            "state" : "translated",
+            "value" : "Catbird використовує мікрофон, коли ви записуєте аудіо чи відео для допису або голосове повідомлення в чаті."
           }
         },
         "vi" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Catbird sử dụng micrô khi bạn ghi âm hoặc quay video để chia sẻ trong bài đăng."
+            "state" : "translated",
+            "value" : "Catbird sử dụng micrô khi bạn ghi âm hoặc quay video cho bài đăng, hoặc ghi tin nhắn thoại trong cuộc trò chuyện."
           }
         },
         "zh-HK" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "當你錄製音訊或影片以分享至帖文時，Catbird 會使用咪高風。"
+            "state" : "translated",
+            "value" : "當你為帖文錄製音訊或影片，或在聊天中錄製語音訊息時，Catbird 會使用咪高風。"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "当你录制要在帖子中分享的音频或视频时，Catbird 会使用麦克风。"
+            "state" : "translated",
+            "value" : "当你为帖子录制音频或视频，或在聊天中录制语音消息时，Catbird 会使用麦克风。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "當你錄製音訊或影片以分享至貼文時，Catbird 會使用麥克風。"
+            "state" : "translated",
+            "value" : "當你為貼文錄製音訊或影片，或在聊天中錄製語音訊息時，Catbird 會使用麥克風。"
           }
         }
       }
