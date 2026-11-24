@@ -145,7 +145,7 @@ struct CircleDetailView: View {
           Text(circle.name)
             .font(.title3.weight(.bold))
 
-          Text("Owner: \(circle.owner.didString())", comment: "Circle owner metadata label — %1$@ is the owner's DID.")
+          Text("Owner: @\(circle.owner.didString())", comment: "Circle owner metadata label — %1$@ is the owner's DID, shown after an @.")
             .font(.caption)
             .foregroundStyle(.secondary)
         }

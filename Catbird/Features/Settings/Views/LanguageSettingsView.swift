@@ -1,8 +1,5 @@
 import SwiftUI
 import OSLog
-#if os(iOS)
-import UIKit
-#endif
 
 // MARK: - Language Model
 
@@ -216,39 +213,8 @@ struct LanguageSettingsView: View {
             && appState.appSettings.confirmedReadingLanguages(for: appState.userDID) != nil
     }
 
-    private var currentAppLanguageSummary: String {
-        let identifier = Bundle.main.preferredLocalizations.first ?? locale.identifier
-        return locale.localizedString(forIdentifier: identifier)
-            ?? locale.localizedString(forLanguageCode: locale.language.languageCode?.identifier ?? "en")
-            ?? identifier
-    }
-
     var body: some View {
         SettingsFocusedForm(initialFocus: initialFocus) {
-            #if os(iOS)
-            Section {
-                Button(action: openSystemAppLanguageSettings) {
-                    HStack(spacing: DesignTokens.Spacing.sm) {
-                        SettingsNavigationRow(
-                            title: "App Language",
-                            summary: currentAppLanguageSummary,
-                            systemImage: "globe",
-                            family: .language
-                        )
-                        Spacer(minLength: 0)
-                        Image(systemName: "arrow.up.forward.app")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .accessibilityHidden(true)
-                    }
-                }
-                .settingsControl(.init(rawValue: "languages.interface"))
-            } header: {
-                Text("App Language", comment: "Section header for Catbird's per-app UI language setting on this device.")
-            } footer: {
-                Text("Choose the language for Catbird’s menus, buttons, and controls in iOS Settings for this device. Post and feed languages below are separate and control which Bluesky posts appear in your timeline.", comment: "Footer explaining that App Language in iOS Settings changes UI text, separate from Bluesky post/feed reading languages.")
-            }
-            #else
             // Only offer an interface language choice when Catbird ships more than one translation.
             if InterfaceLanguagePreferences.availableLanguages().count > 1 {
                 Section {
@@ -264,7 +230,6 @@ struct LanguageSettingsView: View {
                     Text("App language changes Catbird’s menus, buttons, and controls for every account on this device. Post and feed languages below are separate and control which Bluesky posts appear in your timeline.", comment: "Footer explaining that App Language changes UI text on this device, separate from Bluesky post/feed reading languages.")
                 }
             }
-            #endif
 
             SettingsPersistenceStatusSection(settings: appState.appSettings)
             if let error = languageManager?.error {
@@ -309,7 +274,7 @@ struct LanguageSettingsView: View {
                             applyReadingLanguagesAfterSaving()
                         }), primaryLanguage: appState.appSettings.primaryLanguage, recentLanguages: languageManager?.recentlyUsedLanguages ?? [])
                 } label: {
-                    SettingsNavigationRow(title: "Preferred Reading Languages", summary: appState.appSettings.contentLanguages.map(languageName).formatted(), systemImage: "character.bubble", family: .language)
+                    SettingsNavigationRow(title: "Preferred Reading Languages", summary: appState.appSettings.contentLanguages.map(languageName).joined(separator: ", "), systemImage: "character.bubble", family: .language)
                 }
                 .settingsControl(.init(rawValue: "languages.content"))
                 Toggle("Hide Posts in Other Languages", isOn: Binding(
@@ -352,14 +317,6 @@ struct LanguageSettingsView: View {
         }
         #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
-        #endif
-    }
-
-    private func openSystemAppLanguageSettings() {
-        #if os(iOS)
-        if let url = URL(string: UIApplication.openSettingsURLString) {
-            UIApplication.shared.open(url)
-        }
         #endif
     }
 

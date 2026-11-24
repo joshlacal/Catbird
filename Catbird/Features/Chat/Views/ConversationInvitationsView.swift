@@ -188,7 +188,7 @@ struct ConversationInvitationRow: View {
               .appFont(AppTextRole.subheadline)
               .foregroundColor(.secondary)
             } else {
-              Text(verbatim: names.formatted(.list(type: .and)))
+              Text(verbatim: names.joined(separator: ", "))
                 .appFont(AppTextRole.subheadline)
                 .foregroundColor(.secondary)
             }

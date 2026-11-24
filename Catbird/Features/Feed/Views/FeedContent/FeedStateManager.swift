@@ -361,6 +361,36 @@ final class FeedStateManager: StateInvalidationSubscriber {
         return await client.hasValidSession()
     }
     
+    /// Requests the first page and waits until it settles, asking once more when the
+    /// request ends with no rows, no error and no response (a superseded or dropped load).
+    private func loadFirstPage() async -> Bool {
+        for _ in 0..<2 {
+            await feedModel.loadFeed(fetch: feedType, forceRefresh: true)
+            await waitForModelLoad()
+            guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return false }
+            if firstPageHasOutcome { return true }
+        }
+        return true
+    }
+
+    /// Waits for a model load this call joined or was superseded by.
+    private func waitForModelLoad() async {
+        let deadline = ContinuousClock.now + .seconds(30)
+        while feedModel.isLoading || feedModel.isBackgroundRefreshing, ContinuousClock.now < deadline {
+            do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+        }
+    }
+
+    private var firstPageHasOutcome: Bool {
+        !feedModel.posts.isEmpty || feedModel.error != nil || feedModel.hasLoadedInitialResponse
+    }
+
+    /// An empty feed whose first page ended without a response shows Try Again instead of a spinner.
+    private var unresolvedFirstPageError: Error? {
+        guard posts.isEmpty, !firstPageHasOutcome, !feedModel.isLoading else { return nil }
+        return FeedError.noResponse
+    }
+
     /// Performs initial load of the feed
     @MainActor
     func loadInitialData() async {
@@ -379,19 +409,20 @@ final class FeedStateManager: StateInvalidationSubscriber {
                loadingState == .loading { loadingState = .idle }
         }
 
-        // If we already have posts (likely from cache restoration), check if cache needs refresh
-        // Only skip refresh if this manager has previously refreshed successfully (lastRefreshTime != distantPast)
-        // For fresh managers after account switch, lastRefreshTime is distantPast, so we'll check freshness
-        if !posts.isEmpty && !isUserInitiatedAction && feedModel.lastRefreshTime != Date.distantPast {
-            let shouldRefresh = await PersistentFeedStateManager.shared.shouldRefreshFeed(
-                feedIdentifier: feedCacheIdentifier,
-                lastUserRefresh: nil,
-                appBecameActiveTime: nil
-            )
+        // Restored or previously loaded rows stay on screen while the head refreshes behind them.
+        // A manager that has never reached the network always refreshes its restored rows.
+        if !posts.isEmpty && !isUserInitiatedAction {
+            if feedModel.lastRefreshTime != Date.distantPast {
+                let shouldRefresh = await PersistentFeedStateManager.shared.shouldRefreshFeed(
+                    feedIdentifier: feedCacheIdentifier,
+                    lastUserRefresh: nil,
+                    appBecameActiveTime: nil
+                )
 
-            guard shouldRefresh else {
-                logger.debug("Skipping initial refresh - cached feed is fresh enough to display without flashing")
-                return
+                guard shouldRefresh else {
+                    logger.debug("Skipping initial refresh - cached feed is fresh enough to display without flashing")
+                    return
+                }
             }
 
             loadingState = .refreshing
@@ -402,12 +433,6 @@ final class FeedStateManager: StateInvalidationSubscriber {
             )
             await updatePostsFromModel()
             loadingState = .idle
-            return
-        }
-
-        // Allow loading for fresh managers (no previous refresh) even if posts exist from cache
-        if !posts.isEmpty && !isUserInitiatedAction {
-            logger.debug("Skipping initial load - posts exist (\(self.posts.count)) and not user-initiated")
             return
         }
 
@@ -426,8 +451,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
             return
         }
 
-        await feedModel.loadFeed(fetch: feedType, forceRefresh: true)
-        guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return }
+        guard await loadFirstPage() else { return }
 
         // Accepted cached/prewarmed rows survive a failed supplemental request.
         if posts != feedModel.posts {
@@ -435,7 +459,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
             cleanupViewModels()
         }
         // Check if feed load encountered an error
-        if let error = feedModel.error {
+        if let error = feedModel.error ?? unresolvedFirstPageError {
             logger.error("Initial load failed: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
             loadingState = .error(error)
@@ -481,8 +505,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
         }
 
         // For system-initiated loads (like post-auth), always force refresh even if posts exist
-        await feedModel.loadFeed(fetch: feedType, forceRefresh: true)
-        guard !Task.isCancelled, !isCleanedUp, !appState.isAccountSwitchSuspended else { return }
+        guard await loadFirstPage() else { return }
 
         // Accepted cached/prewarmed rows survive a failed supplemental request.
         if posts != feedModel.posts {
@@ -490,7 +513,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
             cleanupViewModels()
         }
         // Check if feed load encountered an error
-        if let error = feedModel.error {
+        if let error = feedModel.error ?? unresolvedFirstPageError {
             logger.error("System initial load failed: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
             loadingState = .error(error)

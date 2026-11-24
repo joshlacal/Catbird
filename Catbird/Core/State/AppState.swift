@@ -1083,6 +1083,7 @@ final class AppState {
         circleEncryptionCache.reset()
         circleOpenerCache.reset()
         circleCapabilityProbeID = nil
+        circleCapabilityProbeState = .notStarted
         circleCapability = .unknown
 
         Task {
@@ -1252,6 +1253,7 @@ final class AppState {
         circleEncryptionCache.reset()
         circleOpenerCache.reset()
         circleCapabilityProbeID = nil
+        circleCapabilityProbeState = .notStarted
         circleCapability = .unknown
         #if DEBUG
         if let transport = e2eCircleTransport { installE2ECircleFixture(transport: transport) }
@@ -1444,6 +1446,9 @@ final class AppState {
     }
     private(set) var circleSupportsImages = false
     var circlesEnabled: Bool { circleCapability == .supported }
+    /// Whether this account's capability probe has run. Surfaces waiting on an unknown
+    /// capability stop waiting once a probe finishes without an answer.
+    private(set) var circleCapabilityProbeState: CircleCapabilityProbeState = .notStarted
     @ObservationIgnored private var circleCapabilityProbeID: UUID?
     @ObservationIgnored private var circleCapabilityPDSURL: URL?
 
@@ -1617,6 +1622,11 @@ final class AppState {
         guard AppStateManager.shared.lifecycle.appState === self else { return }
         let probeID = UUID()
         circleCapabilityProbeID = probeID
+        circleCapabilityProbeState = .running
+        defer {
+            // A probe replaced by a newer one, or by an account change, leaves the state to that.
+            if circleCapabilityProbeID == probeID { circleCapabilityProbeState = .finished }
+        }
         let probeClient = client
         let account = await probeClient.getActiveAccountInfo()
         guard AppStateManager.shared.lifecycle.appState === self, client === probeClient,
@@ -4246,6 +4256,7 @@ final class AppState {
         logger.info("Updating AppState client reference for user: \(self.userDID)")
         ageAccess.suspend()
         circleCapabilityProbeID = nil
+        circleCapabilityProbeState = .notStarted
         circleCapability = .unknown
         _circleService = nil
         circleEncryptionCache.reset()

@@ -82,6 +82,9 @@ private extension ContentView {
     .task(id: appState.userDID) {
       await evaluateWelcomeOnboarding(for: appState)
     }
+    .modifier(CommunityStandardsGate(accountDID: appState.userDID) {
+      await appStateManager.logout()
+    })
   }
 
   /// Runs when an account's main content appears (this view is rebuilt for every account).

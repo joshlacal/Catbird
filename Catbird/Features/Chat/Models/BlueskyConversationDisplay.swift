@@ -94,7 +94,7 @@ extension ChatBskyConvoDefs.ConvoView {
       }
 
       if names.count <= 2 {
-        return names.formatted(.list(type: .and))
+        return names.joined(separator: ", ")
       }
 
       let others = names.count - 2

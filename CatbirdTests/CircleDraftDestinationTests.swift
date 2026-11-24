@@ -1,0 +1,769 @@
+import Foundation
+import Petrel
+import PetrelCatbird
+import SwiftData
+import Testing
+#if canImport(UIKit)
+import UIKit
+#endif
+@testable import Catbird
+
+@Suite("Circle draft destination", .serialized)
+@MainActor
+struct CircleDraftDestinationTests {
+  private let account = "did:plc:alice"
+  private var parentURI: String { "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/parent123" }
+  private var rootURI: String { "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/root456" }
+
+  // MARK: - Saving and decoding
+
+  @Test("A Circle reply saves its Circle, account and thread references, and decodes them unchanged")
+  func circleReplyRoundTrips() async throws {
+    let appState = await makeAppState()
+    let parent = CircleTestFixtures.makePostView(uri: try ATProtocolURI(uriString: parentURI))
+    let model = PostComposerViewModel(
+      parentPost: parent, destination: .circle(CircleTestFixtures.family), appState: appState
+    )
+    model.postText = "Private reply"
+
+    let draft = model.saveDraftState()
+    let saved = try #require(draft.circleDestination)
+    #expect(saved.accountDID == account)
+    #expect(saved.spaceURI == CircleTestFixtures.familyURI.uriString())
+    #expect(saved.circleID == CircleTestFixtures.familyCircleId.toString())
+    #expect(saved.name == "Family")
+    #expect(saved.ownerDID == CircleTestFixtures.alice.didString())
+    #expect(saved.reply?.parentURI == parentURI)
+    #expect(saved.reply?.parentCID == parent.cid.string)
+    #expect(saved.reply?.rootURI == parentURI)
+
+    let decoded = try JSONDecoder().decode(PostComposerDraft.self, from: JSONEncoder().encode(draft))
+    #expect(decoded == draft)
+    let circle = try #require(decoded.circleDestination?.circle)
+    #expect(circle.uri == CircleTestFixtures.familyURI)
+    #expect(circle.circleId == CircleTestFixtures.familyCircleId)
+    #expect(circle.name == "Family")
+    #expect(circle.owner == CircleTestFixtures.alice)
+    let ref = try #require(decoded.circleDestination?.reply?.ref)
+    #expect(ref.parent.uri.uriString() == parentURI)
+    #expect(ref.parent.cid.string == parent.cid.string)
+  }
+
+  @Test("A draft saved before destinations existed decodes and restores as Public")
+  func legacyDraftRestoresPublic() async throws {
+    let legacy = Data("""
+      {"postText":"Saved long ago","mediaItems":[],"selectedLanguages":[],"selectedLabels":[],
+       "outlineTags":[],"threadEntries":[],"isThreadMode":false,"currentThreadIndex":0}
+      """.utf8)
+    let draft = try JSONDecoder().decode(PostComposerDraft.self, from: legacy)
+    #expect(draft.circleDestination == nil)
+
+    let appState = await makeAppState()
+    let model = PostComposerViewModel(destination: .circle(CircleTestFixtures.family), appState: appState)
+    model.restoreDraftState(draft)
+    #expect(model.postText == "Saved long ago")
+    #expect(model.destination == .public)
+    #expect(model.unresolvedCircleAudience == nil)
+    #expect(model.canChangeDestination)
+
+    // A Public draft saves exactly the keys it always did.
+    let encoded = try JSONEncoder().encode(model.saveDraftState())
+    let object = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    #expect(!object.keys.contains("circleDestination"))
+  }
+
+  // MARK: - Restoring
+
+  @Test("Restoring a Circle reply rebuilds the Circle composer and posts with the saved references")
+  func restoreIntoCircle() async throws {
+    let appState = await makeAppState(circlesEnabled: true, allowWrites: true)
+    let transport = DestinationRecordingCircleTransport()
+    let model = PostComposerViewModel(appState: appState, circleService: CircleService(transport: transport))
+    let reply = savedReply()
+    let saved = CircleDraftDestination(circle: CircleTestFixtures.family, accountDID: account, reply: reply)
+
+    model.restoreDraftState(makeDraft("Private reply", parentURI: parentURI, destination: saved))
+
+    guard case .circle(let restored) = model.destination else {
+      Issue.record("A Circle draft must restore into its Circle")
+      return
+    }
+    #expect(restored.uri == CircleTestFixtures.familyURI)
+    #expect(restored.name == "Family")
+    #expect(model.isReplyLockedToCircle)
+    #expect(!model.canChangeDestination)
+    #expect(model.unresolvedCircleAudience == nil)
+
+    // The parent loads through the Circle's own thread read; the saved references win.
+    try await waitUntil { model.parentPost != nil }
+    let ref = try #require(model.circleReplyRef())
+    #expect(ref.root.uri.uriString() == rootURI)
+    #expect(ref.root.cid.string == reply.rootCID)
+    #expect(ref.parent.uri.uriString() == parentURI)
+    #expect(ref.parent.cid.string == reply.parentCID)
+
+    _ = try await model.createPost()
+    let published = await transport.publishedPosts
+    #expect(published.count == 1)
+    #expect(published.first?.destination.uri == CircleTestFixtures.familyURI)
+    #expect(published.first?.draft.text == "Private reply")
+    #expect(published.first?.draft.reply?.root.uri.uriString() == rootURI)
+    #expect(published.first?.draft.reply?.parent.cid.string == reply.parentCID)
+    #expect(await transport.publicEndpointCallCount == 0)
+  }
+
+  @Test("A Circle that is gone keeps the draft private and blocks posting until an audience is chosen")
+  func missingCircleBlocksPosting() async throws {
+    let appState = await makeAppState(circlesEnabled: true, allowWrites: true)
+    // The account's Circles list only Family.
+    let transport = DestinationRecordingCircleTransport()
+    let model = PostComposerViewModel(appState: appState, circleService: CircleService(transport: transport))
+    let saved = CircleDraftDestination(circle: CircleTestFixtures.work, accountDID: account, reply: nil)
+
+    model.restoreDraftState(makeDraft("Only for Work", destination: saved))
+    try await waitUntil { model.unresolvedCircleAudience != nil }
+
+    #expect(model.unresolvedCircleAudience?.issue == .circleUnavailable(name: "Work"))
+    #expect(model.destination != .public)
+    #expect(!model.submitValidationState.canSubmit)
+    #expect(model.submitValidationState.reason == .circleAudienceUnresolved(.circleUnavailable(name: "Work")))
+    do {
+      _ = try await model.createPost()
+      Issue.record("A Circle that is gone must block posting")
+    } catch {
+      #expect(error.localizedDescription == CircleDraftAudienceIssue.circleUnavailable(name: "Work").message)
+    }
+    #expect(await transport.publishedPosts.isEmpty)
+
+    // Saving keeps the block, so the next restore is still private.
+    #expect(model.saveDraftState().circleDestination == saved)
+    let reopened = PostComposerViewModel(appState: appState, circleService: CircleService(transport: transport))
+    reopened.restoreDraftState(model.saveDraftState())
+    try await waitUntil { reopened.unresolvedCircleAudience != nil }
+    #expect(reopened.destination != .public)
+
+    // Only the author's explicit choice makes it Public.
+    model.selectDestination(.public)
+    #expect(model.unresolvedCircleAudience == nil)
+    #expect(model.destination == .public)
+    #expect(model.saveDraftState().circleDestination == nil)
+  }
+
+  @Test("While Circles are unavailable a Circle draft stays in its Circle and reads nothing")
+  func unavailableCirclesStayPrivate() async throws {
+    let appState = await makeAppState()
+    let transport = MockCircleTransport()
+    let listings = CallCounter()
+    await transport.setOnListCircles { await listings.increment() }
+    let model = PostComposerViewModel(appState: appState, circleService: CircleService(transport: transport))
+    let saved = CircleDraftDestination(circle: CircleTestFixtures.family, accountDID: account, reply: savedReply())
+    let circle = try #require(saved.circle)
+
+    model.restoreDraftState(makeDraft("Private reply", parentURI: parentURI, destination: saved))
+    // Until Circles are known the reply is loading, not unavailable.
+    #expect(!model.parentRestoreFailed)
+    #expect(model.submitValidationState.reason == .replyLoading)
+
+    appState.circleCapability = .unsupported
+    model.circleAvailabilityChanged()
+
+    #expect(model.destination == .circle(circle))
+    #expect(!model.canPostToDestination)
+    #expect(model.isReplyLockedToCircle)
+    #expect(model.parentRestoreFailed)
+    #expect(model.saveDraftState().circleDestination == saved)
+
+    // Turning it into a new post keeps the Circle and posting stays blocked.
+    model.detachUnavailableParent()
+    #expect(model.destination == .circle(circle))
+    #expect(!model.canPostToDestination)
+    #expect(model.saveDraftState().circleDestination?.reply == nil)
+
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(await listings.count == 0)
+    #expect(await transport.threadCallCount == 0)
+  }
+
+  @Test("A Circle reply restored before Circles are known loads its parent once they are available")
+  func circleReplyWaitsForCapability() async throws {
+    let appState = await makeAppState()
+    let transport = MockCircleTransport()
+    let listings = CallCounter()
+    await transport.setOnListCircles { await listings.increment() }
+    let model = PostComposerViewModel(appState: appState, circleService: CircleService(transport: transport))
+    let saved = CircleDraftDestination(circle: CircleTestFixtures.family, accountDID: account, reply: savedReply())
+    let circle = try #require(saved.circle)
+
+    model.restoreDraftState(makeDraft("Private reply", parentURI: parentURI, destination: saved))
+    model.circleAvailabilityChanged()
+    #expect(model.destination == .circle(circle))
+    #expect(!model.parentRestoreFailed)
+    #expect(model.submitValidationState.reason == .replyLoading)
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(await listings.count == 0)
+    #expect(await transport.threadCallCount == 0)
+
+    appState.circleCapability = .supported
+    model.circleAvailabilityChanged()
+    try await waitUntil { model.parentPost != nil }
+    #expect(model.parentPost?.uri.uriString() == parentURI)
+    #expect(!model.parentRestoreFailed)
+    #expect(model.unresolvedCircleAudience == nil)
+    guard case .circle(let confirmed) = model.destination else {
+      Issue.record("A confirmed Circle draft must stay in its Circle")
+      return
+    }
+    #expect(confirmed.uri == CircleTestFixtures.familyURI)
+
+    // Another availability change reads nothing again.
+    model.circleAvailabilityChanged()
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(await transport.threadCallCount == 1)
+    #expect(await listings.count == 1)
+  }
+
+  @Test("A Circle reply loads while Circles are probed, offers Try Again once a probe ends without an answer, and Try Again probes again")
+  func inconclusiveProbeOffersRetry() async throws {
+    let appState = await makeAppState()
+    let previousLifecycle = AppStateManager.shared.lifecycle
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(appState))
+    defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
+    let probing = RecordingCircleTransport(error: CircleError.upstreamUnavailable)
+    await probing.suspendCapabilities()
+    appState.circleService = CircleService(transport: probing)
+    let transport = MockCircleTransport()
+    let model = PostComposerViewModel(appState: appState, circleService: CircleService(transport: transport))
+    model.circleCapabilityWaitLimit = .seconds(60)
+    let saved = CircleDraftDestination(circle: CircleTestFixtures.family, accountDID: account, reply: savedReply())
+
+    let probe = Task { await appState.probeCircleCapabilities() }
+    await probing.waitForCapabilities()
+    #expect(appState.circleCapabilityProbeState == .running)
+    model.restoreDraftState(makeDraft("Private reply", parentURI: parentURI, destination: saved))
+    model.circleAvailabilityChanged()
+    #expect(!model.parentRestoreFailed)
+    #expect(model.submitValidationState.reason == .replyLoading)
+
+    // The probe ends without an answer; the composer view reports the change.
+    await probing.resumeCapabilities()
+    await probe.value
+    #expect(appState.circleCapability == .unknown)
+    #expect(appState.circleCapabilityProbeState == .finished)
+    model.circleAvailabilityChanged()
+    #expect(model.parentRestoreFailed)
+    #expect(model.submitValidationState.reason == .replyUnavailable)
+    #expect(model.isReplyLockedToCircle)
+    #expect(await transport.threadCallCount == 0)
+
+    // Try Again probes again and reads the parent through the Circle once Circles answer.
+    appState.circleService = CircleService(transport: RecordingCircleTransport())
+    model.retryParentRestore()
+    #expect(!model.parentRestoreFailed)
+    #expect(model.submitValidationState.reason == .replyLoading)
+    try await waitUntil { model.parentPost != nil }
+    #expect(appState.circleCapability == .supported)
+    #expect(model.parentPost?.uri.uriString() == parentURI)
+    #expect(!model.parentRestoreFailed)
+    #expect(await transport.threadCallCount == 1)
+    #expect(await probing.publicEndpointCallCount == 0)
+  }
+
+  @Test("A Circle reply whose Circles never become known shows as unavailable after a bounded wait")
+  func circleReplyWaitIsBounded() async throws {
+    let appState = await makeAppState()
+    let transport = MockCircleTransport()
+    let model = PostComposerViewModel(appState: appState, circleService: CircleService(transport: transport))
+    model.circleCapabilityWaitLimit = .milliseconds(50)
+    let saved = CircleDraftDestination(circle: CircleTestFixtures.family, accountDID: account, reply: savedReply())
+    let circle = try #require(saved.circle)
+
+    model.restoreDraftState(makeDraft("Private reply", parentURI: parentURI, destination: saved))
+    #expect(appState.circleCapabilityProbeState == .notStarted)
+    #expect(!model.parentRestoreFailed)
+    try await waitUntil { model.parentRestoreFailed }
+    #expect(model.submitValidationState.reason == .replyUnavailable)
+    #expect(model.destination == .circle(circle))
+    #expect(await transport.threadCallCount == 0)
+
+    // Circles becoming known later reads the parent without another tap.
+    appState.circleCapability = .supported
+    model.circleAvailabilityChanged()
+    try await waitUntil { model.parentPost != nil }
+    #expect(!model.parentRestoreFailed)
+    #expect(await transport.threadCallCount == 1)
+  }
+
+  @Test("A Circle restored before Circles are known is checked once they are available")
+  func missingCircleCheckedOnceCirclesAreAvailable() async throws {
+    let appState = await makeAppState()
+    // The account's Circles list only Family.
+    let transport = DestinationRecordingCircleTransport()
+    let model = PostComposerViewModel(appState: appState, circleService: CircleService(transport: transport))
+    let saved = CircleDraftDestination(circle: CircleTestFixtures.work, accountDID: account, reply: nil)
+
+    model.restoreDraftState(makeDraft("Only for Work", destination: saved))
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(model.unresolvedCircleAudience == nil)
+
+    appState.circleCapability = .supported
+    model.circleAvailabilityChanged()
+    try await waitUntil { model.unresolvedCircleAudience != nil }
+    #expect(model.unresolvedCircleAudience?.issue == .circleUnavailable(name: "Work"))
+    #expect(model.destination != .public)
+    #expect(!model.submitValidationState.canSubmit)
+  }
+
+  @Test("A Circle found gone while a post is in flight blocks the next attempt when that post fails")
+  func missingCircleFoundDuringFailedSubmission() async throws {
+    let harness = try await makeSubmissionHarness(publishError: .upstreamUnavailable)
+    defer { harness.close() }
+    let model = harness.model
+
+    let post = Task { try await model.createPost() }
+    try await landListingWhilePublishing(harness)
+    // Recorded, but the draft being posted is left as it was submitted.
+    #expect(model.unresolvedCircleAudience == nil)
+    #expect(model.destination == .circle(try #require(harness.saved.circle)))
+
+    await harness.transport.publishing.open()
+    await #expect(throws: CircleError.self) { try await post.value }
+    #expect(model.circleGoneDuringSubmission == nil)
+    #expect(model.unresolvedCircleAudience?.issue == .circleUnavailable(name: "Work"))
+    #expect(!model.submitValidationState.canSubmit)
+    #expect(harness.scene.currentDraft?.circleDestination == harness.saved)
+    #expect(await harness.transport.publishedCount == 0)
+  }
+
+  @Test("A Circle found gone while a post is in flight is dropped when that post goes through")
+  func missingCircleFoundDuringSuccessfulSubmission() async throws {
+    let harness = try await makeSubmissionHarness(publishError: nil)
+    defer { harness.close() }
+    let model = harness.model
+
+    let post = Task { try await model.createPost() }
+    try await landListingWhilePublishing(harness)
+    #expect(model.unresolvedCircleAudience == nil)
+
+    await harness.transport.publishing.open()
+    // The submission completes, so the composer closes instead of keeping the published draft open.
+    #expect(try await post.value)
+    #expect(model.circleGoneDuringSubmission == nil)
+    #expect(model.unresolvedCircleAudience == nil)
+    #expect(harness.scene.currentDraft == nil)
+    #expect(await harness.transport.publishedCount == 1)
+  }
+
+  @Test("A Circle draft never restores under another account and its reply is never read")
+  func otherAccountBlocksPosting() async throws {
+    let appState = await makeAppState(circlesEnabled: true)
+    let transport = MockCircleTransport()
+    let listings = CallCounter()
+    await transport.setOnListCircles { await listings.increment() }
+    let model = PostComposerViewModel(appState: appState, circleService: CircleService(transport: transport))
+    let saved = CircleDraftDestination(
+      circle: CircleTestFixtures.family, accountDID: "did:plc:someoneelse", reply: savedReply()
+    )
+
+    let circle = try #require(saved.circle)
+
+    model.restoreDraftState(makeDraft("Their reply", parentURI: parentURI, destination: saved))
+
+    #expect(model.unresolvedCircleAudience?.issue == .otherAccount)
+    #expect(model.destination != .circle(circle))
+    #expect(!model.submitValidationState.canSubmit)
+    #expect(model.parentRestoreFailed)
+    // A reply into a Circle never becomes a public reply.
+    #expect(!model.canChangeDestination)
+    // Saving keeps the original account, so it stays blocked here.
+    #expect(model.saveDraftState().circleDestination == saved)
+
+    model.detachUnavailableParent()
+    #expect(model.canChangeDestination)
+    #expect(model.unresolvedCircleAudience != nil)
+    #expect(model.saveDraftState().circleDestination?.accountDID == "did:plc:someoneelse")
+    #expect(model.saveDraftState().circleDestination?.reply == nil)
+
+    // Clearing the composer ends the restored draft; the next post shows its audience.
+    model.clearAll()
+    #expect(model.unresolvedCircleAudience == nil)
+    #expect(model.canChangeDestination)
+    #expect(model.saveDraftState().circleDestination == nil)
+
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(await listings.count == 0)
+    #expect(await transport.threadCallCount == 0)
+  }
+
+  @Test("A Circle reply whose Circle is gone continues only as a new post, which can then go Public with no Circle reference")
+  func goneCircleReplyBecomesNewPost() async throws {
+    let appState = await makeAppState(circlesEnabled: true, allowWrites: true)
+    // The account's Circles list only Family; the thread read still answers.
+    let transport = DestinationRecordingCircleTransport()
+    let model = PostComposerViewModel(appState: appState, circleService: CircleService(transport: transport))
+    let saved = CircleDraftDestination(circle: CircleTestFixtures.work, accountDID: account, reply: savedReply())
+    let circle = try #require(saved.circle)
+
+    model.restoreDraftState(makeDraft("Private reply", parentURI: parentURI, destination: saved))
+    try await waitUntil { model.parentPost != nil && model.unresolvedCircleAudience != nil }
+    #expect(model.unresolvedCircleAudience?.issue == .circleUnavailable(name: "Work"))
+    #expect(!model.parentRestoreFailed)
+    #expect(model.offersNewPostForUnresolvedCircleReply)
+    #expect(!model.submitValidationState.canSubmit)
+
+    // While it is a reply its audience stays locked, so it can never become a public reply.
+    #expect(model.isReplyLockedToCircle)
+    model.selectDestination(.public)
+    #expect(model.destination == .circle(circle))
+    #expect(model.unresolvedCircleAudience != nil)
+
+    model.detachUnavailableParent()
+    #expect(!model.isReply)
+    #expect(model.parentPost == nil)
+    #expect(model.replyTo == nil)
+    #expect(model.circleReplyRef() == nil)
+    #expect(!model.offersNewPostForUnresolvedCircleReply)
+    #expect(model.canChangeDestination)
+    // Still blocked until the author picks an audience, and no thread is saved with it.
+    #expect(model.unresolvedCircleAudience?.saved.reply == nil)
+    #expect(model.saveDraftState().circleDestination?.reply == nil)
+    #expect(!model.submitValidationState.canSubmit)
+
+    model.selectDestination(.public)
+    #expect(model.destination == .public)
+    #expect(model.unresolvedCircleAudience == nil)
+    #expect(model.submitValidationState.canSubmit)
+
+    // Nothing the public post is built from refers to the Circle, its thread or its parent.
+    #expect(model.editingContent().parentURI == nil)
+    #expect(model.postingQuoteReference() == nil)
+    let draft = model.saveDraftState()
+    #expect(draft.parentPostURI == nil)
+    #expect(draft.circleDestination == nil)
+    let encoded = String(decoding: try JSONEncoder().encode(draft), as: UTF8.self)
+    let reply = savedReply()
+    let circleReferences = [
+      "blue.catbird.circle", "parent123", "root456", CircleTestFixtures.workCircleId.toString(),
+      reply.parentCID, reply.rootCID
+    ]
+    for circleReference in circleReferences {
+      #expect(!encoded.contains(circleReference), "The public draft must not carry \(circleReference)")
+    }
+
+    // Posting takes the public path; it fails only because this client has no session.
+    do {
+      _ = try await model.createPost()
+      Issue.record("The unauthenticated test client cannot post publicly")
+    } catch {
+      #expect(!(error is CircleError))
+    }
+    #expect(await transport.publishedPosts.isEmpty)
+    #expect(await transport.publicEndpointCallCount == 0)
+  }
+
+  @Test("A draft waiting for an audience cannot become a thread, which would hide its picker")
+  func unresolvedAudienceBlocksThreadMode() async throws {
+    let appState = await makeAppState(circlesEnabled: true)
+    let model = PostComposerViewModel(appState: appState, circleService: CircleService(transport: MockCircleTransport()))
+    let saved = CircleDraftDestination(
+      circle: CircleTestFixtures.family, accountDID: "did:plc:someoneelse", reply: nil
+    )
+
+    model.restoreDraftState(makeDraft("Their post", destination: saved))
+    #expect(model.unresolvedCircleAudience?.issue == .otherAccount)
+    #expect(model.canChangeDestination)
+    #expect(!model.allowsThreads)
+
+    model.enterThreadMode()
+    model.addNewThreadEntry()
+    #expect(!model.isThreadMode)
+    #expect(model.threadEntries.count == 1)
+    #expect(model.unresolvedCircleAudience != nil)
+
+    // Choosing Public is the author's decision; threads work from then on.
+    model.selectDestination(.public)
+    #expect(model.allowsThreads)
+    model.enterThreadMode()
+    model.addNewThreadEntry()
+    #expect(model.isThreadMode)
+    #expect(model.threadEntries.count == 2)
+  }
+
+  @Test("Minimizing, scene recovery and the saved-drafts list keep the Circle")
+  func sceneRecoveryKeepsCircle() async throws {
+    let appState = await makeAppState()
+    let suiteName = "CircleDraftDestinationTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let container = try ModelContainer(
+      for: DraftPost.self,
+      configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none)
+    )
+    let manager = ComposerDraftManager(accountDID: account, modelContext: container.mainContext, defaults: defaults)
+    let sceneID = UUID()
+    let scene = SceneComposerEditingSession(manager: manager, accountDID: account, sceneID: sceneID, defaults: defaults)
+    defer { scene.invalidate() }
+    let model = PostComposerViewModel(appState: appState, editingSession: scene)
+    let saved = CircleDraftDestination(circle: CircleTestFixtures.family, accountDID: account, reply: nil)
+
+    try model.startEditing(restoring: makeDraft("Minimized Circle post", destination: saved))
+    #expect(model.minimizeEditingDraft())
+    #expect(scene.currentDraft?.circleDestination == saved)
+
+    let recovered = SceneComposerEditingSession(
+      manager: manager, accountDID: account, sceneID: sceneID, defaults: defaults
+    )
+    defer { recovered.invalidate() }
+    #expect(recovered.currentDraft?.circleDestination == saved)
+    let id = try recovered.stash(try #require(recovered.snapshot()))
+    let row = try #require(try DraftPersistence(modelContext: container.mainContext).fetchDraftModel(id: id))
+    #expect(try row.decodeDraft().circleDestination == saved)
+    #expect(DraftPostViewModel(draftPost: row).circleName == "Family")
+  }
+
+  // MARK: - Sync
+
+  @Test("Circle drafts are never sent to Bluesky draft sync")
+  func circleDraftsNeverSync() async throws {
+    let saved = CircleDraftDestination(circle: CircleTestFixtures.family, accountDID: account, reply: nil)
+    #expect(DraftSyncTranslator.isSyncable(makeDraft("Public")))
+    #expect(!DraftSyncTranslator.isSyncable(makeDraft("Secret circle text", destination: saved)))
+
+    let store = DraftPersistence(modelContainer: try ModelContainer(
+      for: DraftPost.self,
+      configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none)
+    ))
+    let publicID = try store.saveDraft(makeDraft("Public"), accountDID: account)
+    let circleID = try store.saveDraft(makeDraft("Secret circle text", destination: saved), accountDID: account)
+    let network = RecordingDraftTransport()
+    let service = DraftSyncService(
+      persistence: store, clientProvider: { nil }, accountProvider: { [account] in account },
+      enabledProvider: { true }, transportProvider: { _ in network }
+    )
+
+    await service.syncDrafts(accountDID: account)
+    #expect(network.operations == ["list", "create"])
+    #expect(try store.fetchDraftModel(id: publicID)?.remoteId != nil)
+    let circleRow = try #require(try store.fetchDraftModel(id: circleID))
+    #expect(circleRow.remoteId == nil)
+    #expect(try store.syncState(for: circleRow).issue == nil)
+    #expect(service.lastIssue == nil)
+
+    // A synced draft moved into a Circle keeps its edits here and never updates the remote copy.
+    try await store.updateDraft(id: publicID, draft: makeDraft("Now private", destination: saved), accountDID: account)
+    await service.syncDrafts(accountDID: account)
+    #expect(!network.operations.contains("update"))
+    #expect(network.operations.filter { $0 == "create" }.count == 1)
+    #expect(try store.fetchDraftModel(id: publicID)?.decodeDraft().circleDestination == saved)
+    #expect(!network.sentPayloads.contains { $0.contains("Secret circle text") || $0.contains("Now private") })
+  }
+
+  // MARK: - Helpers
+
+  @MainActor
+  private struct SubmissionHarness {
+    let model: PostComposerViewModel
+    let scene: SceneComposerEditingSession
+    let transport: GatedCircleTransport
+    let saved: CircleDraftDestination
+    let container: ModelContainer
+    let defaultsSuite: String
+
+    func close() {
+      scene.invalidate()
+      UserDefaults(suiteName: defaultsSuite)?.removePersistentDomain(forName: defaultsSuite)
+    }
+  }
+
+  /// An open Work draft whose Circle listing (only Family) and publish both wait to be released.
+  private func makeSubmissionHarness(publishError: CircleError?) async throws -> SubmissionHarness {
+    let appState = await makeAppState(circlesEnabled: true, allowWrites: true)
+    let defaultsSuite = "CircleDraftDestinationTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: defaultsSuite))
+    let container = try ModelContainer(
+      for: DraftPost.self,
+      configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none)
+    )
+    let manager = ComposerDraftManager(accountDID: account, modelContext: container.mainContext, defaults: defaults)
+    let scene = SceneComposerEditingSession(manager: manager, accountDID: account, sceneID: UUID(), defaults: defaults)
+    let transport = GatedCircleTransport(publishError: publishError)
+    let model = PostComposerViewModel(
+      appState: appState, circleService: CircleService(transport: transport), editingSession: scene
+    )
+    let saved = CircleDraftDestination(circle: CircleTestFixtures.work, accountDID: account, reply: nil)
+    try model.startEditing(restoring: makeDraft("Only for Work", destination: saved))
+    return SubmissionHarness(
+      model: model, scene: scene, transport: transport, saved: saved, container: container,
+      defaultsSuite: defaultsSuite
+    )
+  }
+
+  /// Lets the restored Circle's check finish, finding it gone, while the post waits to publish.
+  private func landListingWhilePublishing(_ harness: SubmissionHarness) async throws {
+    await harness.transport.publishing.waitForArrival()
+    #expect(harness.model.isSubmissionActive)
+    await harness.transport.listing.open()
+    try await waitUntil { harness.model.circleGoneDuringSubmission != nil }
+  }
+
+  private func makeAppState(circlesEnabled: Bool = false, allowWrites: Bool = false) async -> AppState {
+    let client = await ATProtoClient(baseURL: URL(string: "http://127.0.0.1:1")!)
+    let appState = AppState(userDID: account, client: client, regulatoryChecker: NoAgeRequirement())
+    if allowWrites {
+      await appState.ageAccess.refreshRequirements()
+      #expect(appState.ageAccess.allows(.generalContent))
+    }
+    if circlesEnabled {
+      appState.circleCapability = .supported
+    }
+    return appState
+  }
+
+  private func savedReply() -> CircleDraftDestination.Reply {
+    CircleDraftDestination.Reply(AppBskyFeedPost.ReplyRef(
+      root: ComAtprotoRepoStrongRef(
+        uri: try! ATProtocolURI(uriString: rootURI), cid: CID.fromDAGCBOR(Data("saved-root".utf8))
+      ),
+      parent: ComAtprotoRepoStrongRef(
+        uri: try! ATProtocolURI(uriString: parentURI), cid: CID.fromDAGCBOR(Data("saved-parent".utf8))
+      )
+    ))
+  }
+
+  private func makeDraft(
+    _ text: String, parentURI: String? = nil, destination: CircleDraftDestination? = nil
+  ) -> PostComposerDraft {
+    var draft = PostComposerDraft(
+      postText: text, mediaItems: [], videoItem: nil, selectedGif: nil,
+      selectedLanguages: [], selectedLabels: [], outlineTags: [], threadEntries: [],
+      isThreadMode: false, currentThreadIndex: 0, parentPostURI: parentURI, quotedPostURI: nil
+    )
+    draft.circleDestination = destination
+    return draft
+  }
+
+  private func waitUntil(_ condition: () -> Bool) async throws {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while !condition(), ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    try #require(condition())
+  }
+}
+
+private struct NoAgeRequirement: AgeRegulatoryChecking {
+  func preflight() async -> PlatformAgeSignal { .none }
+  #if canImport(UIKit)
+  func requestAgeBand(from viewController: UIViewController) async throws -> AgeBand? { nil }
+  #endif
+}
+
+/// Lets a test hold a call until it is released, and know when the call arrived.
+private actor Gate {
+  private var isOpen = false
+  private var arrived = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+  private var arrivals: [CheckedContinuation<Void, Never>] = []
+
+  func pass() async {
+    arrived = true
+    arrivals.forEach { $0.resume() }
+    arrivals.removeAll()
+    guard !isOpen else { return }
+    await withCheckedContinuation { waiters.append($0) }
+  }
+
+  func open() {
+    isOpen = true
+    waiters.forEach { $0.resume() }
+    waiters.removeAll()
+  }
+
+  func waitForArrival() async {
+    guard !arrived else { return }
+    await withCheckedContinuation { arrivals.append($0) }
+  }
+}
+
+/// A Circle transport whose listing (only Family) and publish each wait at a gate.
+private actor GatedCircleTransport: CircleTransport {
+  let listing = Gate()
+  let publishing = Gate()
+  let publicEndpointCallCount = 0
+  private let publishError: CircleError?
+  private(set) var publishedCount = 0
+
+  init(publishError: CircleError?) {
+    self.publishError = publishError
+  }
+
+  func listCircles(cursor: String?) async throws -> CircleListPage {
+    await listing.pass()
+    return CircleListPage(circles: [CircleTestFixtures.family], cursor: nil)
+  }
+
+  func publishPost(destination: CircleSummary, draft: CirclePostDraft) async throws -> ATProtocolURI {
+    await publishing.pass()
+    if let publishError { throw publishError }
+    publishedCount += 1
+    return try ATProtocolURI(uriString: "\(destination.uri.uriString())/app.bsky.feed.post/published")
+  }
+
+  func capabilities() async throws -> CircleCapability {
+    CircleCapability(enabled: true, protocolRevision: CircleConfiguration.protocolRevision, supportsImages: true)
+  }
+
+  func getFeed(space: SpaceRef?, cursor: String?) async throws -> CircleFeedPage { throw CircleError.invalidResponse }
+  func getPostThread(uri: ATProtocolURI, space: SpaceRef) async throws -> CircleThreadPage { throw CircleError.invalidResponse }
+  func listNotifications(cursor: String?) async throws -> CircleNotificationPage { throw CircleError.invalidResponse }
+  func media(space: SpaceRef, authorDID: DID, cid: CID) async throws -> Data { throw CircleError.invalidResponse }
+  func updatePreferences(space: SpaceRef, muted: Bool) async throws -> Bool { throw CircleError.invalidResponse }
+  func report(
+    post: ATProtocolURI, circle: CircleSummary, reason: CircleReportReason, details: String?
+  ) async throws -> UUID { throw CircleError.invalidResponse }
+  func activateCircle(space: SpaceRef) async throws -> CircleSummary { throw CircleError.invalidResponse }
+  func like(post: AppBskyFeedDefs.PostView, circle: CircleSummary) async throws -> ATProtocolURI {
+    throw CircleError.invalidResponse
+  }
+  func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws { throw CircleError.invalidResponse }
+  func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws { throw CircleError.invalidResponse }
+  func createSpace(skey: String, circleId: String, name: String, memberDIDs: [DID]) async throws -> CircleSummary {
+    throw CircleError.invalidResponse
+  }
+  func deleteSpace(space: SpaceRef) async throws { throw CircleError.invalidResponse }
+  func addMember(space: SpaceRef, did: DID) async throws { throw CircleError.invalidResponse }
+  func removeMember(space: SpaceRef, did: DID) async throws { throw CircleError.invalidResponse }
+  func listMembers(space: SpaceRef) async throws -> [CircleMember] { throw CircleError.invalidResponse }
+}
+
+private actor CallCounter {
+  private(set) var count = 0
+  func increment() { count += 1 }
+}
+
+private final class RecordingDraftTransport: DraftSyncTransport {
+  private var records: [DraftRemoteRecord] = []
+  private(set) var operations: [String] = []
+  private(set) var sentPayloads: [String] = []
+
+  func list(cursor: String?) async throws -> DraftRemotePage {
+    operations.append("list")
+    return DraftRemotePage(records: records, cursor: nil)
+  }
+
+  func create(payload: Data) async throws -> String {
+    operations.append("create")
+    sentPayloads.append(String(decoding: payload, as: UTF8.self))
+    let id = "created-\(records.count)"
+    records.append(DraftRemoteRecord(id: id, payload: payload, createdAt: Date(), updatedAt: Date()))
+    return id
+  }
+
+  func update(id: String, payload: Data) async throws {
+    operations.append("update")
+    sentPayloads.append(String(decoding: payload, as: UTF8.self))
+  }
+
+  func delete(id: String) async throws {
+    operations.append("delete")
+  }
+}

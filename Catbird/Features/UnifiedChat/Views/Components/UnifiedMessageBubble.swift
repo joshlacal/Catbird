@@ -226,7 +226,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
       ? String(localized: "You", comment: "Sender label for the current user's own message")
       : (message.senderDisplayName ?? "")
     let time = message.sentAt.formatted(date: .omitted, time: .shortened)
-    return [sender, message.text, time].filter { !$0.isEmpty }.formatted(.list(type: .and, width: .narrow))
+    return [sender, message.text, time].filter { !$0.isEmpty }.joined(separator: ", ")
   }
 
   private var avatarPlaceholderSpacer: some View {
@@ -573,6 +573,11 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
             }
           }
 
+          Section("Details") {
+            DetailRow(label: "Sent At", value: info.sentAt.formatted(date: .abbreviated, time: .standard))
+          }
+
+          #if DEBUG
           Section("Debug") {
             DetailRow(label: "Message ID", value: info.messageID)
             DetailRow(label: "Conversation ID", value: info.conversationID)
@@ -583,8 +588,8 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
             if let sequence = info.sequence {
               DetailRow(label: "Sequence", value: "\(sequence)")
             }
-            DetailRow(label: "Sent At", value: info.sentAt.formatted(date: .abbreviated, time: .standard))
           }
+          #endif
         }
         #if os(iOS)
         .listStyle(.insetGrouped)
@@ -795,7 +800,7 @@ private struct BubbleAccessibilityModifier: ViewModifier {
       .modifier(LabelIfCombined(label: label, isCombined: combinesChildren))
       .accessibilityActions {
         if let onReply {
-          Button("Reply", action: onReply)
+          Button(String(localized: "chat.message.reply.action", defaultValue: "Reply", comment: "Action to reply to a chat message (a verb, not the noun)."), action: onReply)
         }
         if let onMoreActions {
           Button("React and More", action: onMoreActions)

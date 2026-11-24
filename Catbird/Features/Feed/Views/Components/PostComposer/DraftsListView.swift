@@ -146,7 +146,7 @@ struct DraftsListView: View {
             }
           }
           .contextMenu {
-            if draft.recoveryReason != nil || draft.syncIssue != nil {
+            if draft.circleName == nil, draft.recoveryReason != nil || draft.syncIssue != nil {
               Button("Save New Copy to Bluesky", systemImage: "icloud.and.arrow.up") {
                 draftToCopy = draft
               }
@@ -270,13 +270,16 @@ private struct DraftRow: View {
   }
 
   private var hasBadges: Bool {
-    draft.isReply || draft.isQuote || draft.isThread
+    draft.circleName != nil || draft.isReply || draft.isQuote || draft.isThread
       || draft.remoteMediaDeviceName != nil
       || (draft.hasMedia && draft.thumbnailURLs.isEmpty)
   }
 
   private var badgeRow: some View {
     HStack(spacing: 10) {
+      if let circleName = draft.circleName {
+        DraftBadge(verbatim: circleName, systemImage: "person.2.fill")
+      }
       if draft.isReply {
         DraftBadge(
           text: LocalizedStringResource("Reply", comment: "Badge on a saved draft indicating it is a reply"),
@@ -327,12 +330,22 @@ private struct DraftRow: View {
 }
 
 private struct DraftBadge: View {
-  let text: LocalizedStringResource
+  let text: Text
   let systemImage: String
+
+  init(text: LocalizedStringResource, systemImage: String) {
+    self.text = Text(text)
+    self.systemImage = systemImage
+  }
+
+  init(verbatim: String, systemImage: String) {
+    self.text = Text(verbatim: verbatim)
+    self.systemImage = systemImage
+  }
 
   var body: some View {
     Label {
-      Text(text)
+      text
     } icon: {
       Image(systemName: systemImage)
     }

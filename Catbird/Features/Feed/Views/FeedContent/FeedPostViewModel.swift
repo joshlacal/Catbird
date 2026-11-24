@@ -641,7 +641,24 @@ final class FeedPostViewModel {
         guard let date = Self.iso8601Formatter.date(from: iso8601String) else {
             return String(localized: "now", comment: "Timestamp label for a post created less than a minute ago")
         }
-        return shortTimeAgoString(from: date)
+
+        let interval = Date().timeIntervalSince(date)
+
+        if interval < 60 {
+            return String(localized: "now", comment: "Timestamp label for a post created less than a minute ago")
+        } else if interval < 3600 {
+            let minutes = Int(interval / 60)
+            return String(localized: "\(minutes)m", comment: "Compact relative time in minutes — variable is the number of minutes")
+        } else if interval < 86400 {
+            let hours = Int(interval / 3600)
+            return String(localized: "\(hours)h", comment: "Compact relative time in hours — variable is the number of hours")
+        } else if interval < 604800 {
+            let days = Int(interval / 86400)
+            return String(localized: "\(days)d", comment: "Compact relative time in days — variable is the number of days")
+        } else {
+            let weeks = Int(interval / 604800)
+            return String(localized: "\(weeks)w", comment: "Compact relative time in weeks — variable is the number of weeks")
+        }
     }
     
     /// Performs the actual like operation on the server

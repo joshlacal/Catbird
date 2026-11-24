@@ -86,7 +86,7 @@ struct ContentLabelView: View {
             // activating it opens the details; a replacement element would drop both.
             .accessibilityLabel(
                 Text(
-                    "Post labels: \(names.formatted())",
+                    "Post labels: \(names.joined(separator: ", "))",
                     comment: "Accessibility label listing moderation labels on a post — variable is the formatted list of label names"
                 )
             )

@@ -24,6 +24,28 @@ class NotificationService: UNNotificationServiceExtension {
   private var contentHandler: ((UNNotificationContent) -> Void)?
   private var bestAttemptContent: UNMutableNotificationContent?
 
+  /// Hands content to the system at most once. The expiry callback and the async enrichment
+  /// paths can both finish, and the system requires exactly one delivery per request.
+  private final class OnceDelivery: @unchecked Sendable {
+    private let lock = NSLock()
+    private var delivered = false
+    private let handler: (UNNotificationContent) -> Void
+
+    init(_ handler: @escaping (UNNotificationContent) -> Void) {
+      self.handler = handler
+    }
+
+    func deliver(_ content: UNNotificationContent) {
+      lock.lock()
+      let isFirstDelivery = !delivered
+      delivered = true
+      lock.unlock()
+      if isFirstDelivery {
+        handler(content)
+      }
+    }
+  }
+
   override init() {
     appGroupDefaults = UserDefaults(suiteName: Self.appGroupSuite)
     super.init()
@@ -103,8 +125,10 @@ class NotificationService: UNNotificationServiceExtension {
 
   override func didReceive(
     _ request: UNNotificationRequest,
-    withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
+    withContentHandler originalHandler: @escaping (UNNotificationContent) -> Void
   ) {
+    let delivery = OnceDelivery(originalHandler)
+    let contentHandler: (UNNotificationContent) -> Void = delivery.deliver
     self.contentHandler = contentHandler
     guard let mutable = request.content.mutableCopy() as? UNMutableNotificationContent else {
       contentHandler(request.content)

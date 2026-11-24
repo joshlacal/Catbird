@@ -2,23 +2,25 @@ import OSLog
 import Petrel
 import SwiftUI
 import CatbirdMLSCore
+import PetrelCatbird
 
 #if os(iOS)
 
-/// Settings view for MLS encrypted chat privacy and safety options
+/// The account's `blue.catbird.chat.declaration/self`, whose `allowIncoming` the delivery service enforces.
+/// A nil declaration means enrollment hasn't published one yet; this screen never creates it.
+private struct EncryptedChatDeclarationRecord {
+  var declaration: BlueCatbirdChatDeclaration?
+  var cid: CIDString?
+}
+
+/// Settings view for MLS encrypted chat: who can send requests, backup and recovery, diagnostics, and opting out
 struct MLSChatSettingsView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
 
-  // Settings state
-  @State private var allowFollowersBypass: Bool = true
-  @State private var allowFollowingBypass: Bool = false
-  @State private var whoCanMessageMe: MLSWhoCanMessageMe = .everyone
-  @State private var autoExpireDays: Int = 7
-
   // Loading and error states
   @State private var isLoading = true
-  @State private var isSaving = false
+  @State private var privacyEditor: AccountSettingsEditSession<EncryptedChatDeclarationRecord>?
   @State private var errorMessage: String?
   @State private var showingErrorAlert = false
 
@@ -30,66 +32,10 @@ struct MLSChatSettingsView: View {
 
   var body: some View {
     Form {
-      // MARK: - Who Can Message Me
+      // MARK: - Who Can Message You
 
-      Section("Who Can Message Me Directly") {
-        Picker("Allow Messages From", selection: $whoCanMessageMe) {
-          Text("Everyone").tag(MLSWhoCanMessageMe.everyone)
-          Text("Mutuals Only").tag(MLSWhoCanMessageMe.mutuals)
-          Text("People I Follow").tag(MLSWhoCanMessageMe.following)
-          Text("Nobody").tag(MLSWhoCanMessageMe.nobody)
-        }
-        .pickerStyle(.menu)
-        .disabled(isSaving)
-        .onChange(of: whoCanMessageMe) { _, newValue in
-          saveSettings(whoCanMessageMe: newValue)
-        }
+      privacySection
 
-        Toggle("People You Follow", isOn: $allowFollowersBypass)
-          .tint(.blue)
-          .disabled(isSaving)
-          .onChange(of: allowFollowersBypass) { _, newValue in
-            saveSettings(allowFollowersBypass: newValue)
-          }
-
-        Toggle("People Who Follow You", isOn: $allowFollowingBypass)
-          .tint(.blue)
-          .disabled(isSaving)
-          .onChange(of: allowFollowingBypass) { _, newValue in
-            saveSettings(allowFollowingBypass: newValue)
-          }
-
-        Text(
-          "When enabled, these users can start a conversation directly without going through your message requests."
-        )
-        .appFont(AppTextRole.caption)
-        .foregroundStyle(.secondary)
-      }
-
-      // MARK: - Request Expiration
-
-      MLSRequestDeliverySettingsSection()
-
-      Section("Message Requests") {
-        Picker("Auto-Expire After", selection: $autoExpireDays) {
-          Text("1 Day").tag(1)
-          Text("3 Days").tag(3)
-          Text("7 Days").tag(7)
-          Text("14 Days").tag(14)
-          Text("30 Days").tag(30)
-        }
-        .pickerStyle(.menu)
-        .disabled(isSaving)
-        .onChange(of: autoExpireDays) { _, newValue in
-          saveSettings(autoExpireDays: newValue)
-        }
-
-        Text(
-          "This expiry applies to legacy invitations. Encrypted introductions remain pending until you accept or close them."
-        )
-        .appFont(AppTextRole.caption)
-        .foregroundStyle(.secondary)
-      }
       // MARK: - Backup & Recovery
 
       Section("Backup & Recovery") {
@@ -149,7 +95,7 @@ struct MLSChatSettingsView: View {
             Spacer()
           }
         }
-        .disabled(isOptingOut || isSaving)
+        .disabled(isOptingOut)
       } header: {
         Text("Disable Encrypted Chat")
       } footer: {
@@ -160,13 +106,17 @@ struct MLSChatSettingsView: View {
         .foregroundStyle(.secondary)
       }
     }
-    .navigationTitle("Chat Privacy")
+    .navigationTitle("Encrypted Chat")
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
     #endif
     .task {
-      await loadSettings()
+      await openCoordinator()
     }
+    .task {
+      await loadPrivacyEditor()
+    }
+    .onDisappear { privacyEditor?.invalidate() }
     .alert("Chat Settings Error", isPresented: $showingErrorAlert) {
       Button("OK", role: .cancel) {}
     } message: {
@@ -188,7 +138,7 @@ struct MLSChatSettingsView: View {
     }
     .overlay {
       if isLoading {
-        ProgressView("Loading settings…")
+        ProgressView("Loading encrypted chat…")
           .frame(maxWidth: .infinity, maxHeight: .infinity)
           .background(.ultraThinMaterial)
       }
@@ -197,74 +147,145 @@ struct MLSChatSettingsView: View {
 
   // MARK: - Data Loading
 
-  private var settingsKeyPrefix: String {
-    "blue.catbird.mls.privacy.\(appState.userDID.lowercased())"
-  }
-
+  /// Backup & Recovery reads the coordinator, so open it before showing the screen.
   @MainActor
-  private func loadSettings() async {
-    let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
-    let prefix = settingsKeyPrefix
-    if let rawWho = defaults.string(forKey: "\(prefix).whoCanMessageMe"),
-       let parsed = MLSWhoCanMessageMe(rawValue: rawWho) {
-      whoCanMessageMe = parsed
-    }
-    if defaults.object(forKey: "\(prefix).allowFollowersBypass") != nil {
-      allowFollowersBypass = defaults.bool(forKey: "\(prefix).allowFollowersBypass")
-    }
-    if defaults.object(forKey: "\(prefix).allowFollowingBypass") != nil {
-      allowFollowingBypass = defaults.bool(forKey: "\(prefix).allowFollowingBypass")
-    }
-    let storedExpire = defaults.integer(forKey: "\(prefix).autoExpireDays")
-    if storedExpire > 0 {
-      autoExpireDays = storedExpire
-    }
+  private func openCoordinator() async {
     _ = await appState.getOrOpenMLSCoordinator()
     isLoading = false
   }
 
-  // MARK: - Settings Updates
+  // MARK: - Who Can Message You
 
-  private func saveSettings(
-    allowFollowersBypass: Bool? = nil,
-    allowFollowingBypass: Bool? = nil,
-    autoExpireDays: Int? = nil,
-    whoCanMessageMe: MLSWhoCanMessageMe? = nil
-  ) {
-    Task {
-      await saveSetting(
-        allowFollowersBypass: allowFollowersBypass,
-        allowFollowingBypass: allowFollowingBypass,
-        autoExpireDays: autoExpireDays,
-        whoCanMessageMe: whoCanMessageMe
-      )
+  @ViewBuilder
+  private var privacySection: some View {
+    Section {
+      if let editor = privacyEditor {
+        switch editor.state {
+        case .unavailable:
+          Text("This account is no longer active. Open Settings for the current account.")
+        case .loading:
+          ProgressView("Loading encrypted chat rule…")
+        case .loadFailed:
+          Text("Your encrypted chat rule couldn’t be loaded.")
+          Text(editor.errorMessage ?? "Try again.").appFont(AppTextRole.footnote).foregroundStyle(.secondary)
+          Button("Try Again") { Task { await editor.load() } }
+        case .ready, .saving, .saveFailed:
+          if editor.displayedValue?.declaration == nil {
+            Text("Encrypted chat hasn’t finished setting up on this account. Open Messages, then come back to choose who can message you.")
+              .appFont(AppTextRole.footnote).foregroundStyle(.secondary)
+            Button("Try Again") { Task { await editor.load() } }
+          } else {
+            privacyPicker(editor: editor)
+          }
+          if editor.state == .saving {
+            ProgressView("Saving encrypted chat rule…")
+          } else if editor.state == .saveFailed {
+            Text("This change couldn’t be confirmed. The last loaded rule is shown.")
+            Text(editor.errorMessage ?? "Try the change again or reload the saved rule.").appFont(AppTextRole.footnote).foregroundStyle(.secondary)
+            Button("Try This Change Again") { editor.retrySave() }
+            Button("Reload Saved Rule") { Task { await editor.load() } }
+          }
+        }
+      } else {
+        ProgressView("Loading encrypted chat rule…")
+      }
+    } header: {
+      Text("Who Can Message You")
+    } footer: {
+      Text("Choose who can send you encrypted chat requests. This is separate from your Bluesky chat rule.")
     }
   }
 
+  private func privacyPicker(
+    editor: AccountSettingsEditSession<EncryptedChatDeclarationRecord>
+  ) -> some View {
+    let raw = editor.displayedValue?.declaration?.allowIncoming ?? ""
+    return Picker("Encrypted Requests From", selection: Binding(
+      get: { raw },
+      set: { selection in
+        guard editor.canEdit, var value = editor.confirmedValue,
+              let current = value.declaration, selection != raw else { return }
+        value.declaration = BlueCatbirdChatDeclaration(
+          allowIncoming: selection,
+          deliveryService: current.deliveryService,
+          protocolVersion: current.protocolVersion,
+          createdAt: current.createdAt,
+          extraFields: current.extraFields
+        )
+        editor.submit(value)
+      }
+    )) {
+      if ChatPrivacyOption(rawValue: raw) == nil {
+        Text("Unsupported Saved Rule").tag(raw)
+      }
+      ForEach(ChatPrivacyOption.allCases) { Text($0.title).tag($0.rawValue) }
+    }
+    .disabled(!editor.canEdit)
+  }
+
+  /// Reads and writes the declaration through the signed-in account's PDS. Enrollment keeps an
+  /// existing declaration whose `allowIncoming` is valid, so a rule saved here isn't overwritten.
   @MainActor
-  private func saveSetting(
-    allowFollowersBypass: Bool?,
-    allowFollowingBypass: Bool?,
-    autoExpireDays: Int?,
-    whoCanMessageMe: MLSWhoCanMessageMe?
-  ) async {
-    isSaving = true
-    defer { isSaving = false }
-    let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
-    let prefix = settingsKeyPrefix
-    if let allowFollowersBypass {
-      defaults.set(allowFollowersBypass, forKey: "\(prefix).allowFollowersBypass")
-    }
-    if let allowFollowingBypass {
-      defaults.set(allowFollowingBypass, forKey: "\(prefix).allowFollowingBypass")
-    }
-    if let autoExpireDays {
-      defaults.set(autoExpireDays, forKey: "\(prefix).autoExpireDays")
-    }
-    if let whoCanMessageMe {
-      defaults.set(whoCanMessageMe.rawValue, forKey: "\(prefix).whoCanMessageMe")
-    }
-    logger.debug("Chat settings saved locally")
+  private func loadPrivacyEditor() async {
+    privacyEditor?.invalidate()
+    let state = appState
+    let account = state.userDID
+    let contextRevision = AppStateManager.shared.settingsAccountContextRevision
+    let client = state.atProtoClient
+    let editor = AccountSettingsEditSession<EncryptedChatDeclarationRecord>(
+      accountDID: account,
+      allowEditingAfterSaveFailure: false,
+      isCurrentAccount: {
+        AppStateManager.shared.lifecycle.userDID == account
+          && AppStateManager.shared.settingsAccountContextRevision == contextRevision
+          && !state.isTransitioningAccounts
+          && state.atProtoClient === client
+      },
+      load: {
+        return try await state.performSettingsAccountOperation {
+          guard let client else { throw EncryptedChatPrivacyError.notAuthenticated }
+          do {
+            let (code, output) = try await client.com.atproto.repo.getRecord(input: .init(
+              repo: try ATIdentifier(string: account),
+              collection: try NSID(nsidString: BlueCatbirdChatDeclaration.typeIdentifier),
+              rkey: try RecordKey(keyString: "self")
+            ))
+            guard code == 200, let output,
+                  let record = output.value.decoded(BlueCatbirdChatDeclaration.self) else {
+              throw EncryptedChatPrivacyError.response(code)
+            }
+            return EncryptedChatDeclarationRecord(declaration: record, cid: output.cid)
+          } catch let error as ATProtoError<ComAtprotoRepoGetRecord.Error> where error.error == .recordNotFound {
+            return EncryptedChatDeclarationRecord(declaration: nil, cid: nil)
+          } catch let error as ATProtoXRPCError where error.error == "RecordNotFound" {
+            return EncryptedChatDeclarationRecord(declaration: nil, cid: nil)
+          }
+        }
+      },
+      save: { value in
+        return try await state.performSettingsAccountOperation {
+          guard let client, AppStateManager.shared.lifecycle.userDID == account,
+                AppStateManager.shared.settingsAccountContextRevision == contextRevision,
+                !state.isTransitioningAccounts, state.atProtoClient === client else {
+            throw EncryptedChatPrivacyError.accountChanged
+          }
+          guard let declaration = value.declaration, let cid = value.cid else {
+            throw EncryptedChatPrivacyError.notSetUp
+          }
+          let (code, output) = try await client.com.atproto.repo.putRecord(input: .init(
+            repo: try ATIdentifier(string: account),
+            collection: try NSID(nsidString: BlueCatbirdChatDeclaration.typeIdentifier),
+            rkey: try RecordKey(keyString: "self"),
+            record: .knownType(declaration),
+            swapRecord: .value(cid)
+          ))
+          guard code == 200, let output else { throw EncryptedChatPrivacyError.response(code) }
+          return EncryptedChatDeclarationRecord(declaration: declaration, cid: output.cid)
+        }
+      }
+    )
+    privacyEditor = editor
+    await editor.load()
   }
 
   // MARK: - Opt Out
@@ -284,6 +305,18 @@ struct MLSChatSettingsView: View {
     }
   }
 
+}
+
+private enum EncryptedChatPrivacyError: LocalizedError {
+  case notAuthenticated, accountChanged, notSetUp, response(Int)
+  var errorDescription: String? {
+    switch self {
+    case .notAuthenticated: "Sign in to load your encrypted chat rule."
+    case .accountChanged: "The account changed. Open these settings again."
+    case .notSetUp: "Encrypted chat hasn’t finished setting up on this account."
+    case .response: "Your encrypted chat rule couldn’t be confirmed. Try again."
+    }
+  }
 }
 
 #Preview {

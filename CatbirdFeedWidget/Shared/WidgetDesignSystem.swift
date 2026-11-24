@@ -134,17 +134,17 @@ struct EngagementRow: View {
   var body: some View {
     HStack(spacing: WidgetSpacing.md) {
       Label {
-        Text(likes, format: .number.notation(.compactName))
+        Text(verbatim: formatCount(likes))
       } icon: {
         Image(systemName: WidgetSymbol.like)
       }
       Label {
-        Text(reposts, format: .number.notation(.compactName))
+        Text(verbatim: formatCount(reposts))
       } icon: {
         Image(systemName: WidgetSymbol.repost)
       }
       Label {
-        Text(replies, format: .number.notation(.compactName))
+        Text(verbatim: formatCount(replies))
       } icon: {
         Image(systemName: WidgetSymbol.reply)
       }
@@ -152,6 +152,13 @@ struct EngagementRow: View {
     .font(.system(size: fontSize))
     .foregroundStyle(.secondary)
     .labelStyle(WidgetCompactLabelStyle())
+  }
+
+  private func formatCount(_ count: Int) -> String {
+    if count >= 1000 {
+      return String(format: "%.1fK", Double(count) / 1000.0)
+    }
+    return "\(count)"
   }
 }
 

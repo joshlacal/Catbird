@@ -15,7 +15,7 @@ enum ChatMessageMenuAction: Equatable {
     switch self {
     case .reaction(let emoji): emoji
     case .moreReactions: String(localized: "More Reactions", comment: "Context menu action to open the full emoji reaction picker")
-    case .reply: String(localized: "Reply", comment: "Context menu action to reply to a chat message")
+    case .reply: String(localized: "chat.message.reply.action", defaultValue: "Reply", comment: "Action to reply to a chat message (a verb, not the noun).")
     case .copy: String(localized: "Copy", comment: "Context menu action to copy message text")
     case .deleteForMe: String(localized: "Delete for Me", comment: "Context menu action to delete a chat message locally")
     case .report: String(localized: "Report", comment: "Context menu action to report a chat message")

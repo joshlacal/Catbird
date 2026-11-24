@@ -1267,12 +1267,12 @@
       if participants.count > 3 {
         let overflow = participants.count - 3
         return String(
-          localized: "\(names.formatted()) +\(overflow)",
+          localized: "\(names.joined(separator: ", ")) +\(overflow)",
           comment: "Truncated chat participant list with overflow count — first variable is formatted participant names, second is remaining member count."
         )
       }
 
-      return names.formatted()
+      return names.joined(separator: ", ")
     }
 
     private func loadMLSConversations() async {
@@ -1552,12 +1552,12 @@
       if participants.count > 2 {
         let overflow = participants.count - 2
         return String(
-          localized: "\(names.formatted()) +\(overflow)",
+          localized: "\(names.joined(separator: ", ")) +\(overflow)",
           comment: "Truncated chat participant list with overflow count — first variable is formatted participant names, second is remaining member count."
         )
       }
 
-      return names.formatted()
+      return names.joined(separator: ", ")
     }
 
     var body: some View {
@@ -1584,7 +1584,7 @@
                 .foregroundColor(.green)
             }
 
-            Text("\(participants.count) members • Epoch \(conversation.epoch)", comment: "Subtitle for an MLS conversation row — first variable is the member count, second is the encryption epoch number.")
+            Text("\(participants.count) members", comment: "Member count in a secure chat conversation — variable is the number of members.")
               .font(.callout)
               .foregroundStyle(.secondary)
               .lineLimit(1)

@@ -297,6 +297,12 @@
         "ca" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld comptes"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -471,6 +477,12 @@
         "es" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld cuentas"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -489,6 +501,12 @@
         "es-419" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld cuentas"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -525,6 +543,12 @@
         "fr" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld comptes"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -543,6 +567,12 @@
         "fr-CA" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld comptes"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -669,6 +699,12 @@
         "it" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld account"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -789,6 +825,12 @@
         "pt-BR" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld contas"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -807,6 +849,12 @@
         "pt-PT" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld contas"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -825,6 +873,12 @@
         "ro" : {
           "variations" : {
             "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld conturi"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -834,7 +888,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%lld conturi"
+                  "value" : "%lld de conturi"
                 }
               }
             }
@@ -933,6 +987,12 @@
         "tr" : {
           "variations" : {
             "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld hesap"
+                }
+              },
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1070,6 +1130,12 @@
         "ca" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld publicacions"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1244,6 +1310,12 @@
         "es" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld publicaciones"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1262,6 +1334,12 @@
         "es-419" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld publicaciones"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1298,6 +1376,12 @@
         "fr" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld publications"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1316,6 +1400,12 @@
         "fr-CA" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld publications"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1442,6 +1532,12 @@
         "it" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld post"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1562,6 +1658,12 @@
         "pt-BR" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld publicações"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1580,6 +1682,12 @@
         "pt-PT" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld publicações"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1598,6 +1706,12 @@
         "ro" : {
           "variations" : {
             "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld postări"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1607,7 +1721,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%lld postări"
+                  "value" : "%lld de postări"
                 }
               }
             }
@@ -1706,6 +1820,12 @@
         "tr" : {
           "variations" : {
             "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld gönderi"
+                }
+              },
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1843,6 +1963,12 @@
         "ca" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld canals desats"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -2017,6 +2143,12 @@
         "es" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld feeds guardados"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -2035,6 +2167,12 @@
         "es-419" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld feeds guardados"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -2071,6 +2209,12 @@
         "fr" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld fils enregistrés"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -2089,6 +2233,12 @@
         "fr-CA" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld fils enregistrés"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -2215,6 +2365,12 @@
         "it" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld feed salvati"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -2335,6 +2491,12 @@
         "pt-BR" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld feeds salvos"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -2353,6 +2515,12 @@
         "pt-PT" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld feeds guardados"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -2371,6 +2539,12 @@
         "ro" : {
           "variations" : {
             "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld fluxuri salvate"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -2380,7 +2554,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%lld fluxuri salvate"
+                  "value" : "%lld de fluxuri salvate"
                 }
               }
             }
@@ -2479,6 +2653,12 @@
         "tr" : {
           "variations" : {
             "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld kaydedilmiş akış"
+                }
+              },
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",

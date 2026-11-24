@@ -100,6 +100,7 @@ struct PostComposerSubmitValidationState: Equatable {
         case circleImagesUnavailable
         case circleUnsupportedMedia
         case circleEncryptionKeysUnavailable
+        case circleAudienceUnresolved(CircleDraftAudienceIssue)
     }
 
     let canSubmit: Bool
@@ -136,6 +137,8 @@ struct PostComposerSubmitValidationState: Equatable {
             return String(localized: "Images are unavailable for this Circle. Remove the attachments to post text.", comment: "Validation message when images are not supported for the selected Circle")
         case .circleEncryptionKeysUnavailable:
             return CircleAudienceRowState.keysUnavailable.message
+        case .circleAudienceUnresolved(let issue):
+            return issue.message
         case .missingAltText:
             return String(localized: "Add alt text to every media attachment before posting.", comment: "Validation message when user has require-alt-text enabled and media lacks alt text")
         case .replyLoading:
@@ -153,7 +156,7 @@ struct PostComposerSubmitValidationState: Equatable {
 
     var shouldShowInlineMessage: Bool {
         switch reason {
-        case .overCharacterLimit, .threadPostOverCharacterLimit, .mediaPreparing, .mediaUnavailable, .videoPreparing, .videoBlocked, .missingAltText, .replyLoading, .replyUnavailable, .quoteLoading, .pendingAudio, .circleImagesUnavailable, .circleUnsupportedMedia, .circleEncryptionKeysUnavailable:
+        case .overCharacterLimit, .threadPostOverCharacterLimit, .mediaPreparing, .mediaUnavailable, .videoPreparing, .videoBlocked, .missingAltText, .replyLoading, .replyUnavailable, .quoteLoading, .pendingAudio, .circleImagesUnavailable, .circleUnsupportedMedia, .circleEncryptionKeysUnavailable, .circleAudienceUnresolved:
             return true
         case .emptyContent, .posting, nil:
             return false
@@ -204,6 +207,8 @@ struct PostComposerDraft: Codable, Hashable {
   var hasDraftInteractionSettings: Bool? = nil
   var pendingAudioURLString: String? = nil
   var pendingAudioThreadEntryID: UUID? = nil
+  // Absent for Public drafts, so their stored JSON is unchanged and older drafts decode as Public.
+  var circleDestination: CircleDraftDestination? = nil
 }
 
 // MARK: - Codable Wrappers for Draft State

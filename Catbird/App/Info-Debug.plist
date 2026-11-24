@@ -7,7 +7,6 @@
 		<string>blue.catbird.posting.retry</string>
 		<string>blue.catbird.chat.refresh</string>
 		<string>blue.catbird.cache.refresh</string>
-		<string>blue.catbird.key-package-refresh</string>
 	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
@@ -75,7 +74,6 @@
 		<string>audio</string>
 		<string>remote-notification</string>
 		<string>fetch</string>
-		<string>processing</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict>

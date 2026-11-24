@@ -131,6 +131,15 @@ struct NotificationWidgetEntryView: View {
   @Environment(\.colorScheme) var colorScheme
 
   var entry: Provider.Entry
+
+  /// Caption under the big unread count. String catalogs reject plural
+  /// variations that leave out the number, so the singular and the plural
+  /// caption are separate keys.
+  private var unreadCaption: LocalizedStringResource {
+    entry.count == 1
+      ? LocalizedStringResource("widget.unread.caption.one", defaultValue: "unread notification", comment: "Caption below the large unread notification count in the Home Screen widget, used when the count is exactly 1. The count is shown above it, so the caption has no number.")
+      : LocalizedStringResource("widget.unread.caption.other", defaultValue: "unread notifications", comment: "Caption below the large unread notification count in the Home Screen widget, used when the count is anything but 1. The count is shown above it, so the caption has no number.")
+  }
   
   var body: some View {
     Group {
@@ -180,7 +189,7 @@ struct NotificationWidgetEntryView: View {
       // Count area with extra large number
       VStack(alignment: .center, spacing: 2) {
           
-          Text(verbatim: "Bluesky")
+          Text(verbatim: "Catbird")
               .font(.system(.headline, design: .rounded, weight: .heavy).lowercaseSmallCaps())
               .foregroundStyle(.tertiary)
               .textScale(.secondary)
@@ -196,7 +205,7 @@ struct NotificationWidgetEntryView: View {
             .widgetAccentable()
             .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 1)
 
-            Text("unread notifications", comment: "Caption below the large unread notification count in the small Home Screen widget.")
+            Text(unreadCaption)
                 .font(.system(.caption, design: .rounded))
                 .lineLimit(nil)
                 .multilineTextAlignment(.center)
@@ -232,7 +241,7 @@ struct NotificationWidgetEntryView: View {
       // Left section with icon and title
       VStack(alignment: .leading, spacing: 4) {
 
-        Text("Bluesky Notifications", comment: "Header title in the medium Home Screen notifications widget.")
+        Text("Notifications", comment: "Header title in the medium Home Screen notifications widget.")
               .font(.system(.headline, design: .rounded, weight: .heavy).lowercaseSmallCaps())
           .foregroundStyle(.secondary)
           .widgetAccentable()
@@ -259,7 +268,7 @@ struct NotificationWidgetEntryView: View {
             .widgetAccentable()
             .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 1)
 
-          Text("unread notifications", comment: "Caption below the large unread notification count in the medium Home Screen widget.")
+          Text(unreadCaption)
             .font(.system(.caption, design: .rounded))
             .foregroundStyle(.secondary)
             .widgetAccentable()

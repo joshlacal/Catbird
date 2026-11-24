@@ -299,7 +299,6 @@ final class FeedModel: StateInvalidationSubscriber {
     
     self.posts = posts
     markPersisted()
-    self.isLoading = false
     // Without a cursor, loadMore reloads the head instead of appending page 1.
     self.hasMore = cursor != nil || !posts.isEmpty
     self.cursor = cursor

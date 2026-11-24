@@ -145,7 +145,11 @@ struct AccountDeletionSheet: View {
           } header: {
             Text("Delete Account Permanently")
           } footer: {
-            Text("Your password is verified directly with your hosting provider in memory and is never saved. Deleting your hosted account permanently removes your profile, posts, social graph, and all Catbird encrypted chat data.")
+            VStack(alignment: .leading, spacing: 8) {
+              Text("Your password is verified directly with your hosting provider in memory and is never saved. Deleting your hosted account permanently removes your profile, posts, social graph, and all Catbird encrypted chat data.")
+              Text("Circles you own are deleted for everyone in them, and your posts and likes are removed from other people's Circles.")
+                .accessibilityIdentifier("AccountDeletion.CirclesWarning")
+            }
           }
         }
 

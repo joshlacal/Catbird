@@ -668,7 +668,7 @@ final class PostContextMenuViewModel {
     /// Returns a description of the post for reporting purposes
     func getReportDescription() -> String {
         return String(
-            localized: "Post by @\(post.author.handle)",
+            localized: "Post by @\(post.author.handle.description)",
             comment: "Description of a reported post — variable is the author's handle"
         )
     }

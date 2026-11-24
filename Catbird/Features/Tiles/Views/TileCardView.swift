@@ -92,6 +92,7 @@ struct TileCardView: View {
       .clipShape(RoundedRectangle(cornerRadius: 12))
     }
     .buttonStyle(.plain)
+    .disabled(onActivate == nil)
   }
 
   // MARK: - Subviews

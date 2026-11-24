@@ -257,6 +257,6 @@ struct ComposerChipsStrip: View {
     }
     return parts.isEmpty
       ? String(localized: "Custom", comment: "Reply restriction summary when custom rules apply")
-      : parts.formatted(.list(type: .and, width: .narrow))
+      : parts.joined(separator: ", ")
   }
 }

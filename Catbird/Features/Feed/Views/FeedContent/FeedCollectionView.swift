@@ -150,8 +150,8 @@ struct SimpleFeedCollectionWrapper: View {
                 .themedPrimaryBackground(stateManager.appState.themeManager, appSettings: stateManager.appState.appSettings)
                 .task {
                     if !isInitialized {
-                        isInitialized = true
                         await stateManager.loadInitialData()
+                        isInitialized = !Task.isCancelled
                     }
                 }
                 .onChange(of: feedType) { oldFeedType, newFeedType in
@@ -208,8 +208,8 @@ struct FeedCollectionWrapper: View {
                 .themedPrimaryBackground(stateManager.appState.themeManager, appSettings: stateManager.appState.appSettings)
                 .task {
                     if !isInitialized {
-                        isInitialized = true
                         await stateManager.loadInitialData()
+                        isInitialized = !Task.isCancelled
                     }
                 }
                 .onChange(of: feedType) { oldFeedType, newFeedType in

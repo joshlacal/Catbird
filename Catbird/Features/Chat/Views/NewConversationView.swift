@@ -353,7 +353,7 @@ struct NewConversationView: View {
   }
 
   private func memberNames(_ dids: [String]) -> String {
-    dids.map { did in selectedProfiles[did].map { "@\($0.handle)" } ?? did }.formatted(.list(type: .and))
+    dids.map { did in selectedProfiles[did].map { "@\($0.handle)" } ?? did }.joined(separator: ", ")
   }
 
   @ViewBuilder

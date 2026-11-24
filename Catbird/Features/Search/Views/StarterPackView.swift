@@ -25,6 +25,7 @@ struct StarterPackView: View {
     @State private var error: Error?
     @Binding var path: NavigationPath
     @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
     
     // Tabs state
     @State private var selectedTab: StarterPackTab = .people
@@ -322,7 +323,11 @@ struct StarterPackView: View {
                 .padding(.horizontal)
             
             Button {
-                path.removeLast()
+                if path.isEmpty {
+                    dismiss()
+                } else {
+                    path.removeLast()
+                }
             } label: {
                 Text("Go Back")
                     .padding(.horizontal, 16)

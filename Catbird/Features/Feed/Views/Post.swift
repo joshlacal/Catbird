@@ -290,7 +290,7 @@ struct Post: View, Equatable {
     private var sourceLanguageNames: String {
         sourceLanguages
             .map { languageName(for: $0) }
-            .formatted()
+            .joined(separator: ", ")
     }
 
     private func displayAttributedString(

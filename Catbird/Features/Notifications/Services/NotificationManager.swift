@@ -3604,7 +3604,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     await MainActor.run {
       guard AppStateManager.shared.lifecycle.userDID == target.accountDID else { return }
       SceneRouteCoordinator.shared.submit(SceneRouteRequest(accountDID: target.accountDID,
-        command: .navigate(.conversation(conversationID), tabIndex: 4),
+        command: .navigate(.conversation(conversationID), tabIndex: AppNavigationManager.chatTabIndex),
         preferredSceneID: target.preferredSceneID))
     }
   }
