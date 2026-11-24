@@ -305,7 +305,7 @@ enum MessagesSchemaRuntime {
             localized: "Conversation",
             comment: "Fallback title for an MLS chat conversation with no other participants."
           )
-        : others.formatted(.list(type: .and, width: .narrow))
+        : others.joined(separator: ", ")
     }
   }
 

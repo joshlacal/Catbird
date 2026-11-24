@@ -794,7 +794,7 @@ struct ProfileHeader: View {
 
     @ViewBuilder
     private func profileStatisticText(count: Int, title: LocalizedStringResource) -> some View {
-        Text(count, format: .number.notation(.compactName))
+        Text(verbatim: CountFormatter.format(count))
             .appFont(AppTextRole.subheadline)
             .fontWeight(.semibold)
         Text(title)

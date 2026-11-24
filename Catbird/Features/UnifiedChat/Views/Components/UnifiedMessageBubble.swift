@@ -226,7 +226,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
       ? String(localized: "You", comment: "Sender label for the current user's own message")
       : (message.senderDisplayName ?? "")
     let time = message.sentAt.formatted(date: .omitted, time: .shortened)
-    return [sender, message.text, time].filter { !$0.isEmpty }.formatted(.list(type: .and, width: .narrow))
+    return [sender, message.text, time].filter { !$0.isEmpty }.joined(separator: ", ")
   }
 
   private var avatarPlaceholderSpacer: some View {

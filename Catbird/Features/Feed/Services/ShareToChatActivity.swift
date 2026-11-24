@@ -1267,12 +1267,12 @@
       if participants.count > 3 {
         let overflow = participants.count - 3
         return String(
-          localized: "\(names.formatted()) +\(overflow)",
+          localized: "\(names.joined(separator: ", ")) +\(overflow)",
           comment: "Truncated chat participant list with overflow count — first variable is formatted participant names, second is remaining member count."
         )
       }
 
-      return names.formatted()
+      return names.joined(separator: ", ")
     }
 
     private func loadMLSConversations() async {
@@ -1552,12 +1552,12 @@
       if participants.count > 2 {
         let overflow = participants.count - 2
         return String(
-          localized: "\(names.formatted()) +\(overflow)",
+          localized: "\(names.joined(separator: ", ")) +\(overflow)",
           comment: "Truncated chat participant list with overflow count — first variable is formatted participant names, second is remaining member count."
         )
       }
 
-      return names.formatted()
+      return names.joined(separator: ", ")
     }
 
     var body: some View {

@@ -507,7 +507,7 @@ struct MacOSChatContentView: View {
     case .mls(let convo, let participants, _, _, _, _):
       if let title = convo.title, !title.isEmpty { return title }
       let others = participants.filter { $0.id != appState.userDID }
-      return Array(others.prefix(2).map { $0.displayName ?? $0.handle }).formatted(.list(type: .and))
+      return Array(others.prefix(2).map { $0.displayName ?? $0.handle }).joined(separator: ", ")
     }
   }
 }

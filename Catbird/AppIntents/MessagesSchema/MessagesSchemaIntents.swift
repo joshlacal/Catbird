@@ -359,7 +359,7 @@ struct CatbirdSendMessageSchemaIntent {
     }
     let convoModel = directory.conversations.first { $0.conversationID == finalConvoId }
     let convoTitle = convoModel.map { directory.title(for: $0) }
-      ?? recipients.map(\.displayName).formatted(.list(type: .and, width: .narrow))
+      ?? recipients.map(\.displayName).joined(separator: ", ")
     let preview = AttributedString(
       String(
         localized: "MLS Chat",

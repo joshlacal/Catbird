@@ -186,7 +186,7 @@ struct MacOSUnifiedConversationRow: View {
       return member.displayName ?? member.handle.description
     }
     let names = Array(members.prefix(3).map { $0.displayName ?? $0.handle.description })
-    return names.formatted(.list(type: .and))
+    return names.joined(separator: ", ")
   }
 
   /// Verified badge for a 1:1 conversation only. A multi-member name is a
@@ -218,7 +218,7 @@ struct MacOSUnifiedConversationRow: View {
       return String(localized: "Group", comment: "Fallback title for an unnamed group conversation")
     }
     let names = Array(otherParticipants.prefix(3).map { $0.displayName ?? $0.handle })
-    return names.formatted(.list(type: .and))
+    return names.joined(separator: ", ")
   }
 
   @ViewBuilder

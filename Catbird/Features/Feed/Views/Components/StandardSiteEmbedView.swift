@@ -234,7 +234,7 @@ struct StandardSiteEmbedView: View {
         )
       )
     }
-    return parts.formatted()
+    return parts.joined(separator: ". ")
   }
 
   private var publicationAccessibilityValue: String {
@@ -253,7 +253,7 @@ struct StandardSiteEmbedView: View {
     if let domain = card.displayDomain {
       parts.append(domain)
     }
-    return parts.formatted()
+    return parts.joined(separator: ". ")
   }
 
   private var buttonForeground: Color {

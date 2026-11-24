@@ -93,7 +93,15 @@ struct EnhancedFeedRowView: View {
     
     // Format count for display
     private func formatCount(_ count: Int) -> String {
-        count.formatted(.number.notation(.compactName).locale(locale))
+        if count >= 1_000_000 {
+            let formatted = Double(count) / 1_000_000.0
+            return String(format: "%.1fM", formatted)
+        } else if count >= 1_000 {
+            let formatted = Double(count) / 1_000.0
+            return String(format: "%.1fK", formatted)
+        } else {
+            return "\(count)"
+        }
     }
 }
 

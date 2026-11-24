@@ -77,7 +77,7 @@ struct ConversationRow: View {
       parts.append(String(localized: "No messages yet", comment: "Placeholder when a conversation has no messages"))
     }
 
-    return parts.formatted(.list(type: .and, width: .narrow))
+    return parts.joined(separator: ", ")
   }
 
   var body: some View {

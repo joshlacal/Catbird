@@ -617,7 +617,7 @@ struct PostComposerViewUIKit: View {
 
     return vm.selectedLanguages
       .map { ComposerChipsStrip.languageDisplayName($0, locale: locale) }
-      .formatted(.list(type: .and, width: .narrow))
+      .joined(separator: ", ")
   }
 
   private var isPresentingFromPlusMenu: Bool {

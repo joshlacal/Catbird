@@ -92,7 +92,7 @@ struct TrendingInterstitialModel {
       media: Array(artwork.preview.media.prefix(3)),
       participants: participants,
       accessibilityLabel: [categoryName, trend.displayName, description, postCount]
-        .compactMap { $0 }.formatted(.list(type: .and, width: .narrow)))
+        .compactMap { $0 }.joined(separator: ", "))
   }
 
   /// "48K posts": compact notation, as the topic rows in Search.

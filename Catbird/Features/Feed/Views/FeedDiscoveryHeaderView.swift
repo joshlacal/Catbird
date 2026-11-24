@@ -399,7 +399,13 @@ struct FeedDiscoveryHeaderView: View {
     }
   }
   private func formatCount(_ count: Int) -> String {
-    FeedCountFormatter.compact(count)
+    if count >= 1000000 {
+      return String(format: "%.1fM", Double(count) / 1000000)
+    } else if count >= 1000 {
+      return String(format: "%.1fK", Double(count) / 1000)
+    } else {
+      return "\(count)"
+    }
   }
 }
 

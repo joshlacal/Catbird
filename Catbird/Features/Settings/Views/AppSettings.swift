@@ -299,7 +299,7 @@ import AppKit
         string(String(localized: "App Language"), \.appLanguage, [pending.appLanguage: languageName(pending.appLanguage)])
         string(String(localized: "Primary Language"), \.primaryLanguage, [pending.primaryLanguage: languageName(pending.primaryLanguage)])
         if pending.contentLanguages != savedSettings.contentLanguages {
-            changes.append(String(localized: "Content Languages: \(pending.contentLanguages.map(languageName).formatted())", comment: "Pending content languages summary — variable is localized list of languages."))
+            changes.append(String(localized: "Content Languages: \(pending.contentLanguages.map(languageName).joined(separator: ", "))", comment: "Pending content languages summary — variable is localized list of languages."))
         }
         bool(String(localized: "Hide Other Languages"), \.hideNonPreferredLanguages)
         bool(String(localized: "Show Language Indicators"), \.showLanguageIndicators)

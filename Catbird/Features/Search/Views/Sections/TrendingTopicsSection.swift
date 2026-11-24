@@ -250,7 +250,9 @@ struct TrendingTopicsSection: View {
 
     private func formatPostCount(_ count: Int) -> String {
         if count >= 1_000 {
-            let compact = count.formatted(.number.notation(.compactName).locale(locale))
+            let compact = count >= 1_000_000
+                ? String(format: "%.1fM", Double(count) / 1_000_000.0)
+                : String(format: "%.1fK", Double(count) / 1_000.0)
             var resource = LocalizedStringResource(
                 "\(compact) posts",
                 comment: "Compact post count (e.g. 1.2K) for a trending topic."

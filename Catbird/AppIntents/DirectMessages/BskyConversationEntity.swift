@@ -48,7 +48,7 @@ struct BskyConversationEntity: AppEntity {
           localized: "Conversation",
           comment: "Fallback title for a Bluesky direct-message conversation with no other participants."
         )
-      : names.formatted(.list(type: .and, width: .narrow))
+      : names.joined(separator: ", ")
     memberHandles = others.map { $0.handle.value }
     if case .chatBskyConvoDefsMessageView(let message)? = view.lastMessage {
       lastMessagePreview = message.text.isEmpty ? nil : message.text

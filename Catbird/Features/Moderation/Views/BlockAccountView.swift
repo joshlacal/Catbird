@@ -305,7 +305,7 @@ struct BlockAccountView: View {
         }
         let otherMembers = convo.members.filter { $0.did.didString() != viewerDID }
         let names = otherMembers.prefix(3).map { $0.displayName ?? "@\($0.handle.description)" }
-        let combined = names.formatted()
+        let combined = names.joined(separator: ", ")
         return combined.isEmpty ? String(localized: "Group Chat", comment: "Fallback title for an unnamed group chat.") : combined
     }
     

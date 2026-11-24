@@ -368,6 +368,14 @@ struct FeedShelfHeader: View {
 
 enum FeedCountFormatter {
   static func compact(_ count: Int) -> String {
-    count.formatted(.number.notation(.compactName).precision(.fractionLength(0...1)))
+    if count >= 1_000_000 {
+      let millions = Double(count) / 1_000_000.0
+      return "\(millions.formatted(.number.precision(.fractionLength(1))))M"
+    } else if count >= 1_000 {
+      let thousands = Double(count) / 1_000.0
+      return "\(thousands.formatted(.number.precision(.fractionLength(1))))K"
+    } else {
+      return count.formatted()
+    }
   }
 }
