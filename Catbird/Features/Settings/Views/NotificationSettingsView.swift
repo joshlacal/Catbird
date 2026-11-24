@@ -238,7 +238,7 @@ private struct NotificationPreferenceEditorView: View {
       Section {
         Toggle("Show in Notifications Tab", isOn: channelBinding(push: false))
         Toggle("Send Push Alerts", isOn: channelBinding(push: true))
-        if manager.pushDeliverySummary != "Push ready" {
+        if manager.pushDeliverySummary != String(localized: "Push ready", comment: "Push delivery status when registered and active") {
           Text("Push delivery: \(manager.pushDeliverySummary). Your channel choices are retained.")
             .appFont(AppTextRole.caption).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)

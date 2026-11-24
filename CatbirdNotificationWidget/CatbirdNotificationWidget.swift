@@ -196,7 +196,7 @@ struct NotificationWidgetEntryView: View {
             .widgetAccentable()
             .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 1)
 
-            Text("unread notifications", comment: "Caption below the large unread notification count in the small Home Screen widget.")
+            Text(LocalizedStringResource("widget.unread.caption", defaultValue: "\(entry.count) unread notifications", comment: "Caption below the large unread notification count in the Home Screen widget. The count is shown above it, so the caption omits the number and only agrees with it."))
                 .font(.system(.caption, design: .rounded))
                 .lineLimit(nil)
                 .multilineTextAlignment(.center)
@@ -259,7 +259,7 @@ struct NotificationWidgetEntryView: View {
             .widgetAccentable()
             .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 1)
 
-          Text("unread notifications", comment: "Caption below the large unread notification count in the medium Home Screen widget.")
+          Text(LocalizedStringResource("widget.unread.caption", defaultValue: "\(entry.count) unread notifications", comment: "Caption below the large unread notification count in the Home Screen widget. The count is shown above it, so the caption omits the number and only agrees with it."))
             .font(.system(.caption, design: .rounded))
             .foregroundStyle(.secondary)
             .widgetAccentable()
