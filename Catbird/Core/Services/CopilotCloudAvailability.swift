@@ -4,12 +4,12 @@ import FoundationModels
 #endif
 
 /// Build capability, deliberately independent of account consent and rollout preferences.
-/// This target does not request the managed PCC entitlement. Keep the gate closed
-/// until Apple grants access and the distribution profile and signed app are verified.
+/// The app target requests the managed `com.apple.developer.private-cloud-compute`
+/// entitlement in `Catbird.entitlements`, and its provisioning profile must carry it.
 /// Foundation Models exposes availability on an instance, so it cannot be used
 /// to establish entitlement authorization before constructing that instance.
 enum CopilotCloudAvailability {
-  static let isProvisionedBuild = false
+  static let isProvisionedBuild = true
 
   static let operatingSystemRequirement = String(
     localized: "Private Cloud Compute requires iOS 27 or macOS 27 or later. You can continue using On Device.",
