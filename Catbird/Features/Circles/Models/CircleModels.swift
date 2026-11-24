@@ -438,23 +438,6 @@ struct CirclePublishResult: Equatable, Sendable {
   var keyCheckFailed: Bool = false
 }
 
-enum CircleReportCopy {
-  /// Spec §8 consent, shown before an encrypted post is reported.
-  static var disclosureConsent: String {
-    String(
-      localized: "Reporting shares this post's decryption key with Catbird moderators.",
-      comment: "Consent disclosure shown before reporting an end-to-end encrypted Circle post."
-    )
-  }
-  /// The post was never opened on this device, so there is no key to share.
-  static var notOpened: String {
-    String(
-      localized: "Open this post before reporting it.",
-      comment: "Error message when attempting to report an encrypted Circle post that has not been decrypted on this device."
-    )
-  }
-}
-
 enum CirclePostCopy {
   /// §4.4: one non-blocking line after a repost under a newer key.
   static var repostedAfterKeyRefresh: String {

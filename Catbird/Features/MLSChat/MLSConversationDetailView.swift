@@ -19,6 +19,7 @@ private struct MLSModerationTarget: Identifiable {
   let did: String
   let handle: String?
   let displayName: String?
+  var messageId: String? = nil
 }
 
 private struct MLSReactionInspectionTarget: Identifiable {
@@ -141,7 +142,8 @@ struct MLSOrdinaryConversationDetailView: View {
             reportTarget = MLSModerationTarget(
               did: resolvedDID,
               handle: profile?.handle,
-              displayName: message.senderDisplayName ?? profile?.displayName ?? resolvedDID
+              displayName: message.senderDisplayName ?? profile?.displayName ?? resolvedDID,
+              messageId: message.id
             )
           }
         )
@@ -326,7 +328,8 @@ struct MLSOrdinaryConversationDetailView: View {
       MLSReportSpamSheet(
         conversationId: conversationId,
         reportedDid: target.did,
-        reportedDisplayName: target.displayName ?? target.handle.map { "@\($0)" } ?? target.did
+        reportedDisplayName: target.displayName ?? target.handle.map { "@\($0)" } ?? target.did,
+        messageId: target.messageId
       )
       .environment(appState)
     }

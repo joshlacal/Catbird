@@ -9,6 +9,10 @@ struct ChatReportFormView: View {
   let errorMessage: String?
   let onSubmit: (ComAtprotoModerationDefs.ReasonType, String) -> Void
   let onCancel: () -> Void
+  /// Encrypted chat reports send ids only, so they have no free-text box.
+  var showsDetails: Bool = true
+  /// Shown under the subtitle, e.g. what an encrypted report shares.
+  var footnote: String? = nil
 
   @State private var selectedReason: ComAtprotoModerationDefs.ReasonType = .comatprotomoderationdefsreasonspam
   @State private var additionalDetails: String = ""
@@ -64,6 +68,14 @@ struct ChatReportFormView: View {
         }
       }
 
+      if let footnote {
+        Section {
+          Label(footnote, systemImage: "lock")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+        }
+      }
+
       Section("Reason for Report") {
         ForEach(reasons) { reason in
           Button {
@@ -90,9 +102,11 @@ struct ChatReportFormView: View {
         }
       }
 
-      Section("Additional Details (Optional)") {
-        TextEditor(text: $additionalDetails)
-          .frame(minHeight: 80)
+      if showsDetails {
+        Section("Additional Details (Optional)") {
+          TextEditor(text: $additionalDetails)
+            .frame(minHeight: 80)
+        }
       }
 
       if let errorMessage {
@@ -121,7 +135,10 @@ struct ChatReportFormView: View {
             .scaleEffect(0.8)
         } else {
           Button("Submit") {
-            onSubmit(selectedReason, additionalDetails.trimmingCharacters(in: .whitespacesAndNewlines))
+            onSubmit(
+              selectedReason,
+              showsDetails ? additionalDetails.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+            )
           }
           .fontWeight(.semibold)
         }

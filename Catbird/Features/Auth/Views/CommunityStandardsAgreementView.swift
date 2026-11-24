@@ -11,7 +11,8 @@ enum CommunityStandards {
   }
 
   /// Raise this when the agreement's wording changes, so everyone accepts the new terms.
-  static let agreementVersion = 1
+  /// 2: reports about encrypted chats and Circles go to Catbird and carry ids only.
+  static let agreementVersion = 2
 
   /// `UserDefaults` key holding the highest agreement version accepted on this device.
   static let acceptedAgreementVersionKey = "communityStandards.acceptedAgreementVersion"
@@ -67,10 +68,16 @@ struct CommunityStandardsAgreementView: View {
           Text("Catbird has zero tolerance for objectionable content and abusive users.")
             .appFont(AppTextRole.headline)
 
-          Text("Posts, replies, messages and accounts that harass, threaten, exploit or abuse others are not allowed. Catbird's moderators review reports from Circles and encrypted chats, and Bluesky's moderation service reviews reports about public posts and accounts. Content that breaks these rules can be labeled or removed, and accounts that break them can be suspended.")
+          Text("Posts, replies, messages and accounts that harass, threaten, exploit or abuse others are not allowed.")
             .appFont(AppTextRole.body)
 
-          Text("You can report any post, account or message, and block or mute anyone, from its menu.")
+          Text("Public posts and accounts are moderated by Bluesky. Reports about them go to Bluesky's moderation service, which can label or remove content and suspend accounts.")
+            .appFont(AppTextRole.body)
+
+          Text("Reports about encrypted chats and Circles go to Catbird. A report tells us who sent something, in which chat or Circle, and when. It never includes what the message or post said, and only the people in an encrypted chat can read it. We review these reports within 24 hours and can suspend or ban the account from encrypted chats and Circles.")
+            .appFont(AppTextRole.body)
+
+          Text("You can report any post, account or message, and block or mute anyone, from its menu. Blocking someone also stops them from starting an encrypted chat with you.")
             .appFont(AppTextRole.body)
 
           VStack(alignment: .leading, spacing: 12) {
