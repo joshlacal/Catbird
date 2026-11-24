@@ -1,9 +1,11 @@
 import Foundation
+import OSLog
 import SensitiveContentAnalysis
 
 /// On-device content analysis for incoming MLS images.
 /// Verdicts are local-only and never transmitted off-device.
 actor ImageContentAnalyzer {
+  private static let logger = Logger(subsystem: "blue.catbird", category: "ImageContentAnalyzer")
   static let shared = ImageContentAnalyzer()
 
   private let analyzer = SCSensitivityAnalyzer()
@@ -45,7 +47,13 @@ actor ImageContentAnalyzer {
       return isSensitive ? .sensitive(policy: analyzer.analysisPolicy) : .safe
     }
 
-    guard let analysis = try? await analyzer.analyzeImage(image) else {
+    let policy = analyzer.analysisPolicy
+    guard policy != .disabled else { return .notAvailable }
+    let analysis: SCSensitivityAnalysis
+    do {
+      analysis = try await analyzer.analyzeImage(image)
+    } catch {
+      Self.logger.error("Sensitivity analysis failed (policy \(String(describing: policy), privacy: .public)): \(error.localizedDescription, privacy: .public)")
       return .notAvailable
     }
     if let cacheKey {
