@@ -49,6 +49,12 @@
         "ca" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld notificacions sense llegir"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -223,6 +229,12 @@
         "es" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld notificaciones sin leer"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -241,6 +253,12 @@
         "es-419" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld notificaciones sin leer"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -277,6 +295,12 @@
         "fr" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld notifications non lues"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -295,6 +319,12 @@
         "fr-CA" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld notifications non lues"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -421,6 +451,12 @@
         "it" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld notifiche non lette"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -541,6 +577,12 @@
         "pt-BR" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld notificações não lidas"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -559,6 +601,12 @@
         "pt-PT" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld notificações não lidas"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -577,6 +625,12 @@
         "ro" : {
           "variations" : {
             "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld notificări necitite"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -586,7 +640,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%lld notificări necitite"
+                  "value" : "%lld de notificări necitite"
                 }
               }
             }
@@ -685,6 +739,12 @@
         "tr" : {
           "variations" : {
             "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld okunmamış bildirim"
+                }
+              },
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -822,6 +882,12 @@
         "ca" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "**%lld** notificacions sense llegir"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -996,6 +1062,12 @@
         "es" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "**%lld** notificaciones sin leer"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1014,6 +1086,12 @@
         "es-419" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "**%lld** notificaciones sin leer"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1050,6 +1128,12 @@
         "fr" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "**%lld** notifications non lues"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1068,6 +1152,12 @@
         "fr-CA" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "**%lld** notifications non lues"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1194,6 +1284,12 @@
         "it" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "**%lld** notifiche non lette"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1314,6 +1410,12 @@
         "pt-BR" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "**%lld** notificações não lidas"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1332,6 +1434,12 @@
         "pt-PT" : {
           "variations" : {
             "plural" : {
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "**%lld** notificações não lidas"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1350,6 +1458,12 @@
         "ro" : {
           "variations" : {
             "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "**%lld** notificări necitite"
+                }
+              },
               "one" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1359,7 +1473,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "**%lld** notificări necitite"
+                  "value" : "**%lld** de notificări necitite"
                 }
               }
             }
@@ -1458,6 +1572,12 @@
         "tr" : {
           "variations" : {
             "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "**%lld** okunmamış bildirim"
+                }
+              },
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
