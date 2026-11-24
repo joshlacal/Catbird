@@ -365,6 +365,11 @@ actor CopilotReadBudget {
     return false
   }
 
+  /// Lowers the remaining lookups when the turn reserved room for fewer results.
+  func limit(to reads: Int) {
+    remaining = min(remaining, max(0, reads))
+  }
+
   func consume() throws {
     try Task.checkCancellation()
     guard remaining > 0 else { throw BudgetError.exhausted }

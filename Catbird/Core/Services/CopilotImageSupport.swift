@@ -89,26 +89,28 @@ enum CopilotImageSupport {
     }
   }
 
-  /// The counter receives the actual selected image as well as history. If image
-  /// input cannot fit with empty history, count the metadata fallback separately.
-  static func selectHistory(
-    turns: [CopilotStoredTurn], preparedImage: CopilotPreparedImage,
-    modelContextSize: Int, reservedTokenCount: Int,
-    candidateTokenCount: ([CopilotStoredTurn], CopilotPreparedImage) async throws -> Int
-  ) async throws -> (history: CopilotHistorySelection, image: CopilotPreparedImage) {
-    var image = preparedImage
-    while true {
-      let candidateImage = image
-      let selection = try await CopilotContextBudget.selectHistory(
-        turns: turns, modelContextSize: modelContextSize, reservedTokenCount: reservedTokenCount,
-        candidateTokenCount: { try await candidateTokenCount($0, candidateImage) }
+  /// Fits the prompt with the selected image attached. The counter receives the
+  /// actual image. Only when the image cannot fit even beside the question and
+  /// the selected post is the prompt fitted again with the image's metadata instead.
+  static func fitPrompt(
+    content: CopilotPromptContent, preparedImage: CopilotPreparedImage,
+    window: Int, reserves: [CopilotReserve],
+    promptTokens: (CopilotPromptContent, CopilotPreparedImage) async throws -> Int
+  ) async throws -> (fit: CopilotPromptFit, image: CopilotPreparedImage) {
+    do {
+      let fit = try await CopilotPromptFitter.fit(
+        content: content, window: window, reserves: reserves,
+        promptTokens: { try await promptTokens($0, preparedImage) }
       )
+      return (fit, preparedImage)
+    } catch BlueskyAgentError.contextLimitExceeded where preparedImage.image != nil {
       try Task.checkCancellation()
-      if !selection.fits, image.image != nil {
-        image = image.metadataOnly(reason: "The selected image exceeds this turn's context budget.")
-        continue
-      }
-      return (selection, image)
+      let fallback = preparedImage.metadataOnly(reason: "The selected image exceeds this turn's context budget.")
+      let fit = try await CopilotPromptFitter.fit(
+        content: content, window: window, reserves: reserves,
+        promptTokens: { try await promptTokens($0, fallback) }
+      )
+      return (fit, fallback)
     }
   }
 

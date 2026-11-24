@@ -254,7 +254,7 @@ enum CopilotTurnEvent: Sendable {
     case evidence(CopilotEvidence)
     case proposal(CopilotProposal)
     case route(CopilotModelRoute)
-    case contextTrimmed(removedTurnCount: Int)
+    case contextTrimmed(CopilotContextTrim)
     case completed
     case failed(String)
 }
