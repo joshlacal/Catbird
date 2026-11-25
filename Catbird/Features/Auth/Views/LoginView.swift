@@ -1696,11 +1696,12 @@ struct SecondaryAuthButtonModifier: ViewModifier {
     }
 }
 
-/// Primary sign-in CTA. Uses the shared Catbird button style so the sky
-/// screen matches every other full-width primary action in the app.
+/// Primary sign-in CTA. Liquid Glass, tinted with the accent, so the button
+/// sits in the sky instead of on top of it; the shared style supplies the
+/// size, press feedback and the Reduce Transparency fallback.
 struct PrimaryButtonModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
+            .buttonStyle(.catbird(.glassProminent, size: .lg, fullWidth: true))
     }
 }

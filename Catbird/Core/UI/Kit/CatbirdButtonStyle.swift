@@ -6,7 +6,9 @@
 //
 //  Colour: accent parts use the `.tint` shape style, so `.tint(_:)` re-tints a button
 //  (CatbirdNotice relies on this). `.primary` is a solid tint fill at every size;
-//  `.brand` is the opt-in hero gradient. Hit targets are always >= 44x44.
+//  `.brand` is the opt-in hero gradient. `.glass` and `.glassProminent` are Liquid Glass
+//  for buttons that float over imagery (the sign-in sky, media, maps); on plain
+//  backgrounds use the solid kinds. Hit targets are always >= 44x44.
 //  CatbirdIconButton scales its glyph and circle with Dynamic Type (clamped to 1.5x).
 //
 
@@ -24,6 +26,12 @@ enum CatbirdButtonKind: CaseIterable, Sendable {
   case muted
   case quiet
   case destructive
+  /// Liquid Glass capsule, primary label. For secondary actions over imagery.
+  /// Falls back to a material before iOS 26 and to an opaque fill under Reduce Transparency.
+  case glass
+  /// Liquid Glass tinted with the accent, white label. For the main action over imagery.
+  /// Falls back to a solid tint fill before iOS 26 and under Reduce Transparency.
+  case glassProminent
 }
 
 enum CatbirdButtonSize: CaseIterable, Sendable {
@@ -97,9 +105,9 @@ private struct CatbirdButtonBody: View {
 
   private var foreground: AnyShapeStyle {
     switch kind {
-    case .primary, .brand: return AnyShapeStyle(Color.white)
+    case .primary, .brand, .glassProminent: return AnyShapeStyle(Color.white)
     case .tonal, .quiet: return AnyShapeStyle(TintShapeStyle())
-    case .outline: return AnyShapeStyle(Color.primary)
+    case .outline, .glass: return AnyShapeStyle(Color.primary)
     case .muted: return AnyShapeStyle(Color.secondary)
     case .destructive: return AnyShapeStyle(Color.red)
     }
@@ -131,6 +139,7 @@ private struct CatbirdButtonBody: View {
       .frame(minHeight: size.height)
       .frame(maxWidth: fullWidth ? .infinity : nil)
       .background { background }
+      .modifier(CatbirdGlassChrome(kind: kind))
       .overlay {
         if kind == .outline || kind == .muted {
           Capsule(style: .continuous)
@@ -157,7 +166,36 @@ private struct CatbirdButtonBody: View {
     case .brand: shape.fill(BrandGradient.current(themeManager: themeManager, scheme: scheme))
     case .tonal: shape.fill(TintShapeStyle().opacity(tonal))
     case .destructive: shape.fill(Color.red.opacity(tonal))
-    case .outline, .muted, .quiet: Color.clear
+    case .outline, .muted, .quiet, .glass, .glassProminent: Color.clear
+    }
+  }
+}
+
+/// Draws the Liquid Glass capsule for the two glass kinds and nothing for the others.
+private struct CatbirdGlassChrome: ViewModifier {
+  let kind: CatbirdButtonKind
+  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+  @ViewBuilder func body(content: Content) -> some View {
+    switch kind {
+    case .glass, .glassProminent:
+      let prominent = kind == .glassProminent
+      let shape = Capsule(style: .continuous)
+      if reduceTransparency {
+        content.background {
+          shape.fill(prominent ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.systemBackground))
+        }
+      } else if #available(iOS 26.0, macOS 26.0, *) {
+        content.glassEffect(
+          prominent ? .regular.tint(.accentColor).interactive() : .regular.interactive(),
+          in: shape)
+      } else {
+        content.background {
+          shape.fill(prominent ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(.regularMaterial))
+        }
+      }
+    default:
+      content
     }
   }
 }
