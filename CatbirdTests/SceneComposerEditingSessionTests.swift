@@ -1007,6 +1007,94 @@ struct SceneComposerEditingSessionTests {
     #expect(restored.currentDraft?.pendingAudioURLString == draft.pendingAudioURLString)
   }
 
+  @Test("The draft check counts only written text or an attachment, not blanks or reply context")
+  func draftCheckIgnoresEmptyCompositions() {
+    let reply = "at://did:plc:source/app.bsky.feed.post/reply"
+    #expect(!makeDraft("").hasMeaningfulContent)
+    #expect(!makeDraft(" \n\t ").hasMeaningfulContent)
+    #expect(!makeDraft("", parentURI: reply).hasMeaningfulContent)
+    #expect(!makeDraft("", entries: [CodableThreadEntry(from: ThreadEntry(), parentPost: nil, quotedPost: nil)])
+      .hasMeaningfulContent)
+
+    #expect(makeDraft("Hello").hasMeaningfulContent)
+    #expect(makeDraft("", imageURL: URL(fileURLWithPath: "/tmp/synthetic-draft-check.jpg")).hasMeaningfulContent)
+    let quote = PostComposerDraft(
+      postText: "", mediaItems: [], videoItem: nil, selectedGif: nil, selectedLanguages: [],
+      selectedLabels: [], outlineTags: [], threadEntries: [], isThreadMode: false,
+      currentThreadIndex: 0, parentPostURI: nil,
+      quotedPostURI: "at://did:plc:source/app.bsky.feed.post/quoted"
+    )
+    #expect(quote.hasMeaningfulContent)
+    var linkEntry = ThreadEntry()
+    linkEntry.selectedEmbedURL = "https://example.com/kept-card"
+    #expect(makeDraft("", entries: [CodableThreadEntry(from: linkEntry, parentPost: nil, quotedPost: nil)])
+      .hasMeaningfulContent)
+  }
+
+  @Test("Minimizing an empty new post ends it instead of leaving a phantom draft", arguments: ["", "   \n"])
+  func emptyNewPostDoesNotMinimize(text: String) throws {
+    let fixture = try Fixture()
+    let scene = fixture.session()
+    defer { scene.invalidate(); fixture.cleanUp() }
+    let key = SceneComposerEditingSession.persistenceKey(sceneID: scene.sceneID, accountDID: fixture.accountDID)
+    let claim = try scene.beginNew(draft: makeDraft(text))
+    #expect(scene.minimize(claim: claim))
+    #expect(!scene.isMinimized)
+    #expect(!scene.hasMinimizedDraft)
+    #expect(scene.currentDraft == nil)
+    #expect(scene.activeClaim == nil)
+    #expect(fixture.defaults.data(forKey: key) == nil)
+  }
+
+  @Test("A minimized post with text shows as a draft")
+  func minimizedPostWithTextIsADraft() throws {
+    let fixture = try Fixture()
+    let scene = fixture.session()
+    defer { scene.invalidate(); fixture.cleanUp() }
+    let claim = try scene.beginNew(draft: makeDraft("Real words"))
+    #expect(!scene.hasMinimizedDraft)
+    #expect(scene.minimize(claim: claim))
+    #expect(scene.hasMinimizedDraft)
+    #expect(scene.resume(claim: claim))
+    #expect(!scene.hasMinimizedDraft)
+  }
+
+  @Test("An empty composer left open at teardown is not restored as a minimized draft", arguments: [false, true])
+  func emptyRecoveryIsNotRestored(isReply: Bool) throws {
+    let fixture = try Fixture()
+    let sceneID = UUID()
+    let key = SceneComposerEditingSession.persistenceKey(sceneID: sceneID, accountDID: fixture.accountDID)
+    let scene = fixture.session(sceneID: sceneID)
+    _ = try scene.beginNew(draft: makeDraft(
+      "", parentURI: isReply ? "at://did:plc:source/app.bsky.feed.post/reply" : nil
+    ))
+    // Quitting, closing the window or switching accounts with the composer open and empty.
+    scene.invalidate()
+    #expect(fixture.defaults.data(forKey: key) != nil, "fixture: teardown leaves the envelope")
+
+    let restored = fixture.session(sceneID: sceneID)
+    defer { restored.invalidate(); fixture.cleanUp() }
+    #expect(!restored.isMinimized)
+    #expect(!restored.hasMinimizedDraft)
+    #expect(restored.currentDraft == nil)
+    #expect(restored.activeClaim == nil)
+    #expect(fixture.defaults.data(forKey: key) == nil)
+  }
+
+  @Test("A composer with text left open at teardown comes back as a minimized draft")
+  func recoveryWithTextIsRestoredMinimized() throws {
+    let fixture = try Fixture()
+    let sceneID = UUID()
+    let scene = fixture.session(sceneID: sceneID)
+    _ = try scene.beginNew(draft: makeDraft("Typed before quitting"))
+    scene.invalidate()
+
+    let restored = fixture.session(sceneID: sceneID)
+    defer { restored.invalidate(); fixture.cleanUp() }
+    #expect(restored.hasMinimizedDraft)
+    #expect(restored.currentDraft?.postText == "Typed before quitting")
+  }
+
   private func makeDraft(_ text: String, imageURL: URL? = nil, parentURI: String? = nil,
                          entries: [CodableThreadEntry] = []) -> PostComposerDraft {
     let images = imageURL.map {
