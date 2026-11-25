@@ -975,7 +975,7 @@ final class PostComposerViewModel {
   /// saved with; loading its parent only fills in the preview.
   func circleReplyRef() -> AppBskyFeedPost.ReplyRef? {
     guard let parentURI = parentPost?.uri.uriString() ?? pendingParentPostURI else { return nil }
-    if let restoredCircleReply, restoredCircleReply.parentURI == parentURI,
+    if let restoredCircleReply, LegacySpaceURI.normalized(restoredCircleReply.parentURI) == parentURI,
        let ref = restoredCircleReply.ref {
       return ref
     }
@@ -1139,7 +1139,8 @@ final class PostComposerViewModel {
     parentPost = nil
     replyTo = nil
     quotedPost = nil
-    pendingParentPostURI = draft.parentPostURI
+    // A Circle reply saved during the Spaces alpha names its parent as `at://{did}/space/...`.
+    pendingParentPostURI = draft.parentPostURI.map(LegacySpaceURI.normalized)
     restoreCircleDestination(from: draft)
     if threadEntries[0].draftQuotedPostURI == nil {
       threadEntries[0].draftQuotedPostURI = draft.quotedPostURI
@@ -1163,7 +1164,7 @@ final class PostComposerViewModel {
     updatePostContent()
 
     // Retain strong refs before fetching display metadata, so autosave is lossless.
-    if let parentURI = draft.parentPostURI {
+    if let parentURI = pendingParentPostURI {
       startParentRestoration(parentURI)
     }
     for entry in threadEntries {
