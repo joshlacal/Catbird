@@ -78,7 +78,7 @@ struct CircleNotificationTests {
   ) -> BlueCatbirdCircleDefs.Notification {
     let subjectURI: ATProtocolURI?
     if let subjectRkey {
-      subjectURI = try? ATProtocolURI(uriString: "\(circle.uri.uriString())/app.bsky.feed.post/\(subjectRkey)")
+      subjectURI = try? ATProtocolURI(uriString: "\(circle.uri.uriString())/did:plc:alice/app.bsky.feed.post/\(subjectRkey)")
     } else {
       subjectURI = nil
     }
@@ -1039,7 +1039,9 @@ struct CircleNotificationTests {
     manager2.storeHandle(canaryHandle, for: canaryDID)
     // Auto-logout expires only the active account, so the canary must be signed in.
     manager2.setAuthenticatedForTesting(did: canaryDID)
-    await manager2.handleAutoLogoutFromPetrel(did: canaryDID, reason: canaryReason)
+    // Expiry is now confirmed through the session-failure seam (a bare legacy event
+    // is checked against the server first), so drive that seam with a current proof.
+    await manager2.handleGatewaySessionFailure(did: canaryDID, reason: canaryReason) { _ in true }
     recorder2.clear()
     do {
       _ = try await manager2.startOAuthFlowForExpiredAccount()
@@ -1136,8 +1138,8 @@ struct CircleNotificationTests {
     let recorder7 = RecordingAuthLogHandler()
     let manager7 = AuthenticationManager(logHandler: recorder7)
     manager7.storeHandle(canaryHandle, for: canaryDID)
-    manager7.setAuthenticatedForTesting(did: canaryDID)
-    await manager7.handleAutoLogoutFromPetrel(did: canaryDID, reason: canaryReason)
+    manager7.setAuthenticatedForTesting(did: canaryDID, client: dummyClient)
+    await manager7.handleGatewaySessionFailure(did: canaryDID, reason: canaryReason) { _ in true }
     verifyScenario(
       "Petrel auto-logout",
       recorder: recorder7,
