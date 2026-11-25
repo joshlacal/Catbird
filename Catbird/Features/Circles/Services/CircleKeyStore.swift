@@ -96,7 +96,7 @@ struct SystemCircleKeychain: CircleKeychain {
 ///
 /// Backed by the Keychain: one generic-password item per Space, service
 /// `blue.catbird.circles.keys`, account `<accountDID>|<spaceURI>` (the
-/// `at:space/...` form; alpha-form accounts are moved on first read), accessible
+/// `at:space/...` form; alpha-form accounts are moved, or merged, on first read), accessible
 /// after first unlock on this device only, never synced. The item holds a JSON
 /// blob `{ "versions": { "<n>": { key, createdAt, reason, senderEpochHead?,
 /// recordCID? } }, "pending": { "<did>": "<reason>" }, "lastRewrapAt"?, "members": { "<did>": joinedAtVersion },
@@ -298,12 +298,25 @@ actor CircleKeyStore {
       members = try container.decodeIfPresent([String: UInt64].self, forKey: .members) ?? [:]
       migration = try container.decodeIfPresent(Migration.self, forKey: .migration)
     }
+
+    /// This item with what only `legacy` holds (alpha-account move): every
+    /// key version and pending re-wrap, and per member the later history
+    /// boundary. Where both hold an entry, this item's wins.
+    func merging(legacy: Blob) -> Blob {
+      var merged = self
+      merged.versions.merge(legacy.versions) { current, _ in current }
+      merged.pending.merge(legacy.pending) { current, _ in current }
+      merged.members.merge(legacy.members) { max($0, $1) }
+      merged.lastRewrapAt = lastRewrapAt ?? legacy.lastRewrapAt
+      merged.migration = migration ?? legacy.migration
+      return merged
+    }
   }
 
   private func account(_ spaceURI: String) -> String { "\(accountDID)|\(spaceURI)" }
 
   private func load(_ spaceURI: String) throws -> Blob {
-    migrateLegacyAccountsIfNeeded()
+    try migrateLegacyAccountsIfNeeded()
     guard let data = try keychain.read(service: Self.keychainService, account: account(spaceURI)) else {
       return Blob()
     }
@@ -312,30 +325,35 @@ actor CircleKeyStore {
 
   /// Moves items saved during the Spaces alpha, account
   /// `<accountDID>|at://{did}/space/...`, to the current account
-  /// `<accountDID>|at:space/{did}/...`, once per store. Idempotent: an item
-  /// already saved under the current account is kept. Best effort: on a
-  /// Keychain error it is tried again on the next read.
+  /// `<accountDID>|at:space/{did}/...`, once per store. When both exist they
+  /// are merged (`Blob.merging`), and the alpha item is deleted only after the
+  /// current one is written. A Keychain error is thrown, so no read or
+  /// mutation proceeds on an unmigrated account; it is tried again on the
+  /// next call. A pair that will not decode is left in place.
   /// TODO: remove before beta, with `LegacySpaceURI`.
-  private func migrateLegacyAccountsIfNeeded() {
+  private func migrateLegacyAccountsIfNeeded() throws {
     guard !legacyAccountsMigrated else { return }
     let prefix = "\(accountDID)|"
-    do {
-      for legacyAccount in try keychain.accounts(service: Self.keychainService) where legacyAccount.hasPrefix(prefix) {
-        guard let current = LegacySpaceURI.fromLegacySpaceUri(String(legacyAccount.dropFirst(prefix.count))) else {
-          continue
-        }
-        if let data = try keychain.read(service: Self.keychainService, account: legacyAccount),
-           try keychain.read(service: Self.keychainService, account: account(current)) == nil {
-          try keychain.write(
-            service: Self.keychainService, account: account(current), data: data, accessibility: Self.accessibility
-          )
-        }
-        try keychain.delete(service: Self.keychainService, account: legacyAccount)
+    for legacyAccount in try keychain.accounts(service: Self.keychainService) where legacyAccount.hasPrefix(prefix) {
+      guard let current = LegacySpaceURI.fromLegacySpaceUri(String(legacyAccount.dropFirst(prefix.count))) else {
+        continue
       }
-      legacyAccountsMigrated = true
-    } catch {
-      // Left for the next read; the item stays under its alpha account meanwhile.
+      if let legacyData = try keychain.read(service: Self.keychainService, account: legacyAccount) {
+        var data = legacyData
+        if let currentData = try keychain.read(service: Self.keychainService, account: account(current)) {
+          let decoder = JSONDecoder()
+          guard let currentBlob = try? decoder.decode(Blob.self, from: currentData),
+                let legacyBlob = try? decoder.decode(Blob.self, from: legacyData)
+          else { continue }
+          data = try JSONEncoder().encode(currentBlob.merging(legacy: legacyBlob))
+        }
+        try keychain.write(
+          service: Self.keychainService, account: account(current), data: data, accessibility: Self.accessibility
+        )
+      }
+      try keychain.delete(service: Self.keychainService, account: legacyAccount)
     }
+    legacyAccountsMigrated = true
   }
 
   private func mutate(_ spaceURI: String, _ change: (inout Blob) -> Void) throws {

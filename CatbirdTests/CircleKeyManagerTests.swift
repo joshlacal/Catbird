@@ -64,6 +64,44 @@ final class InMemoryCircleKeychain: CircleKeychain, @unchecked Sendable {
   }
 }
 
+/// `CircleKeychain` over another one, failing listing or writes on demand
+/// (a transient Keychain error such as `errSecInteractionNotAllowed`).
+final class FailingCircleKeychain: CircleKeychain, @unchecked Sendable {
+  static let transientError = CircleKeychainError.status(errSecInteractionNotAllowed)
+  private let base: any CircleKeychain
+  private let lock = NSLock()
+  private var _failAccounts = false
+  private var _failWrites = false
+  var failAccounts: Bool {
+    get { lock.withLock { _failAccounts } }
+    set { lock.withLock { _failAccounts = newValue } }
+  }
+  var failWrites: Bool {
+    get { lock.withLock { _failWrites } }
+    set { lock.withLock { _failWrites = newValue } }
+  }
+
+  init(_ base: any CircleKeychain) { self.base = base }
+
+  func read(service: String, account: String) throws -> Data? {
+    try base.read(service: service, account: account)
+  }
+
+  func write(service: String, account: String, data: Data, accessibility: String) throws {
+    if failWrites { throw Self.transientError }
+    try base.write(service: service, account: account, data: data, accessibility: accessibility)
+  }
+
+  func delete(service: String, account: String) throws {
+    try base.delete(service: service, account: account)
+  }
+
+  func accounts(service: String) throws -> [String] {
+    if failAccounts { throw Self.transientError }
+    return try base.accounts(service: service)
+  }
+}
+
 // MARK: - Scripted CircleCrypto
 
 actor ScriptedCircleCrypto: CircleCrypto {
@@ -868,6 +906,71 @@ struct CircleKeyStoreTests {
 
     let store = CircleKeyStore(accountDID: "did:plc:alice", keychain: keychain)
     #expect(try await store.key(spaceURI: space, keyVersion: 1) == key)
+    #expect(try keychain.accounts(service: CircleKeyStore.keychainService) == ["did:plc:alice|\(space)"])
+  }
+
+  @Test func failedAlphaMoveBlocksMutationsUntilItSucceeds() async throws {
+    let keychain = InMemoryCircleKeychain()
+    let legacySpace = "at://did:plc:alice/space/blue.catbird.circle.encrypted/3enc"
+    let oldKey = Data(repeating: 1, count: 32)
+    let newKey = Data(repeating: 2, count: 32)
+    let alpha = CircleKeyStore(accountDID: "did:plc:alice", keychain: keychain)
+    try await alpha.store(spaceURI: legacySpace, keyVersion: 1, circleKey: oldKey, createdAt: Date(), reason: "created")
+    try await alpha.setPendingRewrap(spaceURI: legacySpace, did: "__acl__:did:plc:carol", reason: "aclRemovePending")
+    try await alpha.setJoinedAtVersion(spaceURI: legacySpace, did: "did:plc:dave", version: 1)
+
+    let flaky = FailingCircleKeychain(keychain)
+    flaky.failAccounts = true
+    let store = CircleKeyStore(accountDID: "did:plc:alice", keychain: flaky)
+    // Neither a read nor a mutation proceeds on the unmigrated account.
+    await #expect(throws: CircleKeychainError.self) { try await store.allVersions(spaceURI: space) }
+    await #expect(throws: CircleKeychainError.self) {
+      try await store.store(spaceURI: space, keyVersion: 2, circleKey: newKey, createdAt: Date(), reason: "manualRotation")
+    }
+    #expect(try keychain.read(service: CircleKeyStore.keychainService, account: "did:plc:alice|\(space)") == nil)
+
+    flaky.failAccounts = false
+    try await store.store(spaceURI: space, keyVersion: 2, circleKey: newKey, createdAt: Date(), reason: "manualRotation")
+    #expect(try await store.allVersions(spaceURI: space) == [1, 2])
+    #expect(try await store.key(spaceURI: space, keyVersion: 1) == oldKey)
+    #expect(try await store.pendingRewraps(spaceURI: space).map(\.did) == ["__acl__:did:plc:carol"])
+    #expect(try await store.joinedAtVersion(spaceURI: space, did: "did:plc:dave") == 1)
+    #expect(try keychain.accounts(service: CircleKeyStore.keychainService) == ["did:plc:alice|\(space)"])
+  }
+
+  @Test func alphaItemMergesIntoExistingCurrentItem() async throws {
+    let keychain = InMemoryCircleKeychain()
+    let legacySpace = "at://did:plc:alice/space/blue.catbird.circle.encrypted/3enc"
+    let legacyKey = Data(repeating: 1, count: 32)
+    let legacyConflictKey = Data(repeating: 9, count: 32)
+    let currentKey = Data(repeating: 2, count: 32)
+    // Both accounts hold an item (left by a build that skipped the merge).
+    // This store has already run its move, so it writes both as given.
+    let seeding = CircleKeyStore(accountDID: "did:plc:alice", keychain: keychain)
+    _ = try await seeding.allVersions(spaceURI: space)
+    try await seeding.store(spaceURI: legacySpace, keyVersion: 1, circleKey: legacyKey, createdAt: Date(), reason: "created")
+    try await seeding.store(spaceURI: legacySpace, keyVersion: 2, circleKey: legacyConflictKey, createdAt: Date(), reason: "created")
+    try await seeding.setPendingRewrap(spaceURI: legacySpace, did: "did:plc:bob", reason: "directory unreachable")
+    try await seeding.setJoinedAtVersion(spaceURI: legacySpace, did: "did:plc:carol", version: 3)
+    try await seeding.setJoinedAtVersion(spaceURI: legacySpace, did: "did:plc:dave", version: 1)
+    try await seeding.store(spaceURI: space, keyVersion: 2, circleKey: currentKey, createdAt: Date(), reason: "manualRotation")
+    try await seeding.setPendingRewrap(spaceURI: space, did: "__acl__:did:plc:erin", reason: "aclRemovePending")
+    try await seeding.setJoinedAtVersion(spaceURI: space, did: "did:plc:carol", version: 2)
+    try await seeding.setJoinedAtVersion(spaceURI: space, did: "did:plc:dave", version: 4)
+
+    // A failed merged write keeps the alpha item.
+    let flaky = FailingCircleKeychain(keychain)
+    flaky.failWrites = true
+    let store = CircleKeyStore(accountDID: "did:plc:alice", keychain: flaky)
+    await #expect(throws: CircleKeychainError.self) { try await store.allVersions(spaceURI: space) }
+    #expect(try keychain.read(service: CircleKeyStore.keychainService, account: "did:plc:alice|\(legacySpace)") != nil)
+
+    flaky.failWrites = false
+    #expect(try await store.allVersions(spaceURI: space) == [1, 2])
+    #expect(try await store.key(spaceURI: space, keyVersion: 1) == legacyKey)
+    #expect(try await store.key(spaceURI: space, keyVersion: 2) == currentKey)
+    #expect(try await store.pendingRewraps(spaceURI: space).map(\.did) == ["__acl__:did:plc:erin", "did:plc:bob"])
+    #expect(try await store.joinedAtVersions(spaceURI: space) == ["did:plc:carol": 3, "did:plc:dave": 4])
     #expect(try keychain.accounts(service: CircleKeyStore.keychainService) == ["did:plc:alice|\(space)"])
   }
 
