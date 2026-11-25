@@ -4,6 +4,29 @@ import Petrel
 import SwiftUI
 import NukeUI
 
+// MARK: - Sheet Frame
+
+/// macOS sheets size to their content's ideal size, and a `List` or
+/// `ContentUnavailableView` has no intrinsic height, so the sheet collapsed to its
+/// toolbar. Give the sheet an explicit size there. The embedded signed-out screen
+/// (no dismiss button) fills its window instead, and iOS uses its own detents.
+private struct AccountSwitcherSheetFrame: ViewModifier {
+  let isSheet: Bool
+
+  @ViewBuilder
+  func body(content: Content) -> some View {
+    #if os(macOS)
+    if isSheet {
+      content.frame(minWidth: 420, idealWidth: 480, minHeight: 380, idealHeight: 520)
+    } else {
+      content
+    }
+    #else
+    content
+    #endif
+  }
+}
+
 struct AccountSwitcherView: View {
   // MARK: - Environment
   @Environment(AppStateManager.self) private var appStateManager
@@ -101,6 +124,7 @@ struct AccountSwitcherView: View {
         .onChange(of: appStateManager.isTransitioning) { _, _ in finishReauthenticationIfReady() }
         .task { await loadAccounts() }
     }
+    .modifier(AccountSwitcherSheetFrame(isSheet: showsDismissButton))
     .interactiveDismissDisabled(isSwitchingAccount)
   }
 
