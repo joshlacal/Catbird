@@ -245,13 +245,13 @@ struct SceneCardFacesRow: View {
               size: Self.faceSize,
               scale: displayScale
             )
-            .overlay(Circle().strokeBorder(Color(.systemBackground), lineWidth: 1.5))
+            .overlay(Circle().strokeBorder(Color.systemBackground, lineWidth: 1.5))
           }
           ForEach(0..<faces.loadingCount, id: \.self) { _ in
             Circle()
               .fill(Color.secondary.opacity(0.16))
               .frame(width: Self.faceSize, height: Self.faceSize)
-              .overlay(Circle().strokeBorder(Color(.systemBackground), lineWidth: 1.5))
+              .overlay(Circle().strokeBorder(Color.systemBackground, lineWidth: 1.5))
           }
         }
 

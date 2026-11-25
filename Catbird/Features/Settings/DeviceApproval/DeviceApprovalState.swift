@@ -21,8 +21,8 @@ enum DeviceApprovalState: Equatable, Sendable {
   /// one that can approve the waiting devices.
   case approved(waiting: [DeviceApprovalPeer], otherApprovedCount: Int)
   /// This device waits for approval and an approved sibling was used recently enough to
-  /// approve it. Without that sibling, a backup restore approves this device at
-  /// `selfApprovesAt` as long as the sibling stays unused.
+  /// approve it. After a backup restore, servers that keep the hold approve this device at
+  /// `selfApprovesAt`, which moves later if that sibling is used again.
   case askApprover(approvers: [DeviceApprovalPeer], selfApprovesAt: Date)
   /// This device waits for approval. Approved siblings exist, but none was used recently.
   /// After a backup restore this device approves itself at `selfApprovesAt`.
@@ -118,19 +118,38 @@ enum DeviceApprovalState: Equatable, Sendable {
 /// Another of the account's devices, as approval copy names it.
 struct DeviceApprovalPeer: Equatable, Sendable, Identifiable {
   let deviceId: String
+  /// A label that always reads as a name, for buttons and lists.
   let displayName: String
+  /// The name the device registered with, or nil when it registered a generic one such as
+  /// "Catbird", which reads as the app rather than a device.
+  let name: String?
+  let addedAt: Date?
   let lastActiveAt: Date?
 
   var id: String { deviceId }
 
-  init(deviceId: String, displayName: String, lastActiveAt: Date?) {
+  init(
+    deviceId: String,
+    displayName: String,
+    name: String? = nil,
+    addedAt: Date? = nil,
+    lastActiveAt: Date?
+  ) {
     self.deviceId = deviceId
     self.displayName = displayName
+    self.name = name
+    self.addedAt = addedAt
     self.lastActiveAt = lastActiveAt
   }
 
   init(_ row: OwnDeviceApprovalRow) {
-    self.init(deviceId: row.deviceId, displayName: row.displayName, lastActiveAt: row.lastActiveAt)
+    self.init(
+      deviceId: row.deviceId,
+      displayName: row.displayName,
+      name: row.specificName,
+      addedAt: row.createdAt,
+      lastActiveAt: row.lastActiveAt
+    )
   }
 }
 
@@ -191,9 +210,28 @@ struct OwnDeviceApprovalRow: Equatable, Sendable {
   /// The server's own per-group delivery rows, which never approve anything.
   var isFederatedGroupDevice: Bool { deviceName == "federated-group-device" }
 
-  var displayName: String {
-    deviceName ?? "Device \(deviceId.prefix(8))"
+  /// The registered name, unless it is one every install sends, like "Catbird".
+  var specificName: String? {
+    guard let deviceName else { return nil }
+    return Self.genericDeviceNames.contains(deviceName.lowercased()) ? nil : deviceName
   }
+
+  /// "Mac mini", or for a generic name "Device added Nov 20", or "Device 1a2b3c4d".
+  var displayName: String {
+    if let specificName { return specificName }
+    if let createdAt {
+      var style = Date.FormatStyle().month(.abbreviated).day()
+      style.locale = .current
+      return "Device added \(createdAt.formatted(style))"
+    }
+    return "Device \(deviceId.prefix(8))"
+  }
+
+  /// Names that say which app enrolled a device but not which device it is. The chat
+  /// engine enrolls with "Catbird" on every platform.
+  static let genericDeviceNames: Set<String> = [
+    "catbird", "catbird ios", "catbird web", "catbird device", "catmos", "device",
+  ]
 
   private struct WireDevice: Decodable {
     let deviceId: String?

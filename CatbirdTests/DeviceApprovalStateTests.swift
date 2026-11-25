@@ -60,10 +60,14 @@ struct DeviceApprovalStateTests {
       ],
       now: now
     ))
-    #expect(state == .approved(
-      waiting: [DeviceApprovalPeer(deviceId: ipad, displayName: "Device 33333333", lastActiveAt: nil)],
-      otherApprovedCount: 1
-    ))
+    guard case .approved(let waiting, let otherApprovedCount) = state else {
+      Issue.record("Expected approved, got \(state)")
+      return
+    }
+    #expect(waiting.map(\.deviceId) == [ipad])
+    #expect(waiting.first?.name == nil)
+    #expect(waiting.first?.addedAt == hoursAgo(2))
+    #expect(otherApprovedCount == 1)
     #expect(!state.signOutStrandsWaitingDevices)
   }
 
@@ -86,7 +90,8 @@ struct DeviceApprovalStateTests {
     #expect(approvers.map(\.deviceId) == [mac])
     #expect(selfApprovesAt == expected)
     let copy = try #require(DeviceApprovalCopy.make(for: state, restoreQueued: false, now: now))
-    #expect(copy.title == "Approve this device from Mac")
+    #expect(copy.title == "Restore your backup to use encrypted chat")
+    #expect(copy.message.contains("from Mac in Settings > Devices"))
     #expect(copy.primary == .restoreBackup)
     #expect(copy.tone == .blocking)
   }
@@ -123,7 +128,8 @@ struct DeviceApprovalStateTests {
     let before = try #require(DeviceApprovalCopy.make(for: state, restoreQueued: false, now: now))
     #expect(before.primary == .restoreBackup)
     let after = try #require(DeviceApprovalCopy.make(for: state, restoreQueued: true, now: now))
-    #expect(after.title.hasPrefix("This device approves itself"))
+    #expect(after.title.hasPrefix("Encrypted chat unlocks "))
+    #expect(after.message.contains("Mac can approve this device sooner"))
     #expect(after.primary == .checkAgain)
     let due = try #require(DeviceApprovalCopy.make(
       for: state,
@@ -145,9 +151,42 @@ struct DeviceApprovalStateTests {
     ))
     #expect(state == .noApprover(holdEndsAt: hoursAgo(1).addingTimeInterval(hold)))
     let copy = try #require(DeviceApprovalCopy.make(for: state, restoreQueued: false, now: now))
-    #expect(copy.title == "Restore your backup to unlock encrypted chat")
+    #expect(copy.title == "Restore your backup to use encrypted chat")
     #expect(copy.primary == .restoreBackup)
     #expect(AccountSecuritySettingsView.signOutMessage(for: state).contains("starts it over"))
+  }
+
+  @Test("A device that enrolled as \"Catbird\" is never named as if it were the app")
+  func genericNamesStayOutOfCopy() throws {
+    let pending = try #require(DeviceApprovalState.evaluate(
+      currentDeviceId: me,
+      rows: [
+        OwnDeviceApprovalRow(deviceId: mac, deviceName: "Catbird", status: .active, createdAt: hoursAgo(900), lastActiveAt: hoursAgo(12)),
+        OwnDeviceApprovalRow(deviceId: me, deviceName: "Catbird", status: .pendingApproval, createdAt: hoursAgo(40)),
+      ],
+      now: now
+    ))
+    for restoreQueued in [false, true] {
+      let copy = try #require(DeviceApprovalCopy.make(for: pending, restoreQueued: restoreQueued, now: now))
+      #expect(!copy.title.contains("Catbird"))
+      #expect(!copy.message.contains("Catbird"))
+      #expect(!copy.message.contains("isn’t used"))
+      #expect(copy.message.contains("another device you’re signed in on") || copy.message.contains("Another device you’re signed in on"))
+    }
+
+    let approved = try #require(DeviceApprovalState.evaluate(
+      currentDeviceId: mac,
+      rows: [
+        OwnDeviceApprovalRow(deviceId: mac, deviceName: "Catbird", status: .active, createdAt: hoursAgo(900), lastActiveAt: hoursAgo(1)),
+        OwnDeviceApprovalRow(deviceId: me, deviceName: "Catbird", status: .pendingApproval, createdAt: hoursAgo(40)),
+      ],
+      now: now
+    ))
+    let card = try #require(DeviceApprovalCopy.make(for: approved, restoreQueued: false, now: now))
+    #expect(card.title == "A new device is waiting for approval")
+    #expect(card.message.hasPrefix("It was added "))
+    #expect(OwnDeviceApprovalRow(deviceId: me, deviceName: "Mac mini", status: .active).specificName == "Mac mini")
+    #expect(OwnDeviceApprovalRow(deviceId: me, deviceName: "Catbird", status: .active).specificName == nil)
   }
 
   @Test("The server's own group-delivery rows never count as approvers")

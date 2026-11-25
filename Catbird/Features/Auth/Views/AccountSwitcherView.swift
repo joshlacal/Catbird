@@ -8,16 +8,31 @@ import NukeUI
 
 /// macOS sheets size to their content's ideal size, and a `List` or
 /// `ContentUnavailableView` has no intrinsic height, so the sheet collapsed to its
-/// toolbar. Give the sheet an explicit size there. The embedded signed-out screen
-/// (no dismiss button) fills its window instead, and iOS uses its own detents.
+/// title and toolbar. Size both the list inside the navigation stack, so the stack
+/// itself reports a usable ideal size, and the stack, so the sheet window gets a
+/// minimum. The embedded signed-out screen (no dismiss button) fills its window
+/// instead, and iOS uses its own detents.
 private struct AccountSwitcherSheetFrame: ViewModifier {
+  enum Layer {
+    /// The account list inside the navigation stack.
+    case content
+    /// The navigation stack that is the sheet's root.
+    case sheet
+  }
+
   let isSheet: Bool
+  let layer: Layer
 
   @ViewBuilder
   func body(content: Content) -> some View {
     #if os(macOS)
     if isSheet {
-      content.frame(minWidth: 420, idealWidth: 480, minHeight: 380, idealHeight: 520)
+      switch layer {
+      case .content:
+        content.frame(minWidth: 420, idealWidth: 480, minHeight: 320, idealHeight: 440)
+      case .sheet:
+        content.frame(minWidth: 420, idealWidth: 480, minHeight: 380, idealHeight: 520)
+      }
     } else {
       content
     }
@@ -103,6 +118,7 @@ struct AccountSwitcherView: View {
   var body: some View {
     NavigationStack {
       contentView
+        .modifier(AccountSwitcherSheetFrame(isSheet: showsDismissButton, layer: .content))
         .navigationTitle("Accounts")
         .modifier(ToolbarTitleModifier())
         .toolbar { toolbarContent }
@@ -124,7 +140,7 @@ struct AccountSwitcherView: View {
         .onChange(of: appStateManager.isTransitioning) { _, _ in finishReauthenticationIfReady() }
         .task { await loadAccounts() }
     }
-    .modifier(AccountSwitcherSheetFrame(isSheet: showsDismissButton))
+    .modifier(AccountSwitcherSheetFrame(isSheet: showsDismissButton, layer: .sheet))
     .interactiveDismissDisabled(isSwitchingAccount)
   }
 
