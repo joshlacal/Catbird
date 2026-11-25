@@ -600,9 +600,6 @@ private struct MediaDetailView: View {
     let media: ParsedMedia
     let repository: RepositoryRecord
     @Environment(\.dismiss) private var dismiss
-    #if DEBUG
-    @State private var showingRawData = false
-    #endif
     
     var body: some View {
         NavigationView {
@@ -697,20 +694,8 @@ private struct MediaDetailView: View {
                         dismiss()
                     }
                 }
-                
-                #if DEBUG
-                ToolbarItem(placement: .automatic) {
-                    Button("Raw Data") {
-                        showingRawData = true
-                    }
-                }
-                #endif
             }
-            #if DEBUG
-            .sheet(isPresented: $showingRawData) {
-                MediaRawDataView(media: media)
-            }
-            #endif
+            .modifier(MediaRawDataSheet(media: media))
         }
     }
     
@@ -1153,4 +1138,33 @@ private struct MetadataItem: View {
     
     return RepositoryMediaGalleryView(repository: sampleRepository)
         .modelContainer(for: [RepositoryRecord.self, ParsedMedia.self], inMemory: true)
+}
+
+// MARK: - Debug Raw Data
+
+/// Adds the "Raw Data" toolbar button and its sheet in debug builds only.
+/// Release builds get the content unchanged.
+private struct MediaRawDataSheet: ViewModifier {
+    let media: ParsedMedia
+    #if DEBUG
+    @State private var showingRawData = false
+    #endif
+
+    func body(content: Content) -> some View {
+        #if DEBUG
+        content
+            .toolbar {
+                ToolbarItem(placement: .automatic) {
+                    Button("Raw Data") {
+                        showingRawData = true
+                    }
+                }
+            }
+            .sheet(isPresented: $showingRawData) {
+                MediaRawDataView(media: media)
+            }
+        #else
+        content
+        #endif
+    }
 }

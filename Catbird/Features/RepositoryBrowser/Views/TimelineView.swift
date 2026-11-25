@@ -580,9 +580,6 @@ private struct PostDetailView: View {
     let post: ParsedPost
     let repository: RepositoryRecord
     @Environment(\.dismiss) private var dismiss
-    #if DEBUG
-    @State private var showingRawData = false
-    #endif
     
     var body: some View {
         NavigationView {
@@ -658,20 +655,8 @@ private struct PostDetailView: View {
                         dismiss()
                     }
                 }
-                
-                #if DEBUG
-                ToolbarItem(placement: .automatic) {
-                    Button("Raw Data") {
-                        showingRawData = true
-                    }
-                }
-                #endif
             }
-            #if DEBUG
-            .sheet(isPresented: $showingRawData) {
-                RawDataView(post: post)
-            }
-            #endif
+            .modifier(PostRawDataSheet(post: post))
         }
     }
 }
@@ -928,4 +913,33 @@ enum PostTypeFilter: String, CaseIterable {
     
     return RepositoryTimelineView(repository: sampleRepository)
         .modelContainer(for: [RepositoryRecord.self, ParsedPost.self], inMemory: true)
+}
+
+// MARK: - Debug Raw Data
+
+/// Adds the "Raw Data" toolbar button and its sheet in debug builds only.
+/// Release builds get the content unchanged.
+private struct PostRawDataSheet: ViewModifier {
+    let post: ParsedPost
+    #if DEBUG
+    @State private var showingRawData = false
+    #endif
+
+    func body(content: Content) -> some View {
+        #if DEBUG
+        content
+            .toolbar {
+                ToolbarItem(placement: .automatic) {
+                    Button("Raw Data") {
+                        showingRawData = true
+                    }
+                }
+            }
+            .sheet(isPresented: $showingRawData) {
+                RawDataView(post: post)
+            }
+        #else
+        content
+        #endif
+    }
 }
