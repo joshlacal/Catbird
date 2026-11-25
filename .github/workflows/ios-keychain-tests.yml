@@ -156,6 +156,7 @@ jobs:
             CircleMediaLoaderTests CircleModerationTests CircleNotificationTests
             CirclePostOpenerTests CirclePostSealerTests CircleReportDisclosureTests
             CircleRawWriteTests CircleServiceTests
+            SceneComposerEditingSessionTests PostComposerSceneEditingTests
           )
           for suite in "${circle_suites[@]}"; do
             if ! grep -REqw "(struct|class|extension) $suite" CatbirdTests; then
