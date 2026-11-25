@@ -171,7 +171,7 @@ struct CircleServiceTests {
 
   @Test("An enabled incompatible service is rejected")
   func incompatibleProtocolIsRejected() async {
-    #expect(CircleConfiguration.protocolRevision == "d4def6e9f521896ed8222f576d54923d00b5fbeb")
+    #expect(CircleConfiguration.protocolRevision == "1f510f8e36a973f6fd055da349b586918805ae66")
     let service = CircleService(transport: RecordingCircleTransport(capabilities:
       CircleCapability(enabled: true, protocolRevision: "old-profile", supportsImages: true)))
     await #expect(throws: CircleError.protocolRevisionMismatch) { try await service.capabilities() }
