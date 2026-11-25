@@ -492,6 +492,8 @@ struct ChatTabView: View {
           // No chat with this person yet: the chat screen for them, whose first message
           // creates the conversation and then selects it.
           MLSDirectDraftConversationView(recipientDID: recipientDID) { conversationID in
+            // The send can finish after they have moved on; only replace this screen.
+            guard selectedConvoId == convoId else { return }
             showConversation(conversationID)
           }
           .id("\(convoId):\(appState.userDID)")
