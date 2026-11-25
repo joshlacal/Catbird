@@ -38,6 +38,7 @@ jobs:
         working-directory: Catbird
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+      CATBIRD_MLS_LOCAL_INTEGRATION: "1"
       VALIDATION_DIR: ${{ github.workspace }}/macos-build-validation
     permissions:
       contents: read
