@@ -571,3 +571,15 @@ struct ContactMLSAvailabilityCoordinatorTests {
     #expect(coordinator.availability["did:plc:stale"] == nil)
   }
 }
+
+@Suite("Conversation kinds: unsent encrypted chat selection")
+struct MLSDirectDraftRouteTests {
+  @Test("A draft selection round-trips the recipient and real conversation IDs are left alone")
+  func roundTrip() {
+    let did = "did:plc:simjzkp2kphgi6zutwqxhyzm"
+    let selection = MLSDirectDraftRoute.selectionID(recipientDID: did)
+    #expect(MLSDirectDraftRoute.recipientDID(fromSelectionID: selection) == did)
+    #expect(MLSDirectDraftRoute.recipientDID(fromSelectionID: "3kxyzconversation") == nil)
+    #expect(MLSDirectDraftRoute.recipientDID(fromSelectionID: MLSDirectDraftRoute.prefix + "nope") == nil)
+  }
+}

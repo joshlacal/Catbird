@@ -761,10 +761,26 @@ struct NewConversationView: View {
     }
 
     guard !Task.isCancelled, appState.userDID == accountDID else { return }
-    directDraft = MLSDirectComposeDraftStore.open(
+    var draft = MLSDirectComposeDraftStore.open(
       accountDID: accountDID,
       recipientDID: participantDid
     )
+    // Carry the profile they just picked, so the conversation opens with a name and avatar.
+    if let profile = selectedProfiles[participantDid], !draft.submitted {
+      draft.recipientHandle = profile.handle
+      draft.recipientDisplayName = profile.displayName
+      draft.recipientAvatarURL = profile.avatarURL
+      MLSDirectComposeDraftStore.save(draft)
+    }
+    #if os(iOS)
+    // Open the conversation itself; the chat is created when the first message is sent.
+    dismiss()
+    selectChatTab()
+    sceneContext.navigationManager.targetMLSConversationId =
+      MLSDirectDraftRoute.selectionID(recipientDID: participantDid)
+    #else
+    directDraft = draft
+    #endif
   }
 
   // MARK: - MLS Group Creation

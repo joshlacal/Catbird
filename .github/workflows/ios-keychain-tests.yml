@@ -206,6 +206,7 @@ jobs:
             -only-testing:CatbirdTests/KeychainAccessGroupPrefixCacheTests \
             -only-testing:CatbirdTests/GatewaySessionRejectionTests \
             -only-testing:CatbirdTests/CrossLanguageRealFFITests \
+            -only-testing:CatbirdTests/DeviceApprovalStateTests \
             "${circle_only_testing[@]}" \
             CODE_SIGNING_ALLOWED=YES \
             CODE_SIGN_IDENTITY=- \
