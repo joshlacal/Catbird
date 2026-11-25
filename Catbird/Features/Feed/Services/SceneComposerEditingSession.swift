@@ -82,6 +82,13 @@ final class SceneComposerEditingSession {
   private(set) var isMinimized = false
   private(set) var lastIssue: String?
 
+  /// Whether a minimized composition holds something the user wrote or attached. The compose
+  /// button and the tab accessory show the draft affordance only for this, never for a
+  /// minimized composition that is empty (blank text, or only reply context).
+  var hasMinimizedDraft: Bool {
+    isMinimized && (currentDraft?.hasMeaningfulContent ?? false)
+  }
+
   @ObservationIgnored private let manager: ComposerDraftManager
   @ObservationIgnored private let defaults: UserDefaults
   @ObservationIgnored private let persistDelay: Duration
@@ -265,9 +272,11 @@ final class SceneComposerEditingSession {
     guard owns(claim), !Task.isCancelled else { return false }
     flushLiveDraftProvider()
     guard owns(claim) else { return false }
-    if let snapshot = snapshot(), snapshot.draft.isEmptyReply {
-      // Release the editor and its recovery without deleting a saved draft row. Nothing of
-      // the reply is kept, so it ends like a discard: photos it picked and removed go too.
+    if let snapshot = snapshot(), !snapshot.draft.hasMeaningfulContent {
+      // An empty composition (a new post or a reply) is not a draft: minimizing it would
+      // leave the compose button showing a draft with nothing in it. Release the editor and
+      // its recovery without deleting a saved draft row. Nothing is kept, so it ends like a
+      // discard: photos it picked and removed go too.
       let createdFiles = createdDraftImageFiles
       finish(snapshot: snapshot)
       removeUnreferencedDraftImageFiles(createdFiles)
@@ -627,6 +636,14 @@ final class SceneComposerEditingSession {
           let envelope = try? JSONDecoder().decode(ComposerMinimizedDraftEnvelope.self, from: bytes),
           envelope.version == 1, envelope.sceneID == sceneID,
           envelope.accountDID == accountDID else { return }
+    // An open composer persists its envelope as soon as it starts, so an empty one is left
+    // behind when the app quits, the scene closes or the account switches with nothing typed.
+    // Restoring it would bring it back minimized, as a phantom draft. Drop it instead; a saved
+    // row it pointed at stays in the library untouched.
+    guard envelope.draft.hasMeaningfulContent else {
+      defaults.removeObject(forKey: persistenceKey)
+      return
+    }
     let claim = makeClaim()
     var restoredSavedID: UUID?
     var baseline: PostComposerDraft?

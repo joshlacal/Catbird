@@ -29,6 +29,7 @@ struct LabyrinthSettingsAndRestoreView: View {
   @Environment(AppState.self) private var appState: AppState?
   @State private var status: LabyrinthBackupStatus?
   @State private var isPendingDeviceApproval = false
+  @State private var approvalState: DeviceApprovalState?
   @State private var fetchedDeviceMetadataByID: [String: DeviceRowModel] = [:]
   @State private var isLoading = false
   @State private var generatedRecoveryCode: String?
@@ -81,12 +82,26 @@ struct LabyrinthSettingsAndRestoreView: View {
     Form {
       if isPendingDeviceApproval {
         Section {
-          Label(
-            "This device is pending approval. Approve it from an already-authorized device in Devices, or complete 6-digit OTC pairing below.",
-            systemImage: "lock.trianglebadge.exclamationmark.fill"
-          )
-          .foregroundStyle(.orange)
-          .font(.footnote)
+          if let approvalCopy {
+            Label {
+              VStack(alignment: .leading, spacing: 4) {
+                Text(approvalCopy.title)
+                  .font(.footnote.weight(.semibold))
+                Text(approvalCopy.message)
+                  .font(.footnote)
+              }
+            } icon: {
+              Image(systemName: "lock.trianglebadge.exclamationmark.fill")
+            }
+            .foregroundStyle(.orange)
+          } else {
+            Label(
+              "This device is waiting for approval. Approve it from another approved device in Settings > Devices, restore your backup below, or pair it with a 6-digit code.",
+              systemImage: "lock.trianglebadge.exclamationmark.fill"
+            )
+            .foregroundStyle(.orange)
+            .font(.footnote)
+          }
         }
         .accessibilityIdentifier("labyrinth-device-pending-approval-banner")
       }
@@ -129,9 +144,14 @@ struct LabyrinthSettingsAndRestoreView: View {
             .id(LabyrinthResultAnchor.error)
       }
 
+      if needsRestoreFirst {
+        restoreFirstSection
+      }
       backupStatusSection
-      recoveryWarningsSection
-      passkeyPrfSection
+      if !needsRestoreFirst {
+        recoveryWarningsSection
+        passkeyPrfSection
+      }
       otcPairingSection
       recoveryCodeSection
       deviceListSection
@@ -216,6 +236,7 @@ struct LabyrinthSettingsAndRestoreView: View {
       "attention: \(status.recoveryNeedsAttention), generation set: \(status.recoveryGeneration > 0)",
       "code receipt: \(recoveryCodeReceipt != nil), revocation receipt: \(revocationReceipt != nil), unversioned: \(hasUnversionedReceipt)",
       "pending approval: \(isPendingDeviceApproval), devices: \(status.activeDeviceIds.count)",
+      "mailbox space: \(status.mailboxSpaceUri)",
       "directory pending: \(status.pendingDirectoryEpoch.map { String($0) } ?? "none"), stalled: \(status.directoryPublicationStalled), retries: \(status.directoryPublicationRetryCount)",
       "directory error: \(status.directoryPublicationError ?? "none")",
     ].joined(separator: "\n")
@@ -267,7 +288,15 @@ struct LabyrinthSettingsAndRestoreView: View {
         }
         .accessibilityIdentifier("labyrinth-account")
       }
-      if let status {
+      if let status, needsRestoreFirst {
+        DisclosureGroup("Details for Support") {
+          Text(verbatim: supportDetails(status))
+            .font(.caption2.monospaced())
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+            .accessibilityIdentifier("labyrinth-support-details")
+        }
+      } else if let status {
         LabeledContent("Status") {
           Text(Self.backupStatusLabel(enabled: status.backupEnabled, established: status.archiveEstablished))
             .foregroundStyle(status.backupEnabled && status.archiveEstablished ? .green : .secondary)
@@ -278,12 +307,6 @@ struct LabyrinthSettingsAndRestoreView: View {
             .font(.footnote)
             .foregroundStyle(.secondary)
         }
-        LabeledContent("Mailbox Space") {
-          Text(verbatim: status.mailboxSpaceUri)
-            .font(.caption2.monospaced())
-            .lineLimit(1)
-            .truncationMode(.middle)
-        }
         if status.archiveEstablished {
           LabeledContent("Labyrinth Epoch") {
             Text(status.epochSeq, format: .number)
@@ -292,7 +315,7 @@ struct LabyrinthSettingsAndRestoreView: View {
         }
         LabeledContent("Recovery Code Saved") {
           if hasUnacknowledgedRecoveryAttention {
-            Text("Not Ready (Replacement Required)").foregroundStyle(.red)
+            Text("Needs a New Code").foregroundStyle(.orange)
           } else if status.hasRecoveryCode {
             Text("Yes").foregroundStyle(.green)
           } else {
@@ -301,7 +324,7 @@ struct LabyrinthSettingsAndRestoreView: View {
         }
         LabeledContent("Passkey PRF Linked") {
           if hasUnacknowledgedRecoveryAttention {
-            Text("Not Ready (Replacement Required)").foregroundStyle(.red)
+            Text("Set Up Again After a New Code").foregroundStyle(.orange)
           } else if status.hasPasskeyPrf {
             Text("Yes").foregroundStyle(.green)
           } else {
@@ -418,16 +441,18 @@ struct LabyrinthSettingsAndRestoreView: View {
 
   private var recoveryCodeSection: some View {
     Section {
-      Button {
-        self.generateRecoveryCode()
-      } label: {
-        Label("Generate 40-Character Recovery Code", systemImage: "key.fill")
+      if !needsRestoreFirst {
+        Button {
+          self.generateRecoveryCode()
+        } label: {
+          Label("Generate 40-Character Recovery Code", systemImage: "key.fill")
+        }
+        .disabled(
+          coordinator == nil || status == nil || isLoading
+            || hasPersistedDeviceRevocationReceipt || hasPersistedRecoveryCodeReceipt
+        )
+        .accessibilityIdentifier("labyrinth-generate-recovery-code")
       }
-      .disabled(
-        coordinator == nil || status == nil || isLoading
-          || hasPersistedDeviceRevocationReceipt || hasPersistedRecoveryCodeReceipt
-      )
-      .accessibilityIdentifier("labyrinth-generate-recovery-code")
 
       if let generatedRecoveryCode {
         VStack(alignment: .leading, spacing: 6) {
@@ -480,9 +505,33 @@ struct LabyrinthSettingsAndRestoreView: View {
       .disabled(coordinator == nil || isLoading || restoreCodeInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
       .accessibilityIdentifier("labyrinth-restore-from-code")
     } header: {
-      Text("Recovery Code (Optional)")
+      Text(needsRestoreFirst ? "Restore with a Recovery Code" : "Recovery Code (Optional)")
     } footer: {
-      Text("Labyrinth backs up encrypted history to your personal ATProto Space by default. Adding a recovery code lets you restore after losing all devices.")
+      if !needsRestoreFirst {
+        Text("Labyrinth backs up encrypted history to your personal ATProto Space by default. Adding a recovery code lets you restore after losing all devices.")
+      }
+    }
+  }
+
+  /// This device waits for approval and holds no copy of the backup yet. Its own backup
+  /// flags describe an empty local copy, so the screen leads with the restore instead.
+  private var needsRestoreFirst: Bool {
+    isPendingDeviceApproval && status?.archiveEstablished != true
+  }
+
+  private var restoreFirstSection: some View {
+    Section {
+      Button {
+        self.restoreFromPasskeyPrf()
+      } label: {
+        Label("Restore with Passkey", systemImage: "person.badge.key.fill")
+      }
+      .disabled(coordinator == nil || isLoading)
+      .accessibilityIdentifier("labyrinth-restore-passkey-prf")
+    } header: {
+      Text("Restore Your Backup")
+    } footer: {
+      Text("Use the passkey you saved your backup with. If you saved a recovery code instead, enter it below.")
     }
   }
 
@@ -834,6 +883,42 @@ struct LabyrinthSettingsAndRestoreView: View {
     }
   }
 
+  /// What this device needs to be approved, worded as the Messages card words it.
+  private var approvalCopy: DeviceApprovalCopy? {
+    guard let approvalState, approvalState.isPending else { return nil }
+    return DeviceApprovalCopy.make(
+      for: approvalState,
+      restoreQueued: status?.pendingDirectoryEpoch != nil
+    )
+  }
+
+  private func refreshApprovalState() async {
+    guard let coordinator else { return }
+    isPendingDeviceApproval = (try? await coordinator.isDevicePendingApproval()) ?? false
+    approvalState = await appState?.loadDeviceApprovalState()
+  }
+
+  /// The banner after a restore: whether this device is approved now, or when it will be.
+  nonisolated static func restoreOutcome(stillPending: Bool, approval: DeviceApprovalState?, now: Date = Date()) -> String {
+    guard stillPending else {
+      return String(
+        localized: "Backup restored. This device is approved for encrypted chat.",
+        comment: "Banner after a backup restore approved this device"
+      )
+    }
+    if let due = approval?.selfApprovalDate, due > now {
+      let when = DeviceApprovalCopy.formatted(due, now: now, locale: .current, timeZone: .current)
+      return String(
+        localized: "Backup restored. This device approves itself \(when), unless another of your devices approves it sooner.",
+        comment: "Banner after a backup restore on a device that waits out the approval hold"
+      )
+    }
+    return String(
+      localized: "Backup restored. This device is finishing its approval. Check again in a moment.",
+      comment: "Banner after a backup restore whose approval is still publishing"
+    )
+  }
+
   private func applyRecoveryStatus(_ latest: LabyrinthBackupStatus) {
     guard let coordinator, latest.recoveryGeneration >= (status?.recoveryGeneration ?? 0) else { return }
     status = latest
@@ -854,7 +939,7 @@ struct LabyrinthSettingsAndRestoreView: View {
     self.lastFlushOutcome = coordinator.lastBackupFlushOutcome
     do {
       self.applyRecoveryStatus(try await coordinator.labyrinthStatus())
-      self.isPendingDeviceApproval = (try? await coordinator.isDevicePendingApproval()) ?? false
+      await self.refreshApprovalState()
       self.errorMessage = nil
     } catch {
       self.logger.error("Failed to fetch Labyrinth status: \(error.localizedDescription)")
@@ -980,9 +1065,10 @@ struct LabyrinthSettingsAndRestoreView: View {
         let restored = try await coordinator.restoreWithRecoveryCode(trimmed)
         self.applyRecoveryStatus(restored)
         self.restoreCodeInput = ""
-        self.statusBanner = String(
-          localized: "Restored Labyrinth epoch keys and rotated virtual device.",
-          comment: "Success banner after restoring Labyrinth backup from a recovery code"
+        await self.refreshApprovalState()
+        self.statusBanner = Self.restoreOutcome(
+          stillPending: self.isPendingDeviceApproval,
+          approval: self.approvalState
         )
         if restored.recoveryMethodStale {
           self.warningBanner = String(
@@ -1062,10 +1148,10 @@ struct LabyrinthSettingsAndRestoreView: View {
           prfOutput32: passkey.prfOutput
         )
         self.applyRecoveryStatus(restored)
-        self.isPendingDeviceApproval = (try? await coordinator.isDevicePendingApproval()) ?? false
-        self.statusBanner = String(
-          localized: "Restored Labyrinth backup using Passkey PRF.",
-          comment: "Success banner after restoring Labyrinth backup via Passkey PRF"
+        await self.refreshApprovalState()
+        self.statusBanner = Self.restoreOutcome(
+          stillPending: self.isPendingDeviceApproval,
+          approval: self.approvalState
         )
         self.warningBanner = nil
         self.errorMessage = nil

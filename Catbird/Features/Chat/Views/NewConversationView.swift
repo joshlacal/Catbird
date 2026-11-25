@@ -732,7 +732,7 @@ struct NewConversationView: View {
     isCheckingExisting = true
     defer { isCheckingExisting = false }
 
-    guard await appState.getOrOpenMLSCoordinator() != nil else {
+    guard let coordinator = await appState.getOrOpenMLSCoordinator() else {
       guard !Task.isCancelled else { return }
       errorMessage = appState.spacesEligibility.flatMap { $0.eligible ? nil : $0.userMessage }
         ?? String(
@@ -750,11 +750,37 @@ struct NewConversationView: View {
       return
     }
 
+    // Say so before they write anything: the delivery service refuses every new chat from a
+    // device that another of the account's devices has not approved yet.
+    if await MLSDirectChatStart.isAwaitingApproval(coordinator) {
+      guard !Task.isCancelled, appState.userDID == accountDID else { return }
+      errorTitle = String(localized: "Encrypted Chat Unavailable", comment: "Alert title when account is not eligible for encrypted chat")
+      errorMessage = ChatFailureMessage.pendingDeviceText
+      showingError = true
+      return
+    }
+
     guard !Task.isCancelled, appState.userDID == accountDID else { return }
-    directDraft = MLSDirectComposeDraftStore.open(
+    var draft = MLSDirectComposeDraftStore.open(
       accountDID: accountDID,
       recipientDID: participantDid
     )
+    // Carry the profile they just picked, so the conversation opens with a name and avatar.
+    if let profile = selectedProfiles[participantDid], !draft.submitted {
+      draft.recipientHandle = profile.handle
+      draft.recipientDisplayName = profile.displayName
+      draft.recipientAvatarURL = profile.avatarURL
+      MLSDirectComposeDraftStore.save(draft)
+    }
+    #if os(iOS)
+    // Open the conversation itself; the chat is created when the first message is sent.
+    dismiss()
+    selectChatTab()
+    sceneContext.navigationManager.targetMLSConversationId =
+      MLSDirectDraftRoute.selectionID(recipientDID: participantDid)
+    #else
+    directDraft = draft
+    #endif
   }
 
   // MARK: - MLS Group Creation
