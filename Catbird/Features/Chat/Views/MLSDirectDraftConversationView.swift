@@ -178,7 +178,7 @@ struct MLSDirectDraftConversationView: View {
     }
     .padding(12)
     .frame(maxWidth: .infinity)
-    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    .adaptiveGlassEffect(in: RoundedRectangle(cornerRadius: 14, style: .continuous))
   }
 
   // MARK: - Composer
@@ -308,9 +308,14 @@ struct MLSDirectDraftConversationView: View {
         waitingConversationID = outcome.conversationID
         return
       }
+      // Clear only the text that was sent: they may have written more since, here or on
+      // another screen for the same person, and that must stay.
       let draft = MLSDirectComposeDraftStore.open(accountDID: accountDID, recipientDID: recipientDID)
-      MLSDirectComposeDraftStore.archive(draft)
-      messageText = ""
+      // Every edit here is saved as it is typed, so the stored draft is the newest text.
+      if draft.text.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed {
+        MLSDirectComposeDraftStore.archive(draft)
+        messageText = ""
+      }
       onOpenConversation(outcome.conversationID)
     } catch {
       guard appState.userDID == accountDID else { return }
