@@ -77,6 +77,9 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
   private var profileCache: [String: MLSProfileEnricher.ProfileData] = [:]
   private var hasLoadedInitialProfiles = false
+  @ObservationIgnored private var profileRetryTask: Task<Void, Never>?
+  @ObservationIgnored private var profileRetryAttempt = 0
+  private static let profileRetryDelays: [Duration] = [.seconds(2), .seconds(5), .seconds(15), .seconds(45)]
 
   private var confirmedMessages: [MLSMessageAdapter] = []
   private(set) var pendingSends: [PendingMLSSend] = []
@@ -180,6 +183,9 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   func stopObserving() {
     observationID = UUID()
     isObservingCoordinator = false
+    profileRetryTask?.cancel()
+    profileRetryTask = nil
+    profileRetryAttempt = 0
   }
 
   // MARK: - Pending Sends (WS-6.5)
@@ -406,6 +412,10 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       hasReceivedInitialMessages = true
       hasMoreMessages = window.hasMore
 
+      // Hydrate sender names/avatars before the read-state round trips below,
+      // which can take seconds on a slow delivery service.
+      await enrichMissingProfilesIfNeeded(observationID: observationID)
+
       if maxSeq > 0 {
         try? await coordinator.acknowledgeEntriesUpTo(conversationId: conversationId, upToSeq: maxSeq)
         if let advanced = try? await coordinator.advanceReadState(
@@ -417,7 +427,6 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       } else if let readState = try? await coordinator.getReadState(conversationId: conversationId) {
         remoteReadCutoff = (epoch: 0, sequenceNumber: Int64(clamping: readState.readThroughSeq))
       }
-      await enrichMissingProfilesIfNeeded(observationID: observationID)
     } catch {
       guard self.observationID == observationID, refreshRequest == request else { return }
       self.error = error
@@ -1053,21 +1062,53 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   private func enrichMissingProfilesIfNeeded(observationID: UUID) async {
-    guard let appState, let client = appState.atProtoClient else { return }
-    let missingDIDs = Set(confirmedMessages.map { MLSProfileEnricher.canonicalDID($0.senderID) })
-      .filter { profileCache[$0] == nil }
-    guard !missingDIDs.isEmpty else { return }
-    let profiles = await appState.mlsProfileEnricher.ensureProfiles(
-      for: Array(missingDIDs),
-      using: client,
-      currentUserDID: currentUserDID
-    )
     guard self.observationID == observationID else { return }
-    for (did, profile) in profiles {
-      profileCache[did] = profile
+    let missingDIDs = missingSenderProfileDIDs()
+    guard !missingDIDs.isEmpty else {
+      profileRetryTask?.cancel()
+      profileRetryTask = nil
+      profileRetryAttempt = 0
+      return
     }
-    if !profiles.isEmpty {
-      rebuildMessagesWithProfiles()
+    // The client can be briefly unavailable (session restore, account switch);
+    // treat that like a failed fetch and retry rather than giving up.
+    if let appState, let client = appState.atProtoClient {
+      let profiles = await appState.mlsProfileEnricher.ensureProfiles(
+        for: Array(missingDIDs),
+        using: client,
+        currentUserDID: currentUserDID
+      )
+      guard self.observationID == observationID else { return }
+      for (did, profile) in profiles {
+        profileCache[MLSProfileEnricher.canonicalDID(did)] = profile
+      }
+      if !profiles.isEmpty {
+        rebuildMessagesWithProfiles()
+      }
+    }
+    scheduleProfileRetryIfNeeded(observationID: observationID)
+  }
+
+  private func missingSenderProfileDIDs() -> Set<String> {
+    Set(confirmedMessages.map { MLSProfileEnricher.canonicalDID($0.senderID) })
+      .filter { profileCache[$0] == nil }
+  }
+
+  /// A failed or partial profile fetch used to wait for the next incoming
+  /// message to retry, so a quiet conversation could stay nameless for good.
+  /// Retry with backoff while the conversation stays open.
+  private func scheduleProfileRetryIfNeeded(observationID: UUID) {
+    guard !missingSenderProfileDIDs().isEmpty,
+          profileRetryTask == nil,
+          profileRetryAttempt < Self.profileRetryDelays.count
+    else { return }
+    let delay = Self.profileRetryDelays[profileRetryAttempt]
+    profileRetryAttempt += 1
+    profileRetryTask = Task { @MainActor [weak self] in
+      try? await Task.sleep(for: delay)
+      guard let self, !Task.isCancelled else { return }
+      self.profileRetryTask = nil
+      await self.enrichMissingProfilesIfNeeded(observationID: observationID)
     }
   }
 

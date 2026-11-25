@@ -243,8 +243,13 @@ actor MLSProfileEnricher {
       }
       
       // Persist to MLS member table for NSE rich notifications
-      if let userDID = currentUserDID, !profilesToPersist.isEmpty {
-        await persistProfilesToDatabase(profilesToPersist, currentUserDID: userDID)
+      // Off the caller's path: an open chat waits on ensureProfiles to show
+      // names, and must not also wait on these App Group writes.
+      if currentUserDID != nil, !profilesToPersist.isEmpty {
+        let pendingWrites = profilesToPersist
+        Task.detached(priority: .utility) {
+          await Self.persistProfilesToDatabase(pendingWrites)
+        }
       }
 
       // Keep a copy of each member's picture where the notification extension can read it,
@@ -265,11 +270,9 @@ actor MLSProfileEnricher {
   }
   
   /// Persist profiles to the shared App Group profile cache so NSE can resolve display names.
-  private func persistProfilesToDatabase(
-    _ profiles: [(did: String, handle: String?, displayName: String?, avatarURL: String?)],
-    currentUserDID: String
+  private static func persistProfilesToDatabase(
+    _ profiles: [(did: String, handle: String?, displayName: String?, avatarURL: String?)]
   ) async {
-    _ = currentUserDID
     for profile in profiles {
       guard let handle = profile.handle, !handle.isEmpty else { continue }
       await ProfileCacheDatabase.shared.write(
