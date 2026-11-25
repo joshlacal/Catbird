@@ -407,7 +407,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
       composePromptContainer.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
       composePromptContainer.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
-      composePromptContainer.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+      Self.makeComposePromptBottomConstraint(container: composePromptContainer, in: view),
 
       loadingView.topAnchor.constraint(equalTo: view.topAnchor),
       loadingView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -1006,13 +1006,27 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     hostingController.view.setContentHuggingPriority(.required, for: .vertical)
     hostingController.view.setContentCompressionResistancePriority(.required, for: .vertical)
     hostingController.sizingOptions = .intrinsicContentSize
-    // The container is pinned to `keyboardLayoutGuide.top`, which already clears
-    // the tab bar, home indicator and keyboard. If the hosted view also honoured
+    // The container is pinned to the bottom safe area, which already clears
+    // the tab bar and home indicator. If the hosted view also honoured
     // safe-area insets, any pass where its frame overlapped the bottom inset
     // (e.g. before the inset settled after a push) would add the inset a second
     // time to the intrinsic height, leaving an empty band under the capsule.
     hostingController.safeAreaRegions = []
     return hostingController
+  }
+
+  /// Pins the quick reply prompt to the bottom safe area (the top of the tab bar).
+  ///
+  /// The prompt is a button that opens the composer sheet; this screen never shows
+  /// a keyboard of its own. `keyboardLayoutGuide` still tracks the composer's
+  /// keyboard while the sheet covers this view, and when the sheet is dismissed
+  /// with its keyboard up the guide can come to rest above the safe area, leaving
+  /// the capsule floating over an empty band until another keyboard appears.
+  static func makeComposePromptBottomConstraint(
+    container: UIView,
+    in view: UIView
+  ) -> NSLayoutConstraint {
+    container.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
   }
 
   private func updateComposePrompt() {

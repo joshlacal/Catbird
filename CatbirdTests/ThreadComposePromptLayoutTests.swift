@@ -17,6 +17,25 @@ struct ThreadComposePromptLayoutTests {
     #expect(hostingController.view.contentCompressionResistancePriority(for: .vertical) == .required)
     #expect(hostingController.safeAreaRegions.isEmpty)
   }
+
+  /// The prompt only opens the composer sheet, so it must not follow the keyboard:
+  /// the composer's keyboard, dismissed together with its sheet, can leave
+  /// `keyboardLayoutGuide` resting above the tab bar and float the capsule over a gap.
+  @Test("Prompt is pinned to the bottom safe area, not the keyboard guide")
+  func promptPinsToSafeAreaNotKeyboard() {
+    let view = UIView()
+    let container = UIView()
+    view.addSubview(container)
+    let constraint = ThreadViewController.makeComposePromptBottomConstraint(container: container, in: view)
+    #expect(constraint.firstItem === container)
+    #expect(constraint.firstAttribute == .bottom)
+    #expect(constraint.secondItem === view.safeAreaLayoutGuide)
+    #expect(constraint.secondAttribute == .bottom)
+    #expect(constraint.secondItem !== view.keyboardLayoutGuide)
+    #expect(constraint.relation == .equal)
+    #expect(constraint.constant == 0)
+  }
+
   @Test("Reply content resists a full-screen vertical proposal and still wraps")
   func promptKeepsNaturalHeight() {
     let host = ThreadViewController.makeComposePromptHostingController(
@@ -34,7 +53,7 @@ struct ThreadComposePromptLayoutTests {
     #expect(narrow.height < 400)
   }
 
-  /// The thread controller pins the prompt container to `keyboardLayoutGuide.top`,
+  /// The thread controller pins the prompt container to the bottom safe area,
   /// which already sits above the tab bar and home indicator. When the bottom safe
   /// area grows (tab bar settling after a push, minimised tab bar expanding), the
   /// host's old frame briefly overlaps the new safe area. The host must not turn
@@ -70,7 +89,7 @@ struct ThreadComposePromptLayoutTests {
     NSLayoutConstraint.activate([
       container.leadingAnchor.constraint(equalTo: parent.view.safeAreaLayoutGuide.leadingAnchor),
       container.trailingAnchor.constraint(equalTo: parent.view.safeAreaLayoutGuide.trailingAnchor),
-      container.bottomAnchor.constraint(equalTo: parent.view.keyboardLayoutGuide.topAnchor),
+      ThreadViewController.makeComposePromptBottomConstraint(container: container, in: parent.view),
       host.view.topAnchor.constraint(equalTo: container.topAnchor),
       host.view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
       host.view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
@@ -105,12 +124,12 @@ struct ThreadComposePromptLayoutTests {
     }
   }
 
-  /// Positioning is UIKit's job: the controller pins the prompt container to
-  /// `keyboardLayoutGuide.top`, which already clears the tab bar, home indicator
-  /// and keyboard. If the hosted SwiftUI view also honours safe-area insets, any
-  /// layout in which the host overlaps the bottom inset (a frame computed before
-  /// the inset settled, a tab-bar or window geometry change, an interrupted
-  /// transition) adds that inset a second time as empty space under the capsule.
+  /// Positioning is UIKit's job: the controller pins the prompt container to the
+  /// bottom safe area, which already clears the tab bar and home indicator. If the
+  /// hosted SwiftUI view also honours safe-area insets, any layout in which the
+  /// host overlaps the bottom inset (a frame computed before the inset settled, a
+  /// tab-bar or window geometry change, an interrupted transition) adds that inset
+  /// a second time as empty space under the capsule.
   @Test("Prompt height does not depend on overlapping the bottom safe area")
   func promptHeightIgnoresSafeAreaOverlap() async throws {
     let scene = try #require(UIApplication.shared.connectedScenes
@@ -130,7 +149,7 @@ struct ThreadComposePromptLayoutTests {
     host.view.translatesAutoresizingMaskIntoConstraints = false
     parent.addChild(host)
     parent.view.addSubview(host.view)
-    let clear = host.view.bottomAnchor.constraint(equalTo: parent.view.keyboardLayoutGuide.topAnchor)
+    let clear = host.view.bottomAnchor.constraint(equalTo: parent.view.safeAreaLayoutGuide.bottomAnchor)
     let overlapping = host.view.bottomAnchor.constraint(equalTo: parent.view.bottomAnchor)
     NSLayoutConstraint.activate([
       host.view.leadingAnchor.constraint(equalTo: parent.view.leadingAnchor),
