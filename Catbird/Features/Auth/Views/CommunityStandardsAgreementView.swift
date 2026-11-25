@@ -107,7 +107,20 @@ struct CommunityStandardsAgreementView: View {
         }
       }
     }
+    .modifier(CommunityStandardsSheetFrame())
     .interactiveDismissDisabled()
+  }
+}
+
+/// macOS sheets size to their content's ideal size; this one's wrapping text would
+/// ask for a single long line, so give the sheet a readable size there. iOS is unchanged.
+private struct CommunityStandardsSheetFrame: ViewModifier {
+  func body(content: Content) -> some View {
+    #if os(macOS)
+    content.frame(minWidth: 440, idealWidth: 520, minHeight: 420, idealHeight: 560)
+    #else
+    content
+    #endif
   }
 }
 

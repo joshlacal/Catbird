@@ -360,6 +360,7 @@ struct LoginView: View {
         }
         .toolbar { loginToolbar }
         .modifier(LoginNavigationContainer())
+        .modifier(LoginSheetFrame(isPresentedModally: isPresentedModally))
         .sheet(isPresented: $showSavedAccounts) {
             AccountSwitcherView()
                 .environment(appStateManager)
@@ -1636,6 +1637,26 @@ private struct LoginNavigationContainer: ViewModifier {
             content
             #endif
         }
+    }
+}
+
+/// macOS sheets size to their content's ideal size, and the sign-in screen is a
+/// `GeometryReader`, which has none, so a modal sign-in sheet would collapse.
+/// Give it an explicit size there; the full-window sign-in screen and iOS are unchanged.
+private struct LoginSheetFrame: ViewModifier {
+    let isPresentedModally: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        #if os(macOS)
+        if isPresentedModally {
+            content.frame(minWidth: 480, idealWidth: 540, minHeight: 600, idealHeight: 680)
+        } else {
+            content
+        }
+        #else
+        content
+        #endif
     }
 }
 

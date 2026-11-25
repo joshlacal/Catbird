@@ -311,6 +311,36 @@ struct ChatConversationKindPresentationTests {
       == "Check your connection and try again.")
   }
 
+  @Test("A device waiting for approval is told so, not asked to try again")
+  func pendingDeviceIsNamed() {
+    let pending = ChatFailureMessage.text(
+      for: MlsError.PendingDeviceAccess(message: "DevicePendingApproval"), context: .startEncryptedChat)
+    #expect(pending == ChatFailureMessage.pendingDeviceText)
+    #expect(pending.contains("Settings > Devices"))
+  }
+
+  @Test("Delivery service refusal codes become specific sentences")
+  func serviceRefusalCodes() {
+    let generic = ChatFailureMessage.text(
+      for: MlsError.Internal(message: "x"), context: .startEncryptedChat)
+    for code in [
+      "NotAuthorized", "RecipientKeysUnavailable", "RequestPolicyDenied", "ExistingDirect",
+      "CapacityUnavailable", "AccountTakedown", "CutoverRequired"
+    ] {
+      let text = ChatFailureMessage.text(
+        for: MlsError.InvalidState(message: "Invalid state: \(code)"), context: .startEncryptedChat)
+      #expect(text != generic, "\(code)")
+      #expect(!text.contains(code), "\(code)")
+    }
+    // Engine detail that is not a bare service code stays generic.
+    #expect(ChatFailureMessage.text(
+      for: MlsError.InvalidState(message: "Invalid state: MLS device signer not enrolled"),
+      context: .startEncryptedChat) == generic)
+    #expect(ChatFailureMessage.serviceRefusalCode(in: "Invalid state: PreparationConflict")
+      == "PreparationConflict")
+    #expect(ChatFailureMessage.serviceRefusalCode(in: "Invalid state: a b") == nil)
+  }
+
   @Test("Capability answers map to the same lines the new conversation screen shows")
   func capabilityText() {
     #expect(ChatFailureMessage.text(for: .capable) == nil)
@@ -539,5 +569,17 @@ struct ContactMLSAvailabilityCoordinatorTests {
     try await Task.sleep(for: .milliseconds(30))
     #expect(reported.isEmpty)
     #expect(coordinator.availability["did:plc:stale"] == nil)
+  }
+}
+
+@Suite("Conversation kinds: unsent encrypted chat selection")
+struct MLSDirectDraftRouteTests {
+  @Test("A draft selection round-trips the recipient and real conversation IDs are left alone")
+  func roundTrip() {
+    let did = "did:plc:simjzkp2kphgi6zutwqxhyzm"
+    let selection = MLSDirectDraftRoute.selectionID(recipientDID: did)
+    #expect(MLSDirectDraftRoute.recipientDID(fromSelectionID: selection) == did)
+    #expect(MLSDirectDraftRoute.recipientDID(fromSelectionID: "3kxyzconversation") == nil)
+    #expect(MLSDirectDraftRoute.recipientDID(fromSelectionID: MLSDirectDraftRoute.prefix + "nope") == nil)
   }
 }

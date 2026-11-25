@@ -1149,7 +1149,7 @@ extension MainContentView {
       composeAction: { openComposerResumingDraft() },
       feedsAction: {},
       showFeedsButton: false,
-      hasMinimizedComposer: sceneContext.composerEditingSession.isMinimized,
+      hasMinimizedComposer: sceneContext.composerEditingSession.hasMinimizedDraft,
       newPostAction: {
         Task { @MainActor in
           await openFreshComposerStashingDraft()
