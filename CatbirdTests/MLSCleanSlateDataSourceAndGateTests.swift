@@ -343,7 +343,7 @@ struct MLSCleanSlateDataSourceAndGateTests {
 
   @Test("Space-scoped blob locator parses canonical pipe and hash locators and rejects malformed strings (I14)")
   func spaceBlobLocatorParsing() throws {
-    let spaceURI = "at://did:web:chat.catbird.blue/space/blue.catbird.labyrinth.conversation/convo-0"
+    let spaceURI = "at:space/did:web:chat.catbird.blue/blue.catbird.labyrinth.conversation/convo-0"
     let repoDID = "did:plc:alice1234567890abcdefghij"
     let cid = "bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
 
@@ -358,6 +358,10 @@ struct MLSCleanSlateDataSourceAndGateTests {
     #expect(parsedHash.space.uriString() == spaceURI)
     #expect(parsedHash.repo.didString() == repoDID)
     #expect(parsedHash.cid.string == cid)
+
+    // A locator written during the Spaces alpha is read in the current form.
+    let legacyLocator = "at://did:web:chat.catbird.blue/space/blue.catbird.labyrinth.conversation/convo-0|\(repoDID)|\(cid)"
+    #expect(try MLSSpaceBlobLocator.parse(legacyLocator).space.uriString() == spaceURI)
 
     #expect(throws: MLSSpaceBlobLocatorError.self) {
       _ = try MLSSpaceBlobLocator.parse("not-a-space-locator")

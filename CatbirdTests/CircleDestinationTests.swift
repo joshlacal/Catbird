@@ -892,7 +892,7 @@ struct CircleDestinationTests {
     // Verify Like record shape
     let standardLike = AppBskyFeedLike(
       subject: ComAtprotoRepoStrongRef(
-        uri: try ATProtocolURI(uriString: "at://did:plc:alice/space/blue.catbird.circle/3abc/did:plc:alice/app.bsky.feed.post/123"),
+        uri: try ATProtocolURI(uriString: "at:space/did:plc:alice/blue.catbird.circle/3abc/did:plc:alice/app.bsky.feed.post/123"),
         cid: CIDString(CID.fromDAGCBOR(Data("like-subject-cid".utf8)))
       ),
       createdAt: createdAt,

@@ -212,7 +212,7 @@ actor ManagementRecordingCircleTransport: CircleTransport {
     skey: String, circleId: String?, name: String, memberCount: Int
   ) -> CircleSummary {
     CircleSummary(
-      uri: try! SpaceRef(uriString: "at://did:plc:owner/space/blue.catbird.circle/\(skey)"),
+      uri: try! SpaceRef(uriString: "at:space/did:plc:owner/blue.catbird.circle/\(skey)"),
       circleId: circleId.flatMap { try? TID(tidString: $0) } ?? fixtureTID,
       name: name,
       owner: try! DID(didString: "did:plc:owner"),
@@ -239,7 +239,7 @@ struct CircleManagementViewModelTests {
 
   var ownerCircle: CircleSummary {
     CircleSummary(
-      uri: try! SpaceRef(uriString: "at://did:plc:owner123/space/blue.catbird.circle/testspace"),
+      uri: try! SpaceRef(uriString: "at:space/did:plc:owner123/blue.catbird.circle/testspace"),
       circleId: try! TID(tidString: "3l7revaaaaaaa"),
       name: "Family Circle",
       owner: ownerDID,
@@ -250,7 +250,7 @@ struct CircleManagementViewModelTests {
 
   var memberCircle: CircleSummary {
     CircleSummary(
-      uri: try! SpaceRef(uriString: "at://did:plc:otherowner/space/blue.catbird.circle/other"),
+      uri: try! SpaceRef(uriString: "at:space/did:plc:otherowner/blue.catbird.circle/other"),
       circleId: try! TID(tidString: "3l7revaaaaaaa"),
       name: "Friend Circle",
       owner: try! DID(didString: "did:plc:otherowner"),
@@ -600,7 +600,7 @@ struct CircleManagementViewModelTests {
   @Test func privateCirclePostCannotExecuteMuteThread() async throws {
     let client = await ATProtoClient(baseURL: URL(string: "https://invalid.example.com")!)
     let appState = AppState(userDID: ownerDID.didString(), client: client)
-    let postURI = try! ATProtocolURI(uriString: "at://did:plc:owner/space/blue.catbird.circle/3abc/did:plc:owner/app.bsky.feed.post/3l7test")
+    let postURI = try! ATProtocolURI(uriString: "at:space/did:plc:owner/blue.catbird.circle/3abc/did:plc:owner/app.bsky.feed.post/3l7test")
     let postView = CircleTestFixtures.makePostView(uri: postURI, authorDID: ownerDID, text: "Private Circle Post")
     let circleContext = PostVisibilityContext.circle(ownerCircle)
     let contextMenuVM = PostContextMenuViewModel(appState: appState, post: postView, visibilityContext: circleContext)
@@ -742,7 +742,7 @@ actor EncryptedManagementTransport: CircleTransport {
   func setCapabilitiesFail(_ value: Bool) { capabilitiesFail = value }
   private(set) var plaintextCreates: [(name: String, memberDIDs: [DID])] = []
 
-  static let newSpace = try! SpaceRef(uriString: "at://did:plc:owner123/space/blue.catbird.circle.encrypted/3newenc")
+  static let newSpace = try! SpaceRef(uriString: "at:space/did:plc:owner123/blue.catbird.circle.encrypted/3newenc")
 
   func setRoster(_ space: SpaceRef, _ members: [DID]) { rosters[space.uriString()] = members }
   func roster(_ space: SpaceRef) -> [DID] { rosters[space.uriString()] ?? [] }
@@ -807,7 +807,7 @@ actor EncryptedManagementTransport: CircleTransport {
   func createSpace(skey: String, circleId: String, name: String, memberDIDs: [DID]) async throws -> CircleSummary {
     events.append("createSpace")
     plaintextCreates.append((name, memberDIDs))
-    let space = try SpaceRef(uriString: "at://did:plc:owner123/space/blue.catbird.circle/\(skey)")
+    let space = try SpaceRef(uriString: "at:space/did:plc:owner123/blue.catbird.circle/\(skey)")
     rosters[space.uriString()] = memberDIDs
     return CircleSummary(
       uri: space, circleId: try TID(tidString: circleId), name: name,
@@ -866,7 +866,7 @@ private struct EncryptedManagementHarness {
   static let carol = try! DID(didString: "did:plc:carol321")
   static let dave = try! DID(didString: "did:plc:dave654")
   static let encryptedCircle = CircleSummary(
-    uri: try! SpaceRef(uriString: "at://did:plc:owner123/space/blue.catbird.circle.encrypted/3enc"),
+    uri: try! SpaceRef(uriString: "at:space/did:plc:owner123/blue.catbird.circle.encrypted/3enc"),
     circleId: try! TID(tidString: "3l7revaaaaaaa"),
     name: "Family Circle",
     owner: owner,
@@ -874,7 +874,7 @@ private struct EncryptedManagementHarness {
     muted: false
   )
   static let plaintextCircle = CircleSummary(
-    uri: try! SpaceRef(uriString: "at://did:plc:owner123/space/blue.catbird.circle/testspace"),
+    uri: try! SpaceRef(uriString: "at:space/did:plc:owner123/blue.catbird.circle/testspace"),
     circleId: try! TID(tidString: "3l7revaaaaaaa"),
     name: "Family Circle",
     owner: owner,

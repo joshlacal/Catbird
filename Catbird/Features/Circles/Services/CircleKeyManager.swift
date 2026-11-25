@@ -293,9 +293,11 @@ actor CircleKeyManager {
   }
 
   /// The URI of the new Space of an unfinished upgrade from `old`, if any.
+  /// One recorded during the Spaces alpha is returned in the `at:space/` form.
   func pendingMigrationTarget(from old: CircleSummary) async throws -> String? {
     try await store.pendingRewraps(spaceURI: old.uri.uriString())
-      .first { $0.did == Self.migrationTargetMarker }?.reason
+      .first { $0.did == Self.migrationTargetMarker }
+      .map { LegacySpaceURI.normalized($0.reason) }
   }
 
   /// D14/D15 retry (roster read under the manager's queue). Completes queued

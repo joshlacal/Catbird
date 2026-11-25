@@ -68,14 +68,14 @@ private enum Wave2 {
   typealias F = CircleOpenFixtures
 
   static let keyOwner = try! DID(didString: "did:plc:alice")
-  static let keySpaceRef = try! SpaceRef(uriString: "at://did:plc:alice/space/blue.catbird.circle.encrypted/3enc")
+  static let keySpaceRef = try! SpaceRef(uriString: "at:space/did:plc:alice/blue.catbird.circle.encrypted/3enc")
   static let keySpace = keySpaceRef.uriString()
   static let keyCircle = BlueCatbirdCircleDefs.CircleSummary(
     uri: keySpaceRef, circleId: try! TID(tidString: "3l7familycirc"), name: "Close", owner: keyOwner,
     memberCount: 2, muted: nil
   )
 
-  static let impostorSpace = try! SpaceRef(uriString: "at://did:plc:owner/space/blue.catbird.circle.encrypted/3impostor")
+  static let impostorSpace = try! SpaceRef(uriString: "at:space/did:plc:owner/blue.catbird.circle.encrypted/3impostor")
 
   /// Same circleId as the real Circle, another Space (a migrated Circle's
   /// other Space looks like this).

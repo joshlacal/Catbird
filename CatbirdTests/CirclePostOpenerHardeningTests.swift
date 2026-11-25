@@ -182,7 +182,7 @@ extension CirclePostOpenerTests {
       return
     }
 
-    let otherSpace = try SpaceRef(uriString: "at://did:plc:mallory/space/blue.catbird.circle.encrypted/3evil")
+    let otherSpace = try SpaceRef(uriString: "at:space/did:plc:mallory/blue.catbird.circle.encrypted/3evil")
     let circleB = BlueCatbirdCircleDefs.CircleSummary(
       uri: otherSpace, circleId: try TID(tidString: "3l7othercircl"), name: "B",
       owner: try DID(didString: "did:plc:mallory"), memberCount: 2, muted: nil, latestKeyVersion: 1

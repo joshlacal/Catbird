@@ -185,7 +185,7 @@ final class NativeArchiveMockNetwork: @unchecked Sendable {
   func labyrinthDeviceKeyHex(account: String, chatDeviceId: String) -> String? {
     locked {
       guard let chatKey = deviceKeys[account]?[chatDeviceId] else { return nil }
-      let mailbox = "at://\(account)/space/blue.catbird.labyrinth.mailbox/self"
+      let mailbox = "at:space/\(account)/blue.catbird.labyrinth.mailbox/self"
       for (key, record) in records
       where key.space == mailbox && key.repo == account && key.collection == "blue.catbird.labyrinth.device" {
         guard let value = record.value as? JSON,
@@ -1151,7 +1151,7 @@ final class NativeArchiveMockNetwork: @unchecked Sendable {
       guard let state = conversations[cid] else { return xrpcError(400, "ConversationNotFound", cid) }
       let currentLeaf = (state["leaves"] as? [JSON] ?? []).contains { $0["deviceId"] as? String == device }
       let conversationSpacePrefix =
-        "at://\(Self.dsDid)/space/blue.catbird.labyrinth.conversation/\(cid)-"
+        "at:space/\(Self.dsDid)/blue.catbird.labyrinth.conversation/\(cid)-"
       if !currentLeaf, statusOverrides.contains(where: {
         $0.value == 403 && $0.key.hasPrefix(conversationSpacePrefix)
       }) {
@@ -1815,19 +1815,23 @@ final class NativeArchiveMockNetwork: @unchecked Sendable {
   }
 }
 
-/// `at://{authority}/space/{spaceType}/{skey}` (`atproto_spaces::SpaceUri`).
+/// `at:space/{authority}/{spaceType}/{skey}` (`atproto_spaces::SpaceUri`). Strict, like the
+/// reference hosts: the alpha form `at://{authority}/space/...` is rejected.
 private struct SpaceURI {
+  static let prefix = "at:space/"
+
   let raw: String
   let authority: String
   let spaceType: String
   let skey: String
 
   init(_ raw: String) throws {
-    let parts = raw.hasPrefix("at://") ? raw.dropFirst(5).split(separator: "/", omittingEmptySubsequences: false).map(String.init) : []
-    guard parts.count == 4, parts[1] == "space", parts.allSatisfy({ !$0.isEmpty }), parts[0].hasPrefix("did:") else {
+    let parts = raw.hasPrefix(Self.prefix)
+      ? raw.dropFirst(Self.prefix.count).split(separator: "/", omittingEmptySubsequences: false).map(String.init) : []
+    guard parts.count == 3, parts.allSatisfy({ !$0.isEmpty }), parts[0].hasPrefix("did:") else {
       throw CocoaError(.coderInvalidValue)
     }
-    (self.raw, authority, spaceType, skey) = (raw, parts[0], parts[2], parts[3])
+    (self.raw, authority, spaceType, skey) = (raw, parts[0], parts[1], parts[2])
   }
 
   func recordURI(_ author: String, _ collection: String, _ rkey: String) -> String {

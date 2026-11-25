@@ -493,9 +493,9 @@ struct CircleServiceTests {
 /// Shared test fixtures for Circle tests.
 enum CircleTestFixtures {
   static let alice = try! DID(didString: "did:plc:alice")
-  static let familyURI = try! SpaceRef(uriString: "at://did:plc:alice/space/blue.catbird.circle/3abc")
+  static let familyURI = try! SpaceRef(uriString: "at:space/did:plc:alice/blue.catbird.circle/3abc")
   static let familyCircleId = try! TID(tidString: "3l7familycirc")
-  static let workURI = try! SpaceRef(uriString: "at://did:plc:alice/space/blue.catbird.circle/9xyz")
+  static let workURI = try! SpaceRef(uriString: "at:space/did:plc:alice/blue.catbird.circle/9xyz")
   static let workCircleId = try! TID(tidString: "3l7workcircle")
 
   static let family = BlueCatbirdCircleDefs.CircleSummary(

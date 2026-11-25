@@ -21,8 +21,8 @@ import UniformTypeIdentifiers
 
 private enum SealFixtures {
   static let author = try! DID(didString: "did:plc:alice")
-  static let spaceURI = try! SpaceRef(uriString: "at://did:plc:alice/space/blue.catbird.circle.encrypted/3enc")
-  static let plainSpaceURI = try! SpaceRef(uriString: "at://did:plc:alice/space/blue.catbird.circle/3pln")
+  static let spaceURI = try! SpaceRef(uriString: "at:space/did:plc:alice/blue.catbird.circle.encrypted/3enc")
+  static let plainSpaceURI = try! SpaceRef(uriString: "at:space/did:plc:alice/blue.catbird.circle/3pln")
   static let circleID = "3l7familycirc"
   static let secretText = "the plaintext nobody outside the circle may read"
 
@@ -667,7 +667,7 @@ struct CircleReportDisclosureTests {
   func plaintextReportIsUnchanged() async throws {
     let h = SealHarness()
     let plain = CircleSummary(
-      uri: try SpaceRef(uriString: "at://did:plc:alice/space/blue.catbird.circle/3plain"),
+      uri: try SpaceRef(uriString: "at:space/did:plc:alice/blue.catbird.circle/3plain"),
       circleId: try TID(tidString: "3l7familycirc"), name: "Plain", owner: SealFixtures.author
     )
     let uri = try ATProtocolURI(uriString: "at://did:plc:bob/app.bsky.feed.post/3l7postaaaaa")

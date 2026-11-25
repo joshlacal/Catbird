@@ -53,10 +53,10 @@ private actor FakeCircleErasureTransport: CircleAccountErasureTransport {
 @Suite("Circles erasure on account deletion")
 struct CircleAccountErasureTests {
   static let me = "did:plc:deletingaccountabcdefghij"
-  static let owned = try! SpaceRef(uriString: "at://\(me)/space/blue.catbird.circle/3owned")
-  static let ownedEncrypted = try! SpaceRef(uriString: "at://\(me)/space/blue.catbird.circle.encrypted/3ownedenc")
-  static let joined = try! SpaceRef(uriString: "at://did:plc:friend/space/blue.catbird.circle/3joined")
-  static let joinedEncrypted = try! SpaceRef(uriString: "at://did:plc:friend/space/blue.catbird.circle.encrypted/3joinedenc")
+  static let owned = try! SpaceRef(uriString: "at:space/\(me)/blue.catbird.circle/3owned")
+  static let ownedEncrypted = try! SpaceRef(uriString: "at:space/\(me)/blue.catbird.circle.encrypted/3ownedenc")
+  static let joined = try! SpaceRef(uriString: "at:space/did:plc:friend/blue.catbird.circle/3joined")
+  static let joinedEncrypted = try! SpaceRef(uriString: "at:space/did:plc:friend/blue.catbird.circle.encrypted/3joinedenc")
 
   @Test("Owned Circles are deleted and joined Circles cleared of the account's records")
   func ownedDeletedJoinedCleared() async {

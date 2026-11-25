@@ -8,7 +8,7 @@ import Testing
 struct CircleConfigurationTests {
   @Test func encryptedSummaryIsDetected() throws {
     let encryptedURI = try SpaceRef(
-      uriString: "at://did:plc:alice/space/\(CircleConfiguration.encryptedSpaceType)/3enc")
+      uriString: "at:space/did:plc:alice/\(CircleConfiguration.encryptedSpaceType)/3enc")
     let encrypted = BlueCatbirdCircleDefs.CircleSummary(
       uri: encryptedURI,
       circleId: CircleTestFixtures.familyCircleId,

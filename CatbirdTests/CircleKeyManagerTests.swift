@@ -22,7 +22,7 @@ private enum KeyFixtures {
   static let bob = try! DID(didString: "did:plc:bob")
   static let carol = try! DID(didString: "did:plc:carol")
   static let dave = try! DID(didString: "did:plc:dave")
-  static let spaceURI = try! SpaceRef(uriString: "at://did:plc:alice/space/blue.catbird.circle.encrypted/3enc")
+  static let spaceURI = try! SpaceRef(uriString: "at:space/did:plc:alice/blue.catbird.circle.encrypted/3enc")
   static let circle = BlueCatbirdCircleDefs.CircleSummary(
     uri: spaceURI,
     circleId: try! TID(tidString: "3l7familycirc"),
@@ -804,7 +804,7 @@ struct CircleKeyManagerTests {
 
 @Suite("CircleKeyStore")
 struct CircleKeyStoreTests {
-  private let space = "at://did:plc:alice/space/blue.catbird.circle.encrypted/3enc"
+  private let space = "at:space/did:plc:alice/blue.catbird.circle.encrypted/3enc"
 
   @Test func storeThenReadBack() async throws {
     let keychain = InMemoryCircleKeychain()
@@ -856,6 +856,30 @@ struct CircleKeyStoreTests {
     #expect(try await store.joinedAtVersion(spaceURI: space, did: "did:plc:dave") == 4)
     try await store.setJoinedAtVersion(spaceURI: space, did: "did:plc:dave", version: 0)
     #expect(try await store.joinedAtVersions(spaceURI: space).isEmpty)
+  }
+
+  @Test func alphaFormKeychainItemMovesToCurrentAccount() async throws {
+    let keychain = InMemoryCircleKeychain()
+    let legacySpace = "at://did:plc:alice/space/blue.catbird.circle.encrypted/3enc"
+    let key = Data(repeating: 7, count: 32)
+    // An item saved during the Spaces alpha, under the old account form.
+    try await CircleKeyStore(accountDID: "did:plc:alice", keychain: keychain)
+      .store(spaceURI: legacySpace, keyVersion: 1, circleKey: key, createdAt: Date(), reason: "created")
+
+    let store = CircleKeyStore(accountDID: "did:plc:alice", keychain: keychain)
+    #expect(try await store.key(spaceURI: space, keyVersion: 1) == key)
+    #expect(try keychain.accounts(service: CircleKeyStore.keychainService) == ["did:plc:alice|\(space)"])
+  }
+
+  @Test func legacySpaceURIConversion() {
+    #expect(LegacySpaceURI.fromLegacySpaceUri("at://did:plc:alice/space/blue.catbird.circle/3abc")
+      == "at:space/did:plc:alice/blue.catbird.circle/3abc")
+    #expect(LegacySpaceURI.fromLegacySpaceUri(
+      "at://did:plc:alice/space/blue.catbird.circle/3abc/did:plc:bob/app.bsky.feed.post/1"
+    ) == "at:space/did:plc:alice/blue.catbird.circle/3abc/did:plc:bob/app.bsky.feed.post/1")
+    #expect(LegacySpaceURI.fromLegacySpaceUri("at:space/did:plc:alice/blue.catbird.circle/3abc") == nil)
+    #expect(LegacySpaceURI.fromLegacySpaceUri("at://did:plc:alice/app.bsky.feed.post/1") == nil)
+    #expect(LegacySpaceURI.normalized("at://did:plc:alice/app.bsky.feed.post/1") == "at://did:plc:alice/app.bsky.feed.post/1")
   }
 
   @Test func keychainItemIsDeviceOnlyAfterFirstUnlock() async throws {

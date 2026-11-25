@@ -12,14 +12,14 @@ struct E2EConstants {
   static let aliceDID = try! DID(didString: aliceDIDString)
   static let bobDID = try! DID(didString: bobDIDString)
 
-  static let familyURI = try! SpaceRef(uriString: "at://did:plc:alicee2efixture/space/blue.catbird.circle/family123")
+  static let familyURI = try! SpaceRef(uriString: "at:space/did:plc:alicee2efixture/blue.catbird.circle/family123")
   static let familyCircleId = try! TID(tidString: "3l7familycirc")
-  static let familyPostURI = try! ATProtocolURI(uriString: "at://did:plc:alicee2efixture/space/blue.catbird.circle/family123/did:plc:alicee2efixture/app.bsky.feed.post/post1")
+  static let familyPostURI = try! ATProtocolURI(uriString: "at:space/did:plc:alicee2efixture/blue.catbird.circle/family123/did:plc:alicee2efixture/app.bsky.feed.post/post1")
   static let familyPostText = "Welcome to Family Circle"
 
-  static let aliceOnlyURI = try! SpaceRef(uriString: "at://did:plc:alicee2efixture/space/blue.catbird.circle/aliceonly123")
+  static let aliceOnlyURI = try! SpaceRef(uriString: "at:space/did:plc:alicee2efixture/blue.catbird.circle/aliceonly123")
   static let aliceOnlyCircleId = try! TID(tidString: "3l7alicecircl")
-  static let aliceOnlyPostURI = try! ATProtocolURI(uriString: "at://did:plc:alicee2efixture/space/blue.catbird.circle/aliceonly123/did:plc:alicee2efixture/app.bsky.feed.post/post2")
+  static let aliceOnlyPostURI = try! ATProtocolURI(uriString: "at:space/did:plc:alicee2efixture/blue.catbird.circle/aliceonly123/did:plc:alicee2efixture/app.bsky.feed.post/post2")
   static let aliceOnlyPostText = "Alice secret notes"
 
   static let publicAlicePostURI = try! ATProtocolURI(uriString: "at://did:plc:alicee2efixture/app.bsky.feed.post/publicpost1")
@@ -28,9 +28,9 @@ struct E2EConstants {
   // Encrypted Circles (`--e2e-encrypted-circles`): Alice owns Close Friends
   // (she holds key v1, Bob has a pending history re-wrap); Bob owns Book Club
   // (Alice is a member who holds no key yet).
-  static let closeFriendsURI = try! SpaceRef(uriString: "at://did:plc:alicee2efixture/space/blue.catbird.circle.encrypted/closefriends1")
+  static let closeFriendsURI = try! SpaceRef(uriString: "at:space/did:plc:alicee2efixture/blue.catbird.circle.encrypted/closefriends1")
   static let closeFriendsCircleId = try! TID(tidString: "3l7closefrien")
-  static let bookClubURI = try! SpaceRef(uriString: "at://did:plc:bobe2efixture/space/blue.catbird.circle.encrypted/bookclub1")
+  static let bookClubURI = try! SpaceRef(uriString: "at:space/did:plc:bobe2efixture/blue.catbird.circle.encrypted/bookclub1")
   static let bookClubCircleId = try! TID(tidString: "3l7bookclubaa")
   static let encryptedReadablePostURI = try! ATProtocolURI(uriString: "at://did:plc:bobe2efixture/blue.catbird.circle.post/3l7encreadabl")
   static let encryptedUnverifiablePostURI = try! ATProtocolURI(uriString: "at://did:plc:bobe2efixture/blue.catbird.circle.post/3l7encunverif")
@@ -523,7 +523,7 @@ actor E2ECircleStore {
     let skeyStr = skey ?? "e2e-space-\(circleSeq)"
     let circleIdStr = circleId ?? "3l7circle\(circleSeq)"
     circleSeq += 1
-    let newURI = try SpaceRef(uriString: "at://\(userDID.didString())/space/blue.catbird.circle/\(skeyStr)")
+    let newURI = try SpaceRef(spaceDID: userDID.didString(), spaceType: "blue.catbird.circle", skey: skeyStr)
     let tid = try TID(tidString: circleIdStr)
     let newCircle = BlueCatbirdCircleDefs.CircleSummary(
       uri: newURI,
