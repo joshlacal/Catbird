@@ -236,8 +236,9 @@ struct PostComposerViewUIKit: View {
       autoSaveTask?.cancel()
       if let vm = viewModel,
          dismissReason != .submit && dismissReason != .discard,
-         !suppressAutoSaveOnDismiss,
-         (hasContent(vm: vm) || vm.isReply), vm.ownsEditingDraft {
+         !suppressAutoSaveOnDismiss, vm.ownsEditingDraft {
+        // Swiping away an empty composer ends it too (minimize releases an empty
+        // composition), so it cannot come back as a phantom draft after relaunch.
         if hasPendingMediaIntent {
           vm.saveDraftIfNeeded()
         } else {

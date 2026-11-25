@@ -24,7 +24,7 @@ struct TabViewBottomAccessoryWrapper: View {
   
   var body: some View {
     Group {
-      if let draft = editingSession.currentDraft, editingSession.isMinimized {
+      if let draft = editingSession.currentDraft, editingSession.hasMinimizedDraft {
         minimizedComposerButton(draft: draft)
       } else {
         VStack(spacing: 0) {
