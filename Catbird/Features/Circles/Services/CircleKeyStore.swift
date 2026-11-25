@@ -330,7 +330,7 @@ actor CircleKeyStore {
   /// current one is written. A Keychain error is thrown, so no read or
   /// mutation proceeds on an unmigrated account; it is tried again on the
   /// next call. A pair that will not decode is left in place.
-  /// TODO: remove before beta, with `LegacySpaceURI`.
+  /// Removed together with `LegacySpaceURI`.
   private func migrateLegacyAccountsIfNeeded() throws {
     guard !legacyAccountsMigrated else { return }
     let prefix = "\(accountDID)|"

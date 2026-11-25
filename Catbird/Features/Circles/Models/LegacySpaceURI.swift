@@ -8,7 +8,8 @@ import Foundation
 /// or read back from records written during the alpha, never on user input
 /// or request parameters. Mirrors `fromLegacySpaceUri` in `@atproto/syntax`.
 ///
-/// TODO: remove before beta.
+/// It exists only to read alpha-era values, and is deleted together with the
+/// Keychain migration in `CircleKeyStore`.
 enum LegacySpaceURI {
   static let spaceURIPrefix = "at:space/"
 
