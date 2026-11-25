@@ -32,7 +32,7 @@ struct ScenePeekSheet: View {
             VStack(spacing: 12) {
               ProgressView()
               Text("Hydrating live posts & creators…")
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity)
@@ -62,33 +62,32 @@ struct ScenePeekSheet: View {
   private var headerCard: some View {
     VStack(alignment: .leading, spacing: 12) {
       HStack(spacing: 8) {
-        Label(state.community.sceneTitle, systemImage: state.community.symbolName)
-          .font(.caption.weight(.semibold))
-          .lineLimit(1)
-          .foregroundStyle(Color.accentColor)
-          .padding(.horizontal, 10)
-          .padding(.vertical, 5)
-          .background(Color.accentColor.opacity(0.12), in: Capsule())
+        CatbirdBadge(
+          Text(verbatim: state.community.sceneTitle), systemImage: state.community.symbolName,
+          tone: .accent)
 
         Spacer()
 
         Text("\(state.community.eligibleCount) vetted voices", comment: "Count of vetted accounts in scene peek header.")
-          .font(.caption.monospacedDigit())
+          .appFont(AppTextRole.caption)
+          .monospacedDigit()
           .foregroundStyle(.secondary)
       }
 
       Text(state.community.title)
-        .font(.title3.weight(.bold))
+        .appFont(AppTextRole.title3)
+        .fontWeight(.bold)
 
       Text(state.community.description)
-        .font(.subheadline)
+        .appFont(AppTextRole.subheadline)
         .foregroundStyle(.secondary)
 
       if let alreadyFollowing = SceneOnboardingViewModel.alreadyFollowingLine(
         count: state.community.alreadyFollowingCount
       ) {
         Label(alreadyFollowing, systemImage: "person.crop.circle.badge.checkmark")
-          .font(.footnote.weight(.medium))
+          .appFont(AppTextRole.footnote)
+          .fontWeight(.medium)
           .foregroundStyle(.secondary)
           .accessibilityIdentifier("intel.peek.alreadyFollowing")
       }
@@ -110,16 +109,8 @@ struct ScenePeekSheet: View {
               }
             }
           }
-          .font(.subheadline.weight(.semibold))
-          .foregroundStyle(isPicked ? Color.accentColor : .white)
-          .padding(.horizontal, 16)
-          .padding(.vertical, 10)
-          .background(
-            isPicked ? Color.accentColor.opacity(0.15) : Color.accentColor,
-            in: Capsule()
-          )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.catbird(isPicked ? .tonal : .primary, size: .md))
         .accessibilityIdentifier("intel.peek.togglePick")
 
         Button(action: onToggleBoost) {
@@ -138,23 +129,15 @@ struct ScenePeekSheet: View {
               }
             }
           }
-          .font(.subheadline.weight(.semibold))
-          .foregroundStyle(isBoosted ? .white : .pink)
-          .padding(.horizontal, 14)
-          .padding(.vertical, 10)
-          .background(
-            isBoosted ? Color.pink : Color.pink.opacity(0.12),
-            in: Capsule()
-          )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.catbird(isBoosted ? .tonal : .outline, size: .md))
         .accessibilityIdentifier("intel.peek.toggleBoost")
       }
     }
     .padding(16)
     .adaptiveGlassEffect(
       style: .regular,
-      in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+      in: Radius.xl.shape
     )
   }
 
@@ -163,16 +146,16 @@ struct ScenePeekSheet: View {
     VStack(alignment: .leading, spacing: 12) {
       HStack {
         Label("Recent Community Posts", systemImage: "text.bubble.fill")
-          .font(.headline)
+          .appFont(AppTextRole.headline)
         Spacer()
         Text("Tap Pin to lock a creator")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
       }
 
       if state.posts.isEmpty {
         Text("Live sample posts are refreshing right now — inspect key community voices below.")
-          .font(.footnote)
+          .appFont(AppTextRole.footnote)
           .foregroundStyle(.secondary)
           .padding(.vertical, 8)
       } else {
@@ -205,26 +188,14 @@ struct ScenePeekSheet: View {
   private var neighborsSection: some View {
     VStack(alignment: .leading, spacing: 10) {
       Label("Adjacent Scenes", systemImage: "point.3.connected.trianglepath.dotted")
-        .font(.headline)
+        .appFont(AppTextRole.headline)
 
       ScrollView(.horizontal, showsIndicators: false) {
         HStack(spacing: 8) {
           ForEach(state.neighbors, id: \.communityId) { neighbor in
-            Button {
-              onOpenNeighbor(neighbor)
-            } label: {
-              HStack(spacing: 6) {
-                Image(systemName: neighbor.symbolName)
-                  .font(.caption)
-                Text(neighbor.title)
-                  .font(.caption.weight(.semibold))
-                  .lineLimit(1)
-              }
-              .padding(.horizontal, 12)
-              .padding(.vertical, 8)
-              .background(Color.secondary.opacity(0.12), in: Capsule())
-            }
-            .buttonStyle(.plain)
+            CatbirdChip(
+              title: Text(verbatim: neighbor.title), systemImage: neighbor.symbolName, size: .sm,
+              action: { onOpenNeighbor(neighbor) })
           }
         }
       }
@@ -245,25 +216,19 @@ private extension View {
 
 // MARK: - Shared Hydrated Post & Avatar Subviews
 
+/// Thin wrapper over the canonical avatar (`AsyncProfileImage`). Kept as its own type because
+/// `CommunityCardTileView` and the lineup rows call it. Pass an `AvatarSize` token for `size`.
+/// With no URL it keeps the initial-letter placeholder the onboarding rows rely on.
 struct AvatarThumbView: View {
   let url: URL?
   let fallbackText: String
   let size: CGFloat
+  /// Unused: `AsyncProfileImage` reads the display scale from the environment. Kept so call sites compile.
   let scale: CGFloat
 
   var body: some View {
-    if let url {
-      LazyImage(request: ImageRequestFactory.avatar(url, pointSize: size, scale: scale)) { state in
-        if let image = state.image {
-          image
-            .resizable()
-            .scaledToFill()
-        } else {
-          placeholderCircle
-        }
-      }
-      .frame(width: size, height: size)
-      .clipShape(Circle())
+    if url != nil {
+      AsyncProfileImage(url: url, size: size)
     } else {
       placeholderCircle
     }
@@ -275,7 +240,8 @@ struct AvatarThumbView: View {
       .frame(width: size, height: size)
       .overlay(
         Text(verbatim: String(fallbackText.prefix(1)).uppercased())
-          .font(.subheadline.weight(.bold))
+          .appFont(AppTextRole.subheadline)
+          .fontWeight(.bold)
           .foregroundStyle(Color.accentColor)
       )
   }
@@ -286,144 +252,76 @@ struct HydratedPostCardView: View {
   let isPinned: Bool
   let onTogglePin: () -> Void
 
-  @Environment(\.displayScale) private var displayScale
-
   var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
+    VStack(alignment: .leading, spacing: Space.sm) {
       if let commTitle = post.communityTitle {
-        HStack(spacing: 6) {
+        HStack(spacing: Space.sm) {
           Image(systemName: "sparkles")
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .foregroundStyle(Color.accentColor)
           Text(commTitle)
-            .font(.caption2.weight(.semibold))
+            .appFont(AppTextRole.caption2)
+            .fontWeight(.semibold)
             .foregroundStyle(Color.accentColor)
             .lineLimit(1)
           if let role = post.authorRole {
             Text(verbatim: "· \(role.badgeTitle)")
-              .font(.caption2)
+              .appFont(AppTextRole.caption2)
               .foregroundStyle(.secondary)
           }
           Spacer()
-          Button(action: onTogglePin) {
-            HStack(spacing: 4) {
-              Image(systemName: isPinned ? "pin.fill" : "pin")
-                .font(.caption2.weight(.semibold))
-              if isPinned {
-                Text("Pinned", comment: "Button state showing post author is pinned into starting lineup.")
-                  .font(.caption2.weight(.semibold))
-              } else {
-                Text("Pin Voice", comment: "Button action to pin post author into starting lineup.")
-                  .font(.caption2.weight(.semibold))
-              }
+          if isPinned {
+            CatbirdChip(
+              title: Text("Pinned", comment: "Button state showing post author is pinned into starting lineup."),
+              systemImage: "pin.fill", isSelected: true, size: .sm, action: onTogglePin)
+          } else {
+            CatbirdChip(
+              title: Text("Pin Voice", comment: "Button action to pin post author into starting lineup."),
+              systemImage: "pin", size: .sm, action: onTogglePin)
+          }
+        }.padding(.horizontal, Space.md)
+      }
+
+      CompactPostCard(
+        avatarURL: post.authorAvatarURL, displayName: post.authorDisplayName,
+        handle: post.authorHandle, text: post.text, imageURL: post.imageThumbURLs.first,
+        did: post.authorDID, lineLimit: 6, showsChrome: false,
+        footer: {
+          HStack(spacing: Space.lg) {
+            Label {
+              Text(post.replyCount, format: .number)
+            } icon: {
+              Image(systemName: "bubble.left")
             }
-            .foregroundStyle(isPinned ? .white : Color.accentColor)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-              isPinned ? Color.accentColor : Color.accentColor.opacity(0.12),
-              in: Capsule()
-            )
+            Label {
+              Text(post.repostCount, format: .number)
+            } icon: {
+              Image(systemName: "arrow.2.squarepath")
+            }
+            Label {
+              Text(post.likeCount, format: .number)
+            } icon: {
+              Image(systemName: "heart")
+            }
           }
-          .buttonStyle(.plain)
+          .appFont(AppTextRole.caption2)
+          .monospacedDigit()
+          .foregroundStyle(.secondary)
         }
-      }
-
-      HStack(spacing: 10) {
-        AvatarThumbView(
-          url: post.authorAvatarURL,
-          fallbackText: post.authorDisplayName,
-          size: 36,
-          scale: displayScale
-        )
-
-        VStack(alignment: .leading, spacing: 1) {
-          Text(post.authorDisplayName)
-            .font(.subheadline.weight(.semibold))
-            .lineLimit(1)
-          Text(verbatim: "@\(post.authorHandle)")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-        }
-
-        Spacer()
-
+      )
+      .overlay(alignment: .topTrailing) {
         if post.communityTitle == nil {
-          Button(action: onTogglePin) {
-            Image(systemName: isPinned ? "pin.fill" : "pin")
-              .font(.caption.weight(.semibold))
-              .foregroundStyle(isPinned ? Color.accentColor : .secondary)
-              .padding(6)
-              .background(Color.secondary.opacity(0.1), in: Circle())
-          }
-          .buttonStyle(.plain)
-          .accessibilityLabel(
-            isPinned
+          CatbirdIconButton(
+            systemImage: isPinned ? "pin.fill" : "pin",
+            label: isPinned
               ? Text("Unpin \(post.authorDisplayName)", comment: "Accessibility action to unpin post author.")
-              : Text("Pin \(post.authorDisplayName)", comment: "Accessibility action to pin post author.")
-          )
+              : Text("Pin \(post.authorDisplayName)", comment: "Accessibility action to pin post author."),
+            size: .sm, style: isPinned ? .tonal : .quiet, action: onTogglePin)
         }
       }
-
-      if !post.text.isEmpty {
-        Text(post.text)
-          .font(.subheadline)
-          .foregroundStyle(.primary)
-          .lineLimit(6)
-          .multilineTextAlignment(.leading)
-          .frame(maxWidth: .infinity, alignment: .leading)
-      }
-
-      if !post.imageThumbURLs.isEmpty {
-        HStack(spacing: 8) {
-          ForEach(post.imageThumbURLs, id: \.absoluteString) { imgURL in
-            Color.secondary.opacity(0.12)
-              .frame(maxWidth: .infinity)
-              .frame(height: 130)
-              .overlay {
-                LazyImage(url: imgURL) { state in
-                  if let image = state.image {
-                    image
-                      .resizable()
-                      .scaledToFill()
-                  }
-                }
-              }
-              .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-          }
-        }
-      }
-
-      HStack(spacing: 16) {
-        Label {
-          Text(post.replyCount, format: .number)
-        } icon: {
-          Image(systemName: "bubble.left")
-        }
-        Label {
-          Text(post.repostCount, format: .number)
-        } icon: {
-          Image(systemName: "arrow.2.squarepath")
-        }
-        Label {
-          Text(post.likeCount, format: .number)
-        } icon: {
-          Image(systemName: "heart")
-        }
-      }
-      .font(.caption2.monospacedDigit())
-      .foregroundStyle(.secondary)
     }
-    .padding(14)
+    .padding(.top, Space.md)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(
-      RoundedRectangle(cornerRadius: 18, style: .continuous)
-        .fill(Color.secondary.opacity(0.07))
-    )
-    .overlay(
-      RoundedRectangle(cornerRadius: 18, style: .continuous)
-        .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
-    )
+    .catbirdCard(.embed, radius: .lg)
   }
 }

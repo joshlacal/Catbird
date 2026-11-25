@@ -285,8 +285,7 @@ struct AccountSwitcherView: View {
                 Button("Dismiss") {
                   error = nil
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .buttonStyle(.catbird(.primary, size: .sm))
               }
               .padding(.vertical, 8)
             }
@@ -350,7 +349,7 @@ struct AccountSwitcherView: View {
           .padding(6)
           .background(.tint.opacity(0.1))
           .foregroundStyle(.tint)
-          .clipShape(RoundedRectangle(cornerRadius: 8))
+          .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
       }
     }
     .padding(.vertical, 4)
@@ -424,17 +423,14 @@ struct AccountSwitcherView: View {
             .frame(maxWidth: .infinity)
             .padding()
             .background(Color(.quaternarySystemFill))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
           } else {
             Button {
               addNewAccount()
             } label: {
               Text("Add Account")
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
+            .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
             .disabled(newAccountHandle.isEmpty)
           }
         }

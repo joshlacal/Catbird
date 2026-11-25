@@ -51,27 +51,29 @@ struct AskCatbirdQuotaNotice: View {
   let onRequestMore: () -> Void
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Label(message, systemImage: isLimitReached ? "exclamationmark.icloud" : "icloud")
-        .font(.footnote)
-        .foregroundStyle(isLimitReached ? Color.orange : Color.secondary)
-        .fixedSize(horizontal: false, vertical: true)
-      HStack(spacing: 12) {
-        if isLimitReached {
-          Button("Use On Device", action: onSwitchToDevice)
-        }
-        if canRequestMore {
-          Button("Request More", action: onRequestMore)
+    AskCatbirdNoticeCard(
+      tone: isLimitReached ? .warning : .info,
+      systemImage: isLimitReached ? "exclamationmark.icloud" : "icloud",
+      message: Text(verbatim: message),
+      trailing: { EmptyView() },
+      actions: {
+        if isLimitReached || canRequestMore {
+          HStack(spacing: Space.sm) {
+            if isLimitReached {
+              Button("Use On Device", action: onSwitchToDevice)
+                .buttonStyle(.catbird(.tonal, size: .sm))
+            }
+            if canRequestMore {
+              Button("Request More", action: onRequestMore)
+                .buttonStyle(.catbird(.quiet, size: .sm))
+            }
+          }
+          .tint(isLimitReached ? Color.orange : Color.accentColor)
         }
       }
-      .font(.footnote.weight(.semibold))
-      .buttonStyle(.borderless)
-    }
-    .padding(.horizontal, 16)
-    .padding(.vertical, 10)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(.quaternary.opacity(0.35))
-    .accessibilityElement(children: .contain)
+    )
+    .padding(.horizontal, Space.lg)
+    .padding(.vertical, Space.xs)
     .accessibilityIdentifier("ask-catbird-quota-notice")
   }
 
@@ -103,7 +105,7 @@ struct AskCatbirdRouteBadge: View {
 
   var body: some View {
     Label(route.displayName, systemImage: route.systemImage)
-      .font(.caption2)
+      .appFont(AppTextRole.caption2)
       .foregroundStyle(.secondary)
       .accessibilityLabel("Answered with \(route.displayName)")
   }
@@ -128,7 +130,7 @@ extension CopilotModelRoute {
 }
 
 #Preview("Route controls") {
-  VStack(alignment: .leading, spacing: 16) {
+  VStack(alignment: .leading, spacing: Space.lg) {
     AskCatbirdQuotaNotice(quota: .approachingLimit, canRequestMore: false, onSwitchToDevice: {}, onRequestMore: {})
     AskCatbirdQuotaNotice(
       quota: .limitReached(resetDate: Date().addingTimeInterval(3 * 3600)),

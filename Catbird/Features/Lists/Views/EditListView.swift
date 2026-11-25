@@ -261,7 +261,7 @@ struct EditListView: View {
       ProgressView()
         .scaleEffect(1.5)
       Text("Loading list details…")
-        .font(.headline)
+        .appFont(AppTextRole.headline)
         .foregroundStyle(.secondary)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -333,14 +333,14 @@ struct EditListView: View {
         }
       }
       .frame(width: 80, height: 80)
-      .clipShape(RoundedRectangle(cornerRadius: 12))
+      .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
       
       VStack(alignment: .leading, spacing: 8) {
         Text("List Avatar")
-          .font(.headline)
+          .appFont(AppTextRole.headline)
         
         Text("Choose an image to represent your list")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
         
         PhotosPicker(
@@ -348,10 +348,10 @@ struct EditListView: View {
           matching: .images
         ) {
           Text("Choose Photo")
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
             .fontWeight(.medium)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.catbird(.tonal, size: .md))
       }
       
       Spacer()
@@ -360,11 +360,11 @@ struct EditListView: View {
   }
   
   private var defaultAvatarPlaceholder: some View {
-    RoundedRectangle(cornerRadius: 12)
+    RoundedRectangle(cornerRadius: 12, style: .continuous)
       .fill(.secondary.opacity(0.3))
       .overlay {
         Image(systemName: "list.bullet.rectangle")
-          .font(.title)
+          .appFont(AppTextRole.title1)
           .foregroundStyle(.secondary)
       }
   }
@@ -381,14 +381,14 @@ struct EditListView: View {
             "\(viewModel.wrappedValue.characterCount)/64",
             comment: "Character count indicator for list name — %1$lld is the current character count out of 64."
           )
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(viewModel.wrappedValue.isNameValid ? Color.secondary : Color.red)
         }
         
         TextField("My awesome list", text: viewModel.name)
           .textFieldStyle(.roundedBorder)
           .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
               .stroke(viewModel.wrappedValue.isNameValid ? Color.clear : Color.red, lineWidth: 1)
           )
       }
@@ -402,7 +402,7 @@ struct EditListView: View {
             "\(viewModel.wrappedValue.descriptionCharacterCount)/300",
             comment: "Character count indicator for list description — %1$lld is the current character count out of 300."
           )
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(viewModel.wrappedValue.isDescriptionValid ? Color.secondary : Color.red)
         }
         
@@ -414,7 +414,7 @@ struct EditListView: View {
         .textFieldStyle(.roundedBorder)
         .lineLimit(3...6)
         .overlay(
-          RoundedRectangle(cornerRadius: 8)
+          RoundedRectangle(cornerRadius: 8, style: .continuous)
             .stroke(viewModel.wrappedValue.isDescriptionValid ? Color.clear : Color.red, lineWidth: 1)
         )
       }

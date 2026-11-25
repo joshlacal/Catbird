@@ -101,26 +101,26 @@ struct UnifiedEmbedView: View {
       }
 
     case .unavailable:
-      HStack(spacing: 8) {
+      HStack(spacing: Space.sm) {
         Image(systemName: "person.2.slash")
           .foregroundStyle(.secondary)
         Text("This invite is no longer available")
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundStyle(.secondary)
       }
-      .padding(10)
+      .padding(Space.md)
       .frame(maxWidth: .infinity, alignment: .leading)
       .embedCardStyle(colorScheme: colorScheme)
     }
   }
 
   private func groupInviteCard(name: String, memberCount: Int, memberLimit: Int) -> some View {
-    VStack(alignment: .leading, spacing: 4) {
-      HStack(spacing: 8) {
+    VStack(alignment: .leading, spacing: Space.xs) {
+      HStack(spacing: Space.sm) {
         Image(systemName: "person.2.fill")
           .foregroundStyle(.secondary)
         Text(name)
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .fontWeight(.medium)
           .foregroundStyle(.primary)
           .lineLimit(2)
@@ -131,11 +131,11 @@ struct UnifiedEmbedView: View {
         "Group invite · \(memberCount) of \(memberLimit) members",
         comment: "Group invite card subtitle. %1$lld is current member count, %2$lld is maximum member limit."
       )
-        .font(.caption2)
+        .appFont(AppTextRole.caption2)
         .foregroundStyle(.secondary)
         .lineLimit(1)
     }
-    .padding(10)
+    .padding(Space.md)
     .frame(maxWidth: .infinity, alignment: .leading)
     .embedCardStyle(colorScheme: colorScheme)
     .contentShape(Rectangle())
@@ -175,7 +175,7 @@ struct UnifiedEmbedView: View {
   @ViewBuilder
   private func linkEmbed(_ link: LinkEmbedData) -> some View {
     Link(destination: link.url) {
-      VStack(alignment: .leading, spacing: 8) {
+      VStack(alignment: .leading, spacing: Space.sm) {
         // Thumbnail
         if let thumbURL = link.thumbnailURL {
           LazyImage(url: thumbURL) { state in
@@ -193,11 +193,11 @@ struct UnifiedEmbedView: View {
           .clipped()
         }
 
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: Space.xs) {
           // Title
           if let title = link.title {
             Text(title)
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .fontWeight(.medium)
               .foregroundStyle(.primary)
               .lineLimit(2)
@@ -207,7 +207,7 @@ struct UnifiedEmbedView: View {
           // Description
           if let description = link.description {
             Text(description)
-              .font(.caption2)
+              .appFont(AppTextRole.caption2)
               .foregroundStyle(.secondary)
               .lineLimit(2)
               .multilineTextAlignment(.leading)
@@ -215,12 +215,12 @@ struct UnifiedEmbedView: View {
 
           // Domain
           Text(link.url.host ?? link.url.absoluteString)
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .foregroundStyle(.secondary)
             .lineLimit(1)
         }
-        .padding(.horizontal, 10)
-        .padding(.bottom, 10)
+        .padding(.horizontal, Space.md)
+        .padding(.bottom, Space.md)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       .embedCardStyle(colorScheme: colorScheme)
@@ -359,11 +359,11 @@ private struct UnifiedGIFView: View {
           .foregroundStyle(.red)
 
         Text("Couldn’t load GIF")
-          .font(.callout)
+          .appFont(AppTextRole.callout)
           .fontWeight(.semibold)
 
         Text(error)
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
           .lineLimit(2)
@@ -379,11 +379,11 @@ private struct UnifiedGIFView: View {
   private var placeholderView: some View {
     VStack(alignment: .leading, spacing: 4) {
       Label("Tenor GIF", systemImage: "play.rectangle.fill")
-        .font(.callout)
+        .appFont(AppTextRole.callout)
         .foregroundStyle(Color.accentColor)
 
       Text("Tap to retry")
-        .font(.caption2)
+        .appFont(AppTextRole.caption2)
         .foregroundStyle(.secondary)
     }
     .padding(12)
@@ -658,24 +658,24 @@ private struct RecordEmbedContainer: View {
       guard let action else { return }
       Task { await action() }
     } label: {
-      VStack(alignment: .leading, spacing: 8) {
-        HStack(spacing: 8) {
+      VStack(alignment: .leading, spacing: Space.sm) {
+        HStack(spacing: Space.sm) {
           Image(systemName: "quote.bubble")
             .foregroundStyle(.secondary)
             .opacity(showsProgress ? 0 : 1)
             .overlay { if showsProgress { ProgressView().controlSize(.mini) } }
           Text(placeholder.title)
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .fontWeight(.medium)
             .foregroundStyle(.primary)
         }
 
         Text(placeholder.detail)
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundStyle(.secondary)
           .lineLimit(1)
       }
-      .padding(10)
+      .padding(Space.md)
       .frame(maxWidth: .infinity, alignment: .leading)
       .embedCardStyle(colorScheme: colorScheme)
     }
@@ -688,9 +688,9 @@ private struct RecordEmbedContainer: View {
 
   private var unavailableView: some View {
     Label("Post unavailable", systemImage: "eye.slash")
-      .font(.caption)
+      .appFont(AppTextRole.caption)
       .foregroundStyle(.secondary)
-      .padding(10)
+      .padding(Space.md)
       .frame(maxWidth: .infinity, alignment: .leading)
       .embedCardStyle(colorScheme: colorScheme)
   }
@@ -700,17 +700,17 @@ private struct RecordEmbedContainer: View {
     Button {
       Task { await retry() }
     } label: {
-      VStack(alignment: .leading, spacing: 6) {
+      VStack(alignment: .leading, spacing: Space.sm) {
         Label(message, systemImage: "exclamationmark.triangle")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.orange)
 
         Text("Check your connection, then tap to try again.")
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundStyle(.secondary)
           .lineLimit(2)
       }
-      .padding(10)
+      .padding(Space.md)
       .frame(maxWidth: .infinity, alignment: .leading)
       .embedCardStyle(colorScheme: colorScheme)
     }
@@ -752,10 +752,11 @@ private struct RecordEmbedContainer: View {
 // MARK: - Embed Card Style
 
 extension View {
-  /// 12pt continuous, matching `feedEmbedCardStyle()` on the loaded quote card,
-  /// so a shared post keeps its shape when it finishes loading.
-  fileprivate func embedCardStyle(colorScheme: ColorScheme) -> some View {
-    let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+  /// Radius.md continuous, matching `.catbirdCard(.embed)` on the loaded quote card,
+  /// so a shared post keeps its shape when it finishes loading. The fill stays
+  /// bubble-specific (it sits on a message bubble); radius and stroke follow the kit.
+  func embedCardStyle(colorScheme: ColorScheme) -> some View {
+    let shape = Radius.md.shape
     return self
       .background(
         shape
@@ -763,7 +764,7 @@ extension View {
       )
       .overlay(
         shape
-          .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+          .strokeBorder(Color.gray.opacity(0.3), lineWidth: 1)
       )
       .clipShape(shape)
   }

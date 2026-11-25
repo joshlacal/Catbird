@@ -25,7 +25,7 @@
 //              isPresented = false
 //            }) {
 //              Text(emoji)
-//                .font(.title2)
+//                .appFont(AppTextRole.title2)
 //                .frame(width: 44, height: 44)
 //                .background(Color.gray.opacity(0.1))
 //                .clipShape(Circle())
@@ -38,7 +38,7 @@
 //            showFullPicker = true
 //          }) {
 //            Image(systemName: "face.smiling")
-//              .font(.title2)
+//              .appFont(AppTextRole.title2)
 //              .frame(width: 44, height: 44)
 //              .background(Color.accentColor.opacity(0.15))
 //              .foregroundColor(.accentColor)

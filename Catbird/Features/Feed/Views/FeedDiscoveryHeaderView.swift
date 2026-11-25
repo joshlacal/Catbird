@@ -47,9 +47,9 @@ struct FeedDiscoveryHeaderView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
           VStack(alignment: .trailing, spacing: 4) {
-            FeedLibraryControls(feed: feed, onOpen: onOpenFeed,
-                                compactLabels: dynamicTypeSize.isAccessibilitySize,
-                                alignsTrailing: true)
+            FeedLibraryButton(
+              feed: feed, size: dynamicTypeSize.isAccessibilitySize ? .iconOnly : .compact,
+              onOpen: onOpenFeed, showsStatus: true, showsEducation: true, alignsTrailing: true)
             moreMenu
           }
           .frame(width: dynamicTypeSize.isAccessibilitySize ? 76 : 104, alignment: .trailing)
@@ -59,7 +59,9 @@ struct FeedDiscoveryHeaderView: View {
         VStack(alignment: .leading, spacing: 8) {
           previewOrDescription
           HStack(alignment: .top) {
-            FeedLibraryControls(feed: feed, onOpen: onOpenFeed)
+            FeedLibraryButton(
+              feed: feed, size: dynamicTypeSize.isAccessibilitySize ? .iconOnly : .regular, onOpen: onOpenFeed,
+              showsStatus: true, showsEducation: true)
             Spacer(minLength: 8)
             moreMenu
           }
@@ -134,9 +136,9 @@ struct FeedDiscoveryHeaderView: View {
       feedPlaceholder
     }
     .frame(width: 52, height: 52)
-    .clipShape(RoundedRectangle(cornerRadius: 12))
+    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     .overlay(
-      RoundedRectangle(cornerRadius: 12)
+      RoundedRectangle(cornerRadius: 12, style: .continuous)
         .stroke(Color(platformColor: PlatformColor.platformSeparator).opacity(0.15), lineWidth: 1)
     )
   }

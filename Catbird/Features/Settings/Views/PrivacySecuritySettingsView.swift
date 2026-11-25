@@ -920,14 +920,8 @@ struct BlockedAccountsView: View {
                                 showingUnblockAlert = true
                             } label: {
                                 Text("Unblock", comment: "Button action to unblock an account.")
-                                    .appFont(AppTextRole.caption)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(Color.gray.opacity(0.2))
-                                    .foregroundStyle(.primary)
-                                    .cornerRadius(8)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.catbird(.tonal, size: .sm))
                         }
                     }
                 }
@@ -1101,14 +1095,8 @@ struct MutedAccountsView: View {
                                 showingUnmuteAlert = true
                             } label: {
                                 Text("Unmute", comment: "Button action to unmute an account.")
-                                    .appFont(AppTextRole.caption)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(Color.gray.opacity(0.2))
-                                    .foregroundStyle(.primary)
-                                    .cornerRadius(8)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.catbird(.tonal, size: .sm))
                         }
                     }
                 }

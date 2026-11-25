@@ -45,7 +45,7 @@ struct UnifiedInputBar: View {
       if let onAttach = onAttachTapped {
         Button(action: onAttach) {
           Image(systemName: "plus.circle.fill")
-            .font(.title2)
+            .appFont(AppTextRole.title2)
             .foregroundStyle(.secondary)
         }
         .accessibilityLabel("Attach media")
@@ -82,7 +82,7 @@ struct UnifiedInputBar: View {
       if canSend {
         Button(action: sendMessage) {
           Image(systemName: "arrow.up.circle.fill")
-            .font(.title2)
+            .appFont(AppTextRole.title2)
             .foregroundStyle(Color.accentColor)
         }
         .animation(.easeInOut(duration: 0.2), value: canSend)
@@ -91,7 +91,7 @@ struct UnifiedInputBar: View {
       } else if let onMic = onMicTapped {
         Button(action: onMic) {
           Image(systemName: "mic.circle.fill")
-            .font(.title2)
+            .appFont(AppTextRole.title2)
             .foregroundStyle(isRecording ? Color.red : Color.secondary)
         }
         .animation(.easeInOut(duration: 0.2), value: isRecording)
@@ -100,7 +100,7 @@ struct UnifiedInputBar: View {
       } else {
         Button(action: sendMessage) {
           Image(systemName: "arrow.up.circle.fill")
-            .font(.title2)
+            .appFont(AppTextRole.title2)
             .foregroundStyle(Color.secondary.opacity(0.5))
         }
         .disabled(true)
@@ -117,12 +117,12 @@ struct UnifiedInputBar: View {
     HStack {
       VStack(alignment: .leading, spacing: 4) {
         Text(embedTitle(for: embed))
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .fontWeight(.medium)
           .lineLimit(1)
 
         Text(embedSubtitle(for: embed))
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundStyle(.secondary)
           .lineLimit(1)
       }

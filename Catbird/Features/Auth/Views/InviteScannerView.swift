@@ -99,13 +99,13 @@ public struct InviteScannerView: View {
                 Spacer()
                 
                 ZStack {
-                    RoundedRectangle(cornerRadius: 24)
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
                         .stroke(Color.white.opacity(0.8), lineWidth: 3)
                         .frame(width: 260, height: 260)
                     
                     VStack(spacing: 8) {
                         Image(systemName: "viewfinder")
-                            .font(.system(size: 40))
+                            .appFont(size: 40, weight: .regular, relativeTo: .body)
                             .foregroundStyle(.white.opacity(0.8))
                     }
                 }
@@ -113,7 +113,7 @@ public struct InviteScannerView: View {
                 Spacer()
                 
                 Text("Align the QR code within the frame")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .fontWeight(.medium)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 16)
@@ -132,17 +132,17 @@ public struct InviteScannerView: View {
             Spacer()
             
             Image(systemName: "camera.badge.ellipsis")
-                .font(.system(size: 64))
+                .appFont(size: 64, weight: .regular, relativeTo: .body)
                 .foregroundStyle(.white.opacity(0.8))
             
             VStack(spacing: 8) {
                 Text("Camera Access Needed")
-                    .font(.title2)
+                    .appFont(AppTextRole.title2)
                     .fontWeight(.bold)
                     .foregroundStyle(.white)
                 
                 Text("Turn on camera access for Catbird in Settings to scan Bluesky profile QR codes.")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundStyle(.white.opacity(0.7))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
@@ -160,17 +160,13 @@ public struct InviteScannerView: View {
                 } label: {
                     Text("Open Settings")
                         .fontWeight(.semibold)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .background(Color.accentColor)
-                        .foregroundColor(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
+                .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
                 
                 Button("Enter Handle Manually") {
                     showManualEntry = true
                 }
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundStyle(.white.opacity(0.8))
                 .padding(.top, 4)
             }
@@ -187,17 +183,17 @@ public struct InviteScannerView: View {
             Spacer()
             
             Image(systemName: "camera.slash.fill")
-                .font(.system(size: 64))
+                .appFont(size: 64, weight: .regular, relativeTo: .body)
                 .foregroundStyle(.white.opacity(0.8))
             
             VStack(spacing: 8) {
                 Text("QR Scanning Unavailable")
-                    .font(.title2)
+                    .appFont(AppTextRole.title2)
                     .fontWeight(.bold)
                     .foregroundStyle(.white)
                 
                 Text("QR code scanning isn’t available on this device. You can enter a handle instead.")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundStyle(.white.opacity(0.7))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
@@ -211,12 +207,8 @@ public struct InviteScannerView: View {
                 } label: {
                     Text("Enter Handle Manually")
                         .fontWeight(.semibold)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .background(Color.accentColor)
-                        .foregroundColor(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
+                .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 24)
@@ -231,20 +223,20 @@ public struct InviteScannerView: View {
             VStack(spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Bluesky Handle", comment: "Field label for manually entering a Bluesky handle.")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                     
                     TextField(text: $manualHandleInput, prompt: Text(verbatim: "alice.bsky.social")) {
                         Text("Bluesky Handle", comment: "Accessibility label for manually entering a Bluesky handle.")
                     }
-                        .font(.body)
+                        .appFont(AppTextRole.body)
                         #if os(iOS)
                         .autocapitalization(.none)
                         .disableAutocorrection(true)
                         #endif
                         .padding(14)
                         .background(Color(platformColor: .platformSecondarySystemGroupedBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 20)
@@ -260,12 +252,8 @@ public struct InviteScannerView: View {
                 } label: {
                     Text("Go to Profile")
                         .fontWeight(.semibold)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .background(Color.accentColor)
-                        .foregroundColor(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
+                .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
                 .disabled(manualHandleInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .padding(.horizontal, 20)
                 .padding(.bottom, 24)

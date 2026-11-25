@@ -14,17 +14,17 @@ struct SensitiveContentModalView: View {
           .foregroundStyle(.yellow)
 
         Text("This image may contain sensitive content")
-          .font(.headline)
+          .appFont(AppTextRole.headline)
           .multilineTextAlignment(.center)
 
         if canReveal {
           Text("Someone sent you an image that may not be appropriate. You can choose to view it or go back.")
-            .font(.body)
+            .appFont(AppTextRole.body)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
         } else {
           Text("This image has been hidden because it may contain nudity or adult content.")
-            .font(.body)
+            .appFont(AppTextRole.body)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
         }
@@ -33,12 +33,11 @@ struct SensitiveContentModalView: View {
 
         VStack(spacing: 12) {
           Button("Go Back", role: .cancel, action: onDismiss)
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
+            .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
 
           if canReveal {
             Button("Show Image", action: onReveal)
-              .font(.callout)
+              .appFont(AppTextRole.callout)
               .foregroundStyle(.secondary)
           }
         }

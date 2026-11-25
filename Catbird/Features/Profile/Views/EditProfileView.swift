@@ -80,7 +80,7 @@ struct EditProfileView: View {
             // Bio
             VStack(alignment: .leading, spacing: 8) {
               Label("Bio", systemImage: "text.alignleft")
-                .font(.subheadline.weight(.medium))
+                .appFont(AppTextRole.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
 
               TextEditor(text: $description)
@@ -102,7 +102,7 @@ struct EditProfileView: View {
                   "\(description.count)/\(bioCharLimit)",
                   comment: "Character count indicator — %1$lld is the current character count, %2$lld is the maximum allowed."
                 )
-                  .font(.caption2)
+                  .appFont(AppTextRole.caption2)
                   .foregroundStyle(description.count > bioCharLimit ? .red : .secondary)
               }
             }
@@ -117,7 +117,7 @@ struct EditProfileView: View {
               Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
               Text(errorMessage)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.red)
             }
             .padding(.horizontal, 20)
@@ -183,7 +183,7 @@ struct EditProfileView: View {
           Color.black.opacity(0.2)
 
           Image(systemName: "camera.fill")
-            .font(.title3)
+            .appFont(AppTextRole.title3)
             .foregroundStyle(.white)
         }
         .frame(height: 150)
@@ -206,7 +206,7 @@ struct EditProfileView: View {
             .frame(width: 80, height: 80)
 
           Image(systemName: "camera.fill")
-            .font(.body)
+            .appFont(AppTextRole.body)
             .foregroundStyle(.white)
         }
         .overlay(
@@ -272,7 +272,7 @@ struct EditProfileView: View {
       Circle().fill(Color.systemGray4)
         .overlay(
           Image(systemName: "person.fill")
-            .font(.title)
+            .appFont(AppTextRole.title1)
             .foregroundStyle(.white)
         )
     }
@@ -289,7 +289,7 @@ struct EditProfileView: View {
   ) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       Label(title, systemImage: icon)
-        .font(.subheadline.weight(.medium))
+        .appFont(AppTextRole.subheadline.weight(.medium))
         .foregroundStyle(.secondary)
 
       TextField(placeholder ?? title, text: text)
@@ -310,7 +310,7 @@ struct EditProfileView: View {
             "\(text.wrappedValue.count)/\(limit)",
             comment: "Character count indicator — %1$lld is the current character count, %2$lld is the maximum allowed."
           )
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .foregroundStyle(text.wrappedValue.count > limit ? .red : .secondary)
         }
       }

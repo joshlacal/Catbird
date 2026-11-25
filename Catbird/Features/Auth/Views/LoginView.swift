@@ -304,13 +304,12 @@ struct LoginView: View {
                                     appStateManager.authentication.resetError()
                                 }
                             }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(.catbird(.tonal, size: .md))
                             .padding(.top, 4)
                         }
                         .padding()
                         .frame(maxWidth: min(geometry.size.width * 0.9, 400))
-                        .background(.quaternary)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .catbirdCard(.panel)
                         .padding(.horizontal)
                     }
                     
@@ -335,7 +334,7 @@ struct LoginView: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
                         .background(Color.systemBackground.opacity(0.9))
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .shadow(color: .black.opacity(0.1), radius: 1, x: 0, y: 1)
                         .padding(.bottom, 8)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -611,10 +610,6 @@ struct LoginView: View {
                 enterAuthModeAfterAgreement(.login)
             } label: {
                 Text("Sign In", comment: "Primary button to begin signing in to an existing Bluesky account.")
-                    .appFont(AppTextRole.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .frame(minHeight: 44)
             }
             .modifier(PrimaryButtonModifier())
             .accessibilityIdentifier("login.signIn")
@@ -625,10 +620,6 @@ struct LoginView: View {
                 enterAuthModeAfterAgreement(.signup)
             } label: {
                 Text("Create Account")
-                    .appFont(AppTextRole.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .frame(minHeight: 44)
             }
             .modifier(PrimaryButtonModifier())
             .accessibilityIdentifier("login.createAccount")
@@ -638,7 +629,7 @@ struct LoginView: View {
                 Button { showSavedAccounts = true } label: {
                     Text("Saved Accounts")
                         .appFont(AppTextRole.subheadline)
-                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .frame(maxWidth: .infinity, minHeight: ControlHeight.lg)
                 }
                 .modifier(SecondaryAuthButtonModifier())
                 .disabled(isLoggingIn || appStateManager.authentication.state.isAuthenticating)
@@ -900,13 +891,12 @@ struct LoginView: View {
             } label: {
                 Text(verbatim: "Reset to Defaults")
                     .appFont(AppTextRole.caption)
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(Color.accentColor)
             }
             .buttonStyle(.plain)
         }
         .padding()
-        .background(.quaternary.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .catbirdCard(.panel)
         .frame(maxWidth: min(geometry.size.width * 0.9, 400))
         .transition(.opacity.combined(with: .move(edge: .top)))
     }
@@ -962,8 +952,7 @@ struct LoginView: View {
         }
         .frame(maxWidth: min(geometry.size.width * 0.9, 400))
         .padding()
-        .background(.quaternary)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .catbirdCard(.panel)
     }
     
     private func actionButton(geometry: GeometryProxy) -> some View {
@@ -972,13 +961,9 @@ struct LoginView: View {
         } label: {
             Label {
                 Text(authModeActionButtonText())
-                    .appFont(AppTextRole.headline)
             } icon: {
                 Image(systemName: authModeActionIcon())
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .frame(minHeight: 44)
         }
         .modifier(PrimaryButtonModifier())
         .frame(maxWidth: min(geometry.size.width * 0.9, 400))
@@ -1676,33 +1661,25 @@ struct SecondaryAuthButtonModifier: ViewModifier {
                 .buttonStyle(.borderedProminent)
                 .tint(Color.systemBackground)
                 .foregroundStyle(.primary)
-                .buttonBorderShape(.roundedRectangle(radius: 16))
+                .buttonBorderShape(.capsule)
         } else if #available(iOS 26.0, macOS 26.0, *) {
             content
                 .buttonStyle(.glass)
-                .buttonBorderShape(.roundedRectangle(radius: 16))
+                .buttonBorderShape(.capsule)
         } else {
             content
                 .buttonStyle(.bordered)
                 .tint(.white)
-                .buttonBorderShape(.roundedRectangle(radius: 16))
+                .buttonBorderShape(.capsule)
         }
     }
 }
 
-/// The native glass button style supplies pressed, focused and disabled feedback.
+/// Primary sign-in CTA. Uses the shared Catbird button style so the sky
+/// screen matches every other full-width primary action in the app.
 struct PrimaryButtonModifier: ViewModifier {
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-
     func body(content: Content) -> some View {
-        Group {
-            if #available(iOS 26.0, macOS 26.0, *), !reduceTransparency {
-                content.buttonStyle(.glassProminent)
-            } else {
-                content.buttonStyle(.borderedProminent)
-            }
-        }
-        .tint(.accentColor)
-        .buttonBorderShape(.roundedRectangle(radius: 16))
+        content
+            .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
     }
 }

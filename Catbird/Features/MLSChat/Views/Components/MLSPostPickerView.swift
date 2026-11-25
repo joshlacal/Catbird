@@ -84,7 +84,7 @@ struct MLSPostPickerView: View {
           await loadPosts()
         }
       }
-      .buttonStyle(.bordered)
+      .buttonStyle(.catbird(.tonal))
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
@@ -123,6 +123,7 @@ struct MLSPostPickerView: View {
           PostPickerRow(post: post)
         }
         .buttonStyle(.plain)
+        .listRowInsets(EdgeInsets(top: 0, leading: Space.sm, bottom: 0, trailing: Space.sm))
       }
     }
     .listStyle(.plain)
@@ -172,21 +173,34 @@ struct MLSPostPickerView: View {
 private struct PostPickerRow: View {
   let post: AppBskyFeedDefs.PostView
 
-  var body: some View {
-    HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
-      VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-        // Post text
-        if case let .knownType(record) = post.record,
-           let feedPost = record as? AppBskyFeedPost,
-           !feedPost.text.isEmpty {
-          Text(feedPost.text)
-            .designBody()
-            .lineLimit(3)
-            .multilineTextAlignment(.leading)
-        }
+  private var bodyText: String {
+    if case let .knownType(record) = post.record, let feedPost = record as? AppBskyFeedPost {
+      return feedPost.text
+    }
+    return ""
+  }
 
+  private var thumbURL: URL? {
+    if case .appBskyEmbedImagesView(let images) = post.embed, let first = images.images.first {
+      return URL(string: first.thumb.uriString())
+    }
+    return nil
+  }
+
+  var body: some View {
+    HStack(alignment: .top, spacing: Space.sm) {
+      CompactPostCard(
+        avatarURL: post.author.avatar.flatMap { URL(string: $0.uriString()) },
+        displayName: post.author.displayName ?? post.author.handle.description,
+        handle: post.author.handle.description,
+        text: bodyText,
+        imageURL: thumbURL,
+        did: post.author.did.didString(),
+        lineLimit: 3,
+        showsChrome: false
+      ) {
         // Metadata
-        HStack(spacing: DesignTokens.Spacing.sm) {
+        HStack(spacing: Space.sm) {
           Text(post.indexedAt.date.formatted(date: .abbreviated, time: .omitted))
             .designCaption()
             .foregroundColor(.secondary)
@@ -213,16 +227,13 @@ private struct PostPickerRow: View {
         }
       }
 
-      Spacer()
-
-      // Indicator that post has images
-      if let embed = post.embed, hasImages(embed) {
+      // Indicator that a post has images but no inline thumbnail (e.g. galleries)
+      if thumbURL == nil, let embed = post.embed, hasImages(embed) {
         Image(systemName: "photo")
           .font(.system(size: 20))
           .foregroundColor(.secondary)
       }
     }
-    .padding(.vertical, DesignTokens.Spacing.xs)
   }
 
   private func hasImages(_ embed: AppBskyFeedDefs.PostViewEmbedUnion) -> Bool {

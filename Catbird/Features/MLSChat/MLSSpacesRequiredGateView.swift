@@ -61,12 +61,12 @@ struct MLSSpacesRequiredGateView: View {
 
       VStack(spacing: 8) {
         Text(headlineText)
-          .font(.title3)
+          .appFont(AppTextRole.title3)
           .bold()
           .multilineTextAlignment(.center)
 
         Text(eligibility.userMessage)
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
           .padding(.horizontal, 24)
@@ -75,7 +75,7 @@ struct MLSSpacesRequiredGateView: View {
       if !missingScopes.isEmpty {
         VStack(alignment: .leading, spacing: 6) {
           Text("Missing OAuth Scopes")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .bold()
             .foregroundStyle(.secondary)
 
@@ -85,13 +85,13 @@ struct MLSSpacesRequiredGateView: View {
             } icon: {
               Image(systemName: "lock.circle")
             }
-              .font(.caption2.monospaced())
+              .appFont(AppTextRole.caption2).monospaced()
               .foregroundStyle(.primary)
           }
         }
-        .padding(12)
+        .padding(Space.md)
         .frame(maxWidth: 440, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 12))
+        .catbirdCard(.panel, radius: .md)
         .padding(.horizontal, 24)
       }
 
@@ -100,7 +100,7 @@ struct MLSSpacesRequiredGateView: View {
           "Standard Bluesky DMs remain active in your inbox.",
           systemImage: "bubble.left.and.bubble.right.fill"
         )
-        .font(.footnote)
+        .appFont(AppTextRole.footnote)
         .foregroundStyle(.secondary)
         .padding(.horizontal, 24)
       }
@@ -110,14 +110,9 @@ struct MLSSpacesRequiredGateView: View {
           Button {
             self.requestPermissions(onReauthorizeScopes)
           } label: {
-            if isRequestingPermissions {
-              ProgressView()
-                .controlSize(.small)
-            } else {
-              Label("Grant Spaces Permissions", systemImage: "person.badge.key.fill")
-            }
+            Label("Grant Spaces Permissions", systemImage: "person.badge.key.fill")
           }
-          .buttonStyle(.borderedProminent)
+          .buttonStyle(.catbird(.primary, fullWidth: true, isLoading: isRequestingPermissions))
           .disabled(isRequestingPermissions)
         }
 
@@ -125,21 +120,16 @@ struct MLSSpacesRequiredGateView: View {
           Button {
             self.triggerRefresh(onRefreshCheck)
           } label: {
-            if isRefreshing {
-              ProgressView()
-                .controlSize(.small)
-            } else {
-              Label("Check Again", systemImage: "arrow.clockwise")
-            }
+            Label("Check Again", systemImage: "arrow.clockwise")
           }
-          .buttonStyle(.bordered)
+          .buttonStyle(.catbird(.tonal, fullWidth: true, isLoading: isRefreshing))
           .disabled(isRefreshing)
         }
       }
 
       if let permissionFailure {
         Text(permissionFailure)
-          .font(.footnote)
+          .appFont(AppTextRole.footnote)
           .foregroundStyle(.red)
           .multilineTextAlignment(.center)
           .padding(.horizontal, 24)

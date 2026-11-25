@@ -35,22 +35,10 @@ struct AccountSecuritySettingsView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 6) {
                                 Text(AppState.localMLSDeviceDisplayName(shortDeviceId: localDeviceId))
-                                    .font(.subheadline.weight(.medium))
-                                Text("This Device")
-                                    .font(.caption2.weight(.semibold))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Color.blue.opacity(0.18))
-                                    .foregroundStyle(.blue)
-                                    .clipShape(Capsule())
+                                    .appFont(AppTextRole.subheadline).fontWeight(.medium)
+                                CatbirdBadge("This Device", tone: .accent)
                                 let isActive = appState.mlsCoordinator != nil
-                                Text(isActive ? "Active" : "Standby")
-                                    .font(.caption2.weight(.medium))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background((isActive ? Color.green : Color.secondary).opacity(0.16))
-                                    .foregroundStyle(isActive ? .green : .secondary)
-                                    .clipShape(Capsule())
+                                CatbirdBadge(isActive ? "Active" : "Standby", tone: isActive ? .success : .neutral)
                             }
                             Text(verbatim: "Device ID: \(localDeviceId.prefix(8))…")
                                 .font(.caption2.monospaced())

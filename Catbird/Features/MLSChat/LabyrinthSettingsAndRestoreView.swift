@@ -86,7 +86,7 @@ struct LabyrinthSettingsAndRestoreView: View {
             systemImage: "lock.trianglebadge.exclamationmark.fill"
           )
           .foregroundStyle(.orange)
-          .font(.footnote)
+          .appFont(AppTextRole.footnote)
         }
         .accessibilityIdentifier("labyrinth-device-pending-approval-banner")
       }
@@ -97,7 +97,7 @@ struct LabyrinthSettingsAndRestoreView: View {
         Section {
           Label(warningBanner, systemImage: "exclamationmark.triangle.fill")
             .foregroundStyle(.orange)
-            .font(.footnote)
+            .appFont(AppTextRole.footnote)
         }
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Recovery warning: \(warningBanner)")
@@ -109,7 +109,7 @@ struct LabyrinthSettingsAndRestoreView: View {
         Section {
           Label(statusBanner, systemImage: "checkmark.circle.fill")
             .foregroundStyle(.green)
-            .font(.footnote)
+            .appFont(AppTextRole.footnote)
         }
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Success: \(statusBanner)")
@@ -121,7 +121,7 @@ struct LabyrinthSettingsAndRestoreView: View {
         Section {
           Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
             .foregroundStyle(.red)
-            .font(.footnote)
+            .appFont(AppTextRole.footnote)
         }
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Error: \(errorMessage)")
@@ -196,7 +196,7 @@ struct LabyrinthSettingsAndRestoreView: View {
       HStack(spacing: 10) {
         ProgressView()
         Text("Working… this can take up to a minute.")
-          .font(.footnote)
+          .appFont(AppTextRole.footnote)
       }
       .padding(.horizontal, 16)
       .padding(.vertical, 10)
@@ -275,12 +275,12 @@ struct LabyrinthSettingsAndRestoreView: View {
         .accessibilityIdentifier("labyrinth-backup-status")
         if status.backupEnabled && !status.archiveEstablished {
           Text("Nothing is stored on your server yet. Backup starts with your first encrypted message, or when you create a recovery code.")
-            .font(.footnote)
+            .appFont(AppTextRole.footnote)
             .foregroundStyle(.secondary)
         }
         LabeledContent("Mailbox Space") {
           Text(verbatim: status.mailboxSpaceUri)
-            .font(.caption2.monospaced())
+            .appFont(AppTextRole.caption2).monospaced()
             .lineLimit(1)
             .truncationMode(.middle)
         }
@@ -316,21 +316,21 @@ struct LabyrinthSettingsAndRestoreView: View {
         if let failure = lastFlushOutcome?.failure {
           // The engine's own error text: endpoints and status codes, not secrets.
           Text(verbatim: failure)
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .foregroundStyle(.secondary)
             .textSelection(.enabled)
             .accessibilityIdentifier("labyrinth-last-backup-failure")
         }
         DisclosureGroup("Details for Support") {
           Text(verbatim: supportDetails(status))
-            .font(.caption2.monospaced())
+            .appFont(AppTextRole.caption2).monospaced()
             .foregroundStyle(.secondary)
             .textSelection(.enabled)
             .accessibilityIdentifier("labyrinth-support-details")
         }
       } else if coordinator == nil {
         Text("Enable MLS Encrypted Chat on an ATProto Spaces account to manage Labyrinth backups.")
-          .font(.footnote)
+          .appFont(AppTextRole.footnote)
           .foregroundStyle(.secondary)
       } else {
         ProgressView("Loading Labyrinth status...")
@@ -353,7 +353,7 @@ struct LabyrinthSettingsAndRestoreView: View {
             systemImage: "key.slash.fill"
           )
           .foregroundStyle(.red)
-          .font(.footnote)
+          .appFont(AppTextRole.footnote)
           .accessibilityIdentifier("labyrinth-unavailable-recovery-material-warning")
         }
 
@@ -363,7 +363,7 @@ struct LabyrinthSettingsAndRestoreView: View {
             systemImage: "key.fill"
           )
           .foregroundStyle(.orange)
-          .font(.footnote)
+          .appFont(AppTextRole.footnote)
           .accessibilityIdentifier("labyrinth-pending-recovery-code-warning")
         }
 
@@ -373,7 +373,7 @@ struct LabyrinthSettingsAndRestoreView: View {
             systemImage: "clock.badge.exclamationmark"
           )
           .foregroundStyle(.orange)
-          .font(.footnote)
+          .appFont(AppTextRole.footnote)
           .accessibilityLabel(
             "Recovery warning: This recovery method is older than 180 days. Recreate it before the next rotation."
           )
@@ -391,12 +391,12 @@ struct LabyrinthSettingsAndRestoreView: View {
             .foregroundStyle(.red)
 
             Text("Reason: \(exclusion.reason.replacingOccurrences(of: "-", with: " "))")
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundStyle(.secondary)
 
             if let deviceKey = exclusion.deviceKeyHex {
               Text("Device key: \(deviceKey)")
-                .font(.caption2.monospaced())
+                .appFont(AppTextRole.caption2).monospaced()
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .foregroundStyle(.secondary)
@@ -432,10 +432,10 @@ struct LabyrinthSettingsAndRestoreView: View {
       if let generatedRecoveryCode {
         VStack(alignment: .leading, spacing: 6) {
           Text("Save this 40-character recovery code in your password manager:")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
           Text(verbatim: generatedRecoveryCode)
-            .font(.footnote.monospaced())
+            .appFont(AppTextRole.footnote).monospaced()
             .textSelection(.enabled)
             .accessibilityIdentifier("labyrinth-generated-recovery-code")
         }
@@ -465,7 +465,7 @@ struct LabyrinthSettingsAndRestoreView: View {
       }
 
       TextField("Enter 40-character recovery code", text: $restoreCodeInput)
-        .font(.footnote.monospaced())
+        .appFont(AppTextRole.footnote).monospaced()
         #if os(iOS)
         .textInputAutocapitalization(.characters)
         #endif
@@ -542,13 +542,13 @@ struct LabyrinthSettingsAndRestoreView: View {
             .foregroundStyle(.secondary)
           Spacer()
           Text(verbatim: activeOtcOffer.formattedCode)
-            .font(.title3.monospaced().bold())
+            .appFont(AppTextRole.title3).monospaced().bold()
             .accessibilityIdentifier("labyrinth-otc-formatted-code")
         }
       }
 
       TextField("Enter 6-digit code from another device", text: $joinOtcCodeInput)
-        .font(.body.monospaced())
+        .appFont(AppTextRole.body).monospaced()
         #if os(iOS)
         .keyboardType(.numberPad)
         #endif
@@ -565,10 +565,10 @@ struct LabyrinthSettingsAndRestoreView: View {
       if let initiatedOtcSession {
         VStack(alignment: .leading, spacing: 4) {
           Text("Session ID (enter on authorized device):")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
           Text(verbatim: initiatedOtcSession.sessionIdHex)
-            .font(.caption2.monospaced())
+            .appFont(AppTextRole.caption2).monospaced()
             .textSelection(.enabled)
             .accessibilityIdentifier("labyrinth-otc-session-id")
         }
@@ -588,7 +588,7 @@ struct LabyrinthSettingsAndRestoreView: View {
       Divider()
 
       TextField("Responder Session ID (hex)", text: $respondOtcSessionIdInput)
-        .font(.caption.monospaced())
+        .appFont(AppTextRole.caption).monospaced()
         .autocorrectionDisabled()
         #if os(iOS)
         .textInputAutocapitalization(.never)
@@ -596,7 +596,7 @@ struct LabyrinthSettingsAndRestoreView: View {
         .accessibilityIdentifier("labyrinth-respond-otc-session-input")
 
       TextField("Responder 6-digit code", text: $respondOtcCodeInput)
-        .font(.body.monospaced())
+        .appFont(AppTextRole.body).monospaced()
         #if os(iOS)
         .keyboardType(.numberPad)
         #endif
@@ -620,7 +620,7 @@ struct LabyrinthSettingsAndRestoreView: View {
           "Paired with hybrid CPace + ML-KEM-768 (Epoch \(Int(lastOtcCompletion.newEpochSeq))).",
           comment: "Status text after post-quantum OTC device pairing completes. %lld is the new Labyrinth epoch number."
         )
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.green)
       }
     } header: {
@@ -719,28 +719,16 @@ struct LabyrinthSettingsAndRestoreView: View {
             VStack(alignment: .leading, spacing: 3) {
               HStack(spacing: 6) {
                 Label(displayName, systemImage: isThisDevice ? "laptopcomputer.and.iphone" : "iphone")
-                  .font(.subheadline.weight(.medium))
+                  .appFont(AppTextRole.subheadline).fontWeight(.medium)
                   .lineLimit(1)
                 if isThisDevice {
-                  Text("This Device")
-                    .font(.caption2.weight(.semibold))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.blue.opacity(0.18))
-                    .foregroundStyle(.blue)
-                    .clipShape(Capsule())
+                  CatbirdBadge("This Device", tone: .accent)
                     .accessibilityIdentifier("labyrinth-this-device-badge")
                 }
-                Text(state.badgeTitle)
-                  .font(.caption2.weight(.medium))
-                  .padding(.horizontal, 6)
-                  .padding(.vertical, 2)
-                  .background(state.badgeTint.opacity(0.16))
-                  .foregroundStyle(state.badgeTint)
-                  .clipShape(Capsule())
+                CatbirdBadge(Text(state.badgeTitle), tone: state.badgeTone)
               }
               Text(verbatim: deviceId)
-                .font(.caption2.monospaced())
+                .appFont(AppTextRole.caption2).monospaced()
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -751,7 +739,7 @@ struct LabyrinthSettingsAndRestoreView: View {
                 self.revokeDevice(deviceId)
               }
               .buttonStyle(.borderless)
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .accessibilityIdentifier("labyrinth-revoke-\(deviceId)")
             }
           }
@@ -759,7 +747,7 @@ struct LabyrinthSettingsAndRestoreView: View {
         }
       } else {
         Text("No active Labyrinth devices enrolled yet.")
-          .font(.footnote)
+          .appFont(AppTextRole.footnote)
           .foregroundStyle(.secondary)
       }
     }
@@ -768,7 +756,7 @@ struct LabyrinthSettingsAndRestoreView: View {
   private var historyImportSection: some View {
     Section("Conversation Space History") {
       TextField("Conversation ID to verify/sync", text: $importConversationId)
-        .font(.footnote.monospaced())
+        .appFont(AppTextRole.footnote).monospaced()
         .autocorrectionDisabled()
 
       Button {
@@ -783,7 +771,7 @@ struct LabyrinthSettingsAndRestoreView: View {
           "Verified \(Int(importedCount)) Space history messages.",
           comment: "Status label showing how many Space history messages were verified. %lld is the message count."
         )
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
       }
     }

@@ -112,7 +112,7 @@ struct GroupConfigView: View {
 
       VStack(alignment: .leading, spacing: 4) {
         Text(groupName.isEmpty ? defaultGroupName : groupName)
-          .font(.title3)
+          .appFont(AppTextRole.title3)
           .fontWeight(.semibold)
           .lineLimit(1)
 

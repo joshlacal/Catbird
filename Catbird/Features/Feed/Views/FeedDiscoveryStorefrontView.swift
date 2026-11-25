@@ -28,7 +28,7 @@ struct FeedDiscoveryStorefrontView: View {
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color(platformColor: .platformSystemBackground))
+    .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier("feed.discovery.storefront")
     .searchable(text: $searchModel.query, prompt: "Search feeds")
@@ -104,22 +104,7 @@ struct FeedDiscoveryStorefrontView: View {
     isSelected: Bool,
     action: @escaping () -> Void
   ) -> some View {
-    Button(action: action) {
-      HStack(spacing: 5) {
-        Image(systemName: symbol)
-          .font(.caption.weight(.semibold))
-        Text(title)
-          .appFont(AppTextRole.subheadline)
-          .fontWeight(isSelected ? .semibold : .regular)
-      }
-      .padding(.horizontal, 12)
-      .padding(.vertical, 7)
-      .foregroundStyle(isSelected ? Color.white : Color.primary)
-      .background(isSelected ? Color.accentColor : Color.secondary.opacity(0.12), in: Capsule())
-      .contentShape(Capsule())
-    }
-    .buttonStyle(.plain)
-    .accessibilityAddTraits(isSelected ? .isSelected : [])
+    CatbirdChip(title: Text(verbatim: title), systemImage: symbol, isSelected: isSelected, action: action)
   }
 
   @ViewBuilder
@@ -282,8 +267,7 @@ extension FeedDiscoveryStorefrontView {
           Button("Load More \(category.shortTitle) Feeds") {
             storefront.loadCategoryIfNeeded(category, loadMore: true)
           }
-          .buttonStyle(.bordered)
-          .frame(maxWidth: .infinity, minHeight: 44)
+          .buttonStyle(.catbird(.tonal, fullWidth: true))
           .padding(.horizontal, 16)
         }
       }
@@ -313,8 +297,8 @@ extension FeedDiscoveryStorefrontView {
           .font(.footnote.weight(.semibold))
           .foregroundStyle(.tertiary)
       }
-      .padding(14)
-      .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+      .padding(Space.md)
+      .catbirdCard(.panel)
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
@@ -340,8 +324,7 @@ extension FeedDiscoveryStorefrontView {
             Text("No feeds found for “\(searchModel.resultQuery.isEmpty ? searchModel.normalizedQuery : searchModel.resultQuery)”.")
           } actions: {
             Button("Back to Storefront") { searchModel.query = "" }
-              .buttonStyle(.bordered)
-              .frame(minHeight: 44)
+              .buttonStyle(.catbird(.tonal))
           }
           .padding(.vertical, 48)
         } else {
@@ -380,8 +363,7 @@ extension FeedDiscoveryStorefrontView {
       ProgressView("Loading more feeds…").frame(maxWidth: .infinity)
     } else if searchModel.cursor != nil {
       Button("Load More Feeds") { searchModel.loadMore() }
-        .buttonStyle(.bordered)
-        .frame(maxWidth: .infinity, minHeight: 44)
+        .buttonStyle(.catbird(.tonal, fullWidth: true))
         .disabled(searchModel.isRefreshing || searchModel.normalizedQuery != searchModel.resultQuery)
     }
   }

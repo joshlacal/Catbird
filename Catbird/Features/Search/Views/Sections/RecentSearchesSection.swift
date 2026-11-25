@@ -157,17 +157,10 @@ public struct RecentSearchesSection: View {
           Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
 
       if filterCount > 0 {
-        HStack(spacing: 3) {
-          Image(systemName: "line.3.horizontal.decrease")
-            .appFont(AppTextRole.caption2)
-          Text(filterCount, format: .number)
-            .appFont(AppTextRole.caption2)
-            .fontWeight(.semibold)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .foregroundStyle(Color.accentColor)
-        .background(Color.accentColor.opacity(0.12), in: Capsule())
+        CatbirdBadge(
+          Text(filterCount, format: .number), systemImage: "line.3.horizontal.decrease",
+          tone: .accent
+        )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
           Text(

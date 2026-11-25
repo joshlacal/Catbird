@@ -47,10 +47,10 @@ public struct StarterPackQRCodeCard: View {
                 qrCardContent(avatar: nil)
                     .padding(24)
                     .background(Color.systemBackground)
-                    .cornerRadius(20)
+                    .catbirdClip(.xl)
                     .shadow(color: Color.black.opacity(0.1), radius: 10, x: 0, y: 4)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 20)
+                        Radius.xl.shape
                             .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
                     )
                     .padding(.horizontal, 20)
@@ -67,11 +67,8 @@ public struct StarterPackQRCodeCard: View {
                             Text("Export QR Card")
                                 .fontWeight(.semibold)
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Capsule().fill(Color.accentColor))
-                        .foregroundColor(.white)
                     }
+                    .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
                     .padding(.horizontal, 24)
                     #endif
                 }
@@ -161,9 +158,9 @@ public struct StarterPackQRCodeCard: View {
             }
             .padding(12)
             .background(Color.white)
-            .cornerRadius(12)
+            .catbirdClip(.md)
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
+                Radius.md.shape
                     .stroke(Color.gray.opacity(0.2), lineWidth: 1)
             )
             

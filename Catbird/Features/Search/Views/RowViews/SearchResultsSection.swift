@@ -120,21 +120,12 @@ struct NoResultsView: View {
             // SRCH-011: Enhanced action button with glass effect
             if let actionLabel = actionLabel, let action = action {
                 Button(action: action) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: Space.sm) {
                         Image(systemName: "arrow.counterclockwise")
-                            .appFont(AppTextRole.subheadline)
-                        
                         Text(actionLabel)
-                            .appFont(AppTextRole.subheadline.weight(.medium))
                     }
-                    .foregroundColor(.white)
-                    .padding(.vertical, 12)
-                    .padding(.horizontal, 24)
-                    .background(
-                        Capsule()
-                            .fill(Color.accentColor)
-                    )
                 }
+                .buttonStyle(.catbird(.primary, size: .lg))
                 .padding(.top, 8)
             }
         }
@@ -200,22 +191,12 @@ struct SearchErrorView: View {
             // Action buttons
             VStack(spacing: 12) {
                 Button(action: retryAction) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: Space.sm) {
                         Image(systemName: "arrow.counterclockwise")
-                            .appFont(AppTextRole.subheadline)
-                        
                         Text("Try Again")
-                            .appFont(AppTextRole.subheadline.weight(.medium))
                     }
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(
-                        Capsule()
-                            .fill(Color.accentColor)
-                    )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
             }
             .padding(.horizontal, 32)
         }

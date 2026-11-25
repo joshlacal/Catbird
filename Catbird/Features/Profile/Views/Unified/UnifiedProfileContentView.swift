@@ -286,7 +286,7 @@ struct UnifiedProfileContentView: View {
             Button("Load More") {
               Task { await viewModel.loadMoreReplies() }
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.catbird(.tonal, size: .sm))
           }
         }
         .frame(maxWidth: .infinity, minHeight: 160)
@@ -320,7 +320,7 @@ struct UnifiedProfileContentView: View {
             Button("Load More") {
               Task { await viewModel.loadMoreMediaPosts() }
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.catbird(.tonal, size: .sm))
           }
         }
         .frame(maxWidth: .infinity, minHeight: 160)
@@ -698,7 +698,7 @@ private struct ProfileFeedTabView: View {
             Button("Load More") {
               Task { await loadAction() }
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.catbird(.tonal, size: .sm))
           }
         }
         .frame(maxWidth: .infinity, minHeight: 160)

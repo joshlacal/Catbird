@@ -191,16 +191,14 @@ extension FeedDiscoveryBrowser {
       layout {
         // Library status (Add, Saved or Pinned) is a stateful control; Open Feed navigates.
         // A neighboring page may be visible mid-swipe, but cannot mutate a feed.
-        FeedLibraryControls(feed: feed, onOpen: { onOpen(feed) }, minimumLabelHeight: 30,
-                           statusChip: true)
-          .buttonBorderShape(.capsule)
+        FeedLibraryButton(
+          feed: feed, size: .regular, onOpen: { onOpen(feed) }, showsStatus: true, showsEducation: true)
           .id(feed.id)
         if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
         Button { onOpen(feed) } label: {
           Label("Open Feed", systemImage: "arrow.up.forward")
-            .frame(minHeight: 44)
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.catbird(.quiet, size: .md))
         .accessibilityIdentifier("feed.discovery.open")
       }
       .disabled(selectedFeed?.id != feed.id)
@@ -239,8 +237,7 @@ extension FeedDiscoveryBrowser {
 
   private var retryPreviewButton: some View {
     Button("Try Again") { retryGeneration += 1 }
-      .buttonStyle(.bordered)
-      .frame(minHeight: 44)
+      .buttonStyle(.catbird(.tonal))
   }
 
   @ViewBuilder private var discoveryStatus: some View {
@@ -282,8 +279,7 @@ extension FeedDiscoveryBrowser {
       ProgressView("Loading more feeds…").frame(maxWidth: .infinity)
     } else if model.cursor != nil {
       Button("Load More Feeds") { model.loadMore() }
-        .buttonStyle(.bordered)
-        .frame(minHeight: 44)
+        .buttonStyle(.catbird(.tonal))
         .disabled(model.isRefreshing || model.normalizedQuery != model.resultQuery)
     }
   }

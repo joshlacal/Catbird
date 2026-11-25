@@ -318,7 +318,7 @@ struct MLSDirectComposeView: View {
       Form {
         Section("Recipient") {
           Text(draft.recipientDisplayName ?? draft.recipientHandle.map { "@\($0)" } ?? draft.recipientDID)
-            .font(.headline)
+            .appFont(AppTextRole.headline)
         }
         Section("Opening Encrypted Message") {
           TextEditor(text: $messageText)
@@ -327,7 +327,7 @@ struct MLSDirectComposeView: View {
         if let capability = recipientCapability, let notice = ChatFailureMessage.text(for: capability) {
           Section {
             Text(notice)
-              .font(.footnote)
+              .appFont(AppTextRole.footnote)
               .foregroundStyle(.secondary)
             if case .unknown = capability {
               Button("Try again") {
@@ -336,7 +336,7 @@ struct MLSDirectComposeView: View {
               .disabled(isSubmitting)
             } else {
               Text("You can send them a Bluesky DM from New Message.")
-                .font(.footnote)
+                .appFont(AppTextRole.footnote)
                 .foregroundStyle(.secondary)
             }
           }
@@ -345,7 +345,7 @@ struct MLSDirectComposeView: View {
           Section {
             Text(errorMessage)
               .foregroundStyle(.red)
-              .font(.footnote)
+              .appFont(AppTextRole.footnote)
           }
         }
       }
@@ -452,7 +452,7 @@ struct MLSGroupInvitationNotesView: View {
       Section("Recipients (\(batch.recipients.count))") {
         ForEach(batch.recipients, id: \.self) { recipient in
           Text(verbatim: recipient)
-            .font(.footnote.monospaced())
+            .appFont(AppTextRole.footnote).monospaced()
         }
       }
       Section {
@@ -514,7 +514,7 @@ struct MLSRequestConversationGate<Content: View>: View {
         .font(.system(size: 44))
         .foregroundStyle(.secondary)
       Text("Encrypted Chat Request")
-        .font(.title3.bold())
+        .appFont(AppTextRole.title3).bold()
       if let previewText = request.previewText {
         Text(verbatim: previewText)
           .multilineTextAlignment(.center)
@@ -526,7 +526,7 @@ struct MLSRequestConversationGate<Content: View>: View {
       }
       if let errorMessage {
         Text(errorMessage)
-          .font(.footnote)
+          .appFont(AppTextRole.footnote)
           .foregroundStyle(.red)
       }
       Spacer()
@@ -537,7 +537,7 @@ struct MLSRequestConversationGate<Content: View>: View {
           Text("Decline")
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.catbird(.destructive, fullWidth: true))
         .disabled(isMutating)
 
         Button {
@@ -546,7 +546,7 @@ struct MLSRequestConversationGate<Content: View>: View {
           Text("Accept")
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.catbird(.primary, fullWidth: true))
         .disabled(isMutating)
       }
       .padding()
@@ -632,7 +632,7 @@ struct BlockChatSenderSheet: View {
           Section {
             Text(errorMessage)
               .foregroundStyle(.red)
-              .font(.footnote)
+              .appFont(AppTextRole.footnote)
           }
         }
       }
@@ -709,7 +709,7 @@ struct MLSReportSpamSheet: View {
           Section {
             Text(errorMessage)
               .foregroundStyle(.red)
-              .font(.footnote)
+              .appFont(AppTextRole.footnote)
           }
         }
       }
@@ -1402,10 +1402,10 @@ struct MLSPendingGroupCreationBanner: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       Label("Pending Encrypted Group Creation", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
-        .font(.subheadline.weight(.semibold))
+        .appFont(AppTextRole.subheadline).fontWeight(.semibold)
         .foregroundStyle(.orange)
       Text(statusMessage)
-        .font(.footnote)
+        .appFont(AppTextRole.footnote)
         .foregroundStyle(.secondary)
       HStack(spacing: 12) {
         Button {
@@ -1413,8 +1413,7 @@ struct MLSPendingGroupCreationBanner: View {
         } label: {
           Label("Retry Setup", systemImage: "arrow.clockwise")
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.small)
+        .buttonStyle(.catbird(.primary, size: .sm))
         .disabled(isBusy)
         .accessibilityIdentifier("mls-pending-group-retry")
 
@@ -1423,15 +1422,14 @@ struct MLSPendingGroupCreationBanner: View {
         } label: {
           Text("Cancel Group")
         }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
+        .buttonStyle(.catbird(.destructive, size: .sm))
         .disabled(isBusy)
         .accessibilityIdentifier("mls-pending-group-cancel")
       }
     }
     .padding(12)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     .accessibilityIdentifier("mls-pending-group-banner")
   }
 }

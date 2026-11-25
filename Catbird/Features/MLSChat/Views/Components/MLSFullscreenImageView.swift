@@ -139,7 +139,7 @@ struct MLSFullscreenImageView: View {
             liveTextEnabled.toggle()
           } label: {
             Image(systemName: liveTextEnabled ? "text.viewfinder.fill" : "text.viewfinder")
-              .font(.title3)
+              .appFont(AppTextRole.title3)
               .foregroundColor(.white)
               .frame(width: 44, height: 44)
           }
@@ -149,7 +149,7 @@ struct MLSFullscreenImageView: View {
           shareImage()
         } label: {
           Image(systemName: "square.and.arrow.up")
-            .font(.title3)
+            .appFont(AppTextRole.title3)
             .foregroundColor(.white)
             .frame(width: 44, height: 44)
         }
@@ -158,7 +158,7 @@ struct MLSFullscreenImageView: View {
           dismiss()
         } label: {
           Image(systemName: "xmark")
-            .font(.title3)
+            .appFont(AppTextRole.title3)
             .foregroundColor(.white)
             .frame(width: 44, height: 44)
         }

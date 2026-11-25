@@ -147,13 +147,10 @@ struct ModeratedAccountsSettingsView: View {
               Text(verbatim: "@\(entry.handle)").appFont(AppTextRole.subheadline).foregroundStyle(.secondary)
             }
             Spacer()
-            if model.removing.contains(entry.did) { ProgressView().controlSize(.small) }
-            else {
-              Button(kind.action) { selectedEntry = entry; showConfirmation = true }
-                .buttonStyle(.borderless)
-                .disabled(model.isLoading || !model.removing.isEmpty)
-                .accessibilityLabel(kind == .blocked ? Text("Unblock @\(entry.handle)", comment: "Accessibility label to unblock an account by handle.") : Text("Unmute @\(entry.handle)", comment: "Accessibility label to unmute an account by handle."))
-            }
+            Button(kind.action) { selectedEntry = entry; showConfirmation = true }
+              .buttonStyle(.catbird(.tonal, size: .sm, isLoading: model.removing.contains(entry.did)))
+              .disabled(model.isLoading || !model.removing.isEmpty)
+              .accessibilityLabel(kind == .blocked ? Text("Unblock @\(entry.handle)", comment: "Accessibility label to unblock an account by handle.") : Text("Unmute @\(entry.handle)", comment: "Accessibility label to unmute an account by handle."))
           }
         }
         if model.isLoading { ProgressView("Loading accounts…") }

@@ -146,7 +146,7 @@ struct ListAvatarView: View {
         endPoint: .bottomTrailing
       )
       Image(systemName: list.purpose.symbolName)
-        .font(.system(size: size * 0.4, weight: .semibold))
+        .appFont(size: size * 0.4, weight: .semibold)
         .foregroundStyle(.white)
     }
   }
@@ -164,7 +164,7 @@ struct ListPurposeBadge: View {
         .imageScale(.small)
       Text(purpose.shortLabel)
     }
-    .font(.caption2.weight(.semibold))
+    .appFont(AppTextRole.caption2).fontWeight(.semibold)
     .foregroundStyle(purpose.tint)
     .padding(.horizontal, 7)
     .padding(.vertical, 3)
@@ -211,7 +211,7 @@ struct ListSummaryRow: View {
 
       if showsDisclosureIndicator {
         Image(systemName: "chevron.forward")
-          .font(.footnote.weight(.semibold))
+          .appFont(AppTextRole.footnote).fontWeight(.semibold)
           .foregroundStyle(.tertiary)
           .accessibilityHidden(true)
       }
@@ -281,7 +281,7 @@ private func previewList(
         HStack(spacing: 14) {
           ListAvatarView(list: first, size: 64)
           VStack(alignment: .leading, spacing: 6) {
-            Text(first.name).font(.title3.bold())
+            Text(first.name).appFont(AppTextRole.title3).fontWeight(.bold)
             ListPurposeBadge(purpose: first.purpose)
           }
         }

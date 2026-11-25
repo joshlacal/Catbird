@@ -751,7 +751,7 @@ struct RefinedSearchView: View {
 
                     if let badgeKind = VerificationBadge.kind(for: profile.verification, did: profile.did) {
                         VerificationBadgeView(kind: badgeKind)
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                     }
                     if AutomationBadge.isSelfDeclared(labels: profile.labels, authorDID: profile.did) {
                         AutomationBadgeView()
@@ -772,7 +772,7 @@ struct RefinedSearchView: View {
             }
             Spacer(minLength: 8)
             Image(systemName: "chevron.forward")
-                .font(.caption.weight(.semibold))
+                .appFont(AppTextRole.caption.weight(.semibold))
                 .foregroundStyle(.tertiary)
                 .accessibilityHidden(true)
         }

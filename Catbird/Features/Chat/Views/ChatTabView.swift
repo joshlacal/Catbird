@@ -473,7 +473,7 @@ struct ChatTabView: View {
             Label("Mute", systemImage: "bell.slash")
           }
         }
-        .tint(convo.isMuted ? .blue : .orange)
+        .tint(convo.isMuted ? Color.accentColor : .orange)
       }
     }
   }
@@ -1212,7 +1212,7 @@ private struct ConditionalSwipeActions: ViewModifier {
               Label("Mute", systemImage: "bell.slash")
             }
           }
-          .tint(conversation.muted ? .blue : .orange)
+          .tint(conversation.muted ? Color.accentColor : .orange)
         }
         .alert("Leave Conversation?", isPresented: $showingLeaveAlert) {
           Button("Cancel", role: .cancel) { }

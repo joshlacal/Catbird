@@ -245,7 +245,7 @@ struct FeedPreviewScreenshotCard: View {
               }
               .frame(height: 120)
               .frame(maxWidth: .infinity)
-              .clipShape(.rect(cornerRadius: 10, style: .continuous))
+              .clipShape(.rect(cornerRadius: Radius.md.value, style: .continuous))
             }
           }
         }
@@ -276,13 +276,13 @@ struct FeedPreviewScreenshotCard: View {
       .frame(minHeight: 196, alignment: .topLeading)
       .background(
         Color(platformColor: .platformSecondarySystemBackground),
-        in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        in: RoundedRectangle(cornerRadius: Radius.lg.value, style: .continuous)
       )
       .overlay(
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
+        RoundedRectangle(cornerRadius: Radius.lg.value, style: .continuous)
           .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.75)
       )
-      .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+      .contentShape(RoundedRectangle(cornerRadius: Radius.lg.value, style: .continuous))
     }
     .buttonStyle(.plain)
   }

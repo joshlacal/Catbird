@@ -42,6 +42,7 @@ struct CirclesFeedView: View {
         ProgressView("Loading Circles...")
       }
     }
+    .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     .navigationTitle("Circles")
 #if os(iOS)
     .navigationBarTitleDisplayMode(.inline)
@@ -158,7 +159,7 @@ struct CirclesFeedView: View {
           try? await model.load()
         }
       }
-      .buttonStyle(.bordered)
+      .buttonStyle(.catbird(.tonal, size: .md))
     }
   }
 
@@ -174,7 +175,7 @@ struct CirclesFeedView: View {
           try? await model.load()
         }
       }
-      .buttonStyle(.borderedProminent)
+      .buttonStyle(.catbird(.primary, size: .md))
     }
   }
 
@@ -332,7 +333,7 @@ struct CirclesFeedView: View {
           await authorizeCircles(model: model)
         }
       }
-      .buttonStyle(.borderedProminent)
+      .buttonStyle(.catbird(.primary, size: .md))
       .disabled(authCoordinator.state == .authorizing)
       .accessibilityIdentifier("circles.authorizeAppView")
     }
@@ -353,24 +354,17 @@ struct CirclesFeedView: View {
 
   @ViewBuilder
   private func errorBanner(message: String, model: CircleFeedModel) -> some View {
-    HStack {
-      Image(systemName: "exclamationmark.circle.fill")
-        .foregroundStyle(.orange)
-      Text(message)
-        .font(.caption)
-        .lineLimit(2)
-      Spacer()
-      Button("Retry") {
+    CatbirdNotice(
+      tone: .warning,
+      message: Text(message),
+      actionTitle: Text("Retry"),
+      action: {
         Task {
           errorMessage = nil
           try? await model.load()
         }
       }
-      .buttonStyle(.bordered)
-      .controlSize(.small)
-    }
-    .padding(10)
-    .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+    )
     .padding(.horizontal)
     .padding(.top, 8)
   }

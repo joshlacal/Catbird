@@ -32,9 +32,9 @@ import SwiftUI
             } header: {
               HStack(spacing: 8) {
                 Text(verbatim: group.emoji)
-                  .font(.title2)
+                  .appFont(AppTextRole.title2)
                 Text(group.reactors.count, format: .number)
-                  .font(.subheadline)
+                  .appFont(AppTextRole.subheadline)
                   .foregroundColor(.secondary)
               }
             }
@@ -135,18 +135,18 @@ import SwiftUI
         VStack(alignment: .leading, spacing: 2) {
           if let displayName = reactor.displayName, !displayName.isEmpty {
             Text(displayName)
-              .font(.body)
+              .appFont(AppTextRole.body)
               .fontWeight(.medium)
           }
 
           if let handle = reactor.handle {
             Text(verbatim: "@\(handle)")
-              .font(.subheadline)
+              .appFont(AppTextRole.subheadline)
               .foregroundColor(.secondary)
           } else {
             // Fallback to showing truncated DID
             Text(verbatim: truncatedDID(reactor.did))
-              .font(.subheadline)
+              .appFont(AppTextRole.subheadline)
               .foregroundColor(.secondary)
           }
         }
@@ -160,11 +160,8 @@ import SwiftUI
             // Don't dismiss - let UI update show the change
           } label: {
             Text("Remove")
-              .font(.caption)
-              .foregroundColor(.red)
           }
-          .buttonStyle(.bordered)
-          .tint(.red)
+          .buttonStyle(.catbird(.destructive, size: .sm))
         }
       }
       .padding(.vertical, 4)

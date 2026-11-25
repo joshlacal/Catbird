@@ -152,13 +152,13 @@ struct RepositoryMediaGalleryView: View {
                     // Date header
                     HStack {
                         Text(group.date, style: .date)
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                             .fontWeight(.semibold)
                         
                         Spacer()
                         
                         Text("\(group.mediaItems.count) items", comment: "Count of media items for a specific date in the repository media gallery.")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                     }
                     .padding(.horizontal)
@@ -185,11 +185,11 @@ struct RepositoryMediaGalleryView: View {
     private var emptyMediaView: some View {
         VStack(spacing: 20) {
             Image(systemName: "photo.stack")
-                .font(.system(size: 64))
+                .appFont(size: 64)
                 .foregroundColor(.secondary)
             
             Text("No Media References")
-                .font(.title2)
+                .appFont(AppTextRole.title2)
                 .fontWeight(.semibold)
             
             Text("No media references found in this repository. This could indicate parsing issues or no media attachments in the backup.")
@@ -199,7 +199,7 @@ struct RepositoryMediaGalleryView: View {
             Button("Retry Loading") {
                 viewModel.loadMediaItems()
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.catbird(.tonal))
         }
         .padding()
     }
@@ -331,7 +331,7 @@ private struct ExperimentalMediaHeader: View {
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("MEDIA GALLERY")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .fontWeight(.semibold)
                         .foregroundColor(.orange)
                     
@@ -339,7 +339,7 @@ private struct ExperimentalMediaHeader: View {
                         "Media references parsed from \(repository.userHandle)'s repository. Actual media files not available.",
                         comment: "Disclaimer header on repository media gallery. Placeholder is the repository owner's handle."
                     )
-                        .font(.caption2)
+                        .appFont(AppTextRole.caption2)
                         .foregroundColor(.secondary)
                 }
                 
@@ -381,18 +381,18 @@ private struct MediaSummaryView: View {
             if viewModel.totalMediaSize > 0 {
                 HStack {
                     Text("Total Size:")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                     
                     Spacer()
                     
                     Text(ByteCountFormatter.string(fromByteCount: viewModel.totalMediaSize, countStyle: .file))
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                         .fontWeight(.bold)
-                        .foregroundColor(.blue)
+                        .foregroundColor(Color.accentColor)
                 }
                 .padding()
                 .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(Radius.sm.shape)
             }
         }
     }
@@ -416,22 +416,22 @@ private struct MediaTypeSummary: View {
     var body: some View {
         VStack(spacing: 8) {
             Image(systemName: displayInfo.icon)
-                .font(.title2)
+                .appFont(AppTextRole.title2)
                 .foregroundColor(displayInfo.color)
             
             Text(count, format: .number)
-                .font(.title3)
+                .appFont(AppTextRole.title3)
                 .fontWeight(.bold)
                 .foregroundColor(displayInfo.color)
             
             Text(displayInfo.name)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity)
         .padding()
         .background(displayInfo.color.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(Radius.sm.shape)
     }
 }
 
@@ -444,18 +444,18 @@ private struct MediaGridItem: View {
             VStack(spacing: 8) {
                 // Media placeholder
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8)
+                    Radius.sm.shape
                         .fill(mediaTypeColor.opacity(0.3))
                         .aspectRatio(1, contentMode: .fit)
                     
                     VStack(spacing: 4) {
                         Image(systemName: mediaTypeIcon)
-                            .font(.title2)
+                            .appFont(AppTextRole.title2)
                             .foregroundColor(mediaTypeColor)
                         
                         if let size = media.size {
                             Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
-                                .font(.caption2)
+                                .appFont(AppTextRole.caption2)
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -474,7 +474,7 @@ private struct MediaGridItem: View {
                 // Alt text preview
                 if let altText = media.altText, !altText.isEmpty {
                     Text(altText)
-                        .font(.caption2)
+                        .appFont(AppTextRole.caption2)
                         .foregroundColor(.secondary)
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
@@ -521,25 +521,25 @@ private struct MediaListItem: View {
                         .frame(width: 50, height: 50)
                     
                     Image(systemName: mediaTypeIcon)
-                        .font(.title3)
+                        .appFont(AppTextRole.title3)
                         .foregroundColor(mediaTypeColor)
                 }
                 
                 // Media info
                 VStack(alignment: .leading, spacing: 4) {
                     Text(verbatim: media.mediaType.capitalized)
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                         .foregroundColor(.primary)
                     
                     if let mimeType = media.mimeType {
                         Text(verbatim: mimeType)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                     }
                     
                     if let altText = media.altText, !altText.isEmpty {
                         Text(altText)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                             .lineLimit(2)
                     }
@@ -551,7 +551,7 @@ private struct MediaListItem: View {
                 VStack(alignment: .trailing, spacing: 4) {
                     if let _ = media.size {
                         Text(media.formattedSize)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .fontWeight(.medium)
                     }
                     
@@ -560,13 +560,13 @@ private struct MediaListItem: View {
                     if !media.parseSuccessful {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundColor(.orange)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                     }
                 }
             }
             .padding()
             .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(Radius.sm.shape)
         }
         .buttonStyle(PlainButtonStyle())
     }
@@ -600,7 +600,9 @@ private struct MediaDetailView: View {
     let media: ParsedMedia
     let repository: RepositoryRecord
     @Environment(\.dismiss) private var dismiss
+    #if DEBUG
     @State private var showingRawData = false
+    #endif
     
     var body: some View {
         NavigationView {
@@ -610,7 +612,7 @@ private struct MediaDetailView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Text("Media Details")
-                                .font(.title2)
+                                .appFont(AppTextRole.title2)
                                 .fontWeight(.bold)
                             
                             Spacer()
@@ -622,7 +624,7 @@ private struct MediaDetailView: View {
                             "Discovered \(media.discoveredAt.formatted(.relative(presentation: .named)))",
                             comment: "Relative time label showing when a media reference was discovered, e.g. 'Discovered 2 hours ago'."
                         )
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                             .foregroundColor(.secondary)
                     }
                     
@@ -631,25 +633,25 @@ private struct MediaDetailView: View {
                     // Media preview placeholder
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Media Preview")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         
                         ZStack {
-                            RoundedRectangle(cornerRadius: 12)
+                            Radius.md.shape
                                 .fill(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
                                 .frame(height: 200)
                             
                             VStack(spacing: 12) {
                                 Image(systemName: mediaTypeIcon)
-                                    .font(.system(size: 48))
+                                    .appFont(size: 48)
                                     .foregroundColor(.secondary)
                                 
                                 Text("PREVIEW UNAVAILABLE")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .fontWeight(.semibold)
                                     .foregroundColor(.orange)
                                 
                                 Text("Media files not available in repository parsing")
-                                    .font(.caption2)
+                                    .appFont(AppTextRole.caption2)
                                     .foregroundColor(.secondary)
                                     .multilineTextAlignment(.center)
                             }
@@ -659,7 +661,7 @@ private struct MediaDetailView: View {
                     // Media metadata
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Metadata")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         
                         MediaMetadataGrid(media: media)
                     }
@@ -667,26 +669,19 @@ private struct MediaDetailView: View {
                     // Technical details
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Technical Details")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         
                         MediaTechnicalDetailsView(media: media)
                     }
                     
                     if !media.parseSuccessful {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("Parse Error")
-                                .font(.headline)
-                                .foregroundColor(.red)
-                            
-                            Text(
-                                media.parseErrorMessage
-                                    ?? String(localized: "Unknown parsing error", comment: "Fallback message when a media record failed to parse without a specific error message.")
-                            )
-                                .font(.body)
-                                .foregroundColor(.red)
-                                .padding()
-                                .background(Color.red.opacity(0.1))
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                            CatbirdNotice(
+                                tone: .error,
+                                title: Text("Parse Error"),
+                                message: Text(
+                                  media.parseErrorMessage
+                                    ?? String(localized: "Unknown parsing error", comment: "Fallback message when a media record failed to parse without a specific error message.")))
                         }
                     }
                 }
@@ -703,15 +698,19 @@ private struct MediaDetailView: View {
                     }
                 }
                 
+                #if DEBUG
                 ToolbarItem(placement: .automatic) {
                     Button("Raw Data") {
                         showingRawData = true
                     }
                 }
+                #endif
             }
+            #if DEBUG
             .sheet(isPresented: $showingRawData) {
                 MediaRawDataView(media: media)
             }
+            #endif
         }
     }
     
@@ -735,7 +734,7 @@ private struct MediaTypeIcon: View {
             let lowercaseType = type.lowercased()
             if lowercaseType.contains("image") {
                 Image(systemName: "photo.fill")
-                    .foregroundColor(.blue)
+                    .foregroundColor(Color.accentColor)
             } else if lowercaseType.contains("video") {
                 Image(systemName: "video.fill")
                     .foregroundColor(.red)
@@ -744,7 +743,7 @@ private struct MediaTypeIcon: View {
                     .foregroundColor(.gray)
             }
         }
-        .font(.caption)
+        .appFont(AppTextRole.caption)
     }
 }
 
@@ -787,7 +786,7 @@ private struct MediaTechnicalDetailsView: View {
                     .fontWeight(.medium)
                 Spacer()
                 Text(verbatim: media.blobCID)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }
@@ -797,7 +796,7 @@ private struct MediaTechnicalDetailsView: View {
                     .fontWeight(.medium)
                 Spacer()
                 Text(verbatim: media.recordKey)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }
@@ -808,17 +807,18 @@ private struct MediaTechnicalDetailsView: View {
                         .fontWeight(.medium)
                     Spacer()
                     Text(verbatim: aspectRatio)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                 }
             }
         }
         .padding()
         .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(Radius.sm.shape)
     }
 }
 
+#if DEBUG
 private struct MediaRawDataView: View {
     let media: ParsedMedia
     @Environment(\.dismiss) private var dismiss
@@ -833,23 +833,23 @@ private struct MediaRawDataView: View {
                             .foregroundColor(.orange)
                         
                         Text("Raw CBOR data for debugging purposes only")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                     }
                     .padding()
                     .background(Color.orange.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(Radius.sm.shape)
                     
                     // Raw data
                     VStack(alignment: .leading, spacing: 8) {
                         Text("CBOR Data (\(media.rawCBORData.count) bytes)", comment: "Section header showing raw CBOR payload size in bytes.")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         
                         Text(verbatim: media.rawCBORData.map { String(format: "%02x", $0) }.joined(separator: " "))
                             .font(.system(.caption, design: .monospaced))
                             .padding()
                             .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .clipShape(Radius.sm.shape)
                     }
                 }
                 .padding()
@@ -868,6 +868,7 @@ private struct MediaRawDataView: View {
         }
     }
 }
+#endif
 
 // MARK: - Analytics View
 
@@ -882,7 +883,7 @@ private struct MediaAnalyticsView: View {
                     // Summary statistics
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Media Analytics")
-                            .font(.title2)
+                            .appFont(AppTextRole.title2)
                             .fontWeight(.bold)
                         
                         LazyVGrid(columns: [
@@ -922,7 +923,7 @@ private struct MediaAnalyticsView: View {
                     // Type breakdown
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Media Types")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         
                         ForEach(Array(viewModel.mediaByType.keys.sorted()), id: \.self) { type in
                             HStack {
@@ -935,7 +936,7 @@ private struct MediaAnalyticsView: View {
                             }
                             .padding()
                             .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .clipShape(Radius.sm.shape)
                         }
                     }
                 }
@@ -974,19 +975,19 @@ private struct AnalyticsCard: View {
                 Image(systemName: icon)
                     .foregroundColor(color)
                 Text(title)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                 Spacer()
             }
             
             Text(verbatim: value)
-                .font(.title2)
+                .appFont(AppTextRole.title2)
                 .fontWeight(.bold)
                 .foregroundColor(color)
         }
         .padding()
         .background(color.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(Radius.sm.shape)
     }
 }
 
@@ -1091,10 +1092,10 @@ private struct StatisticBadge: View {
     var body: some View {
         VStack(alignment: .center, spacing: 2) {
             Text(verbatim: value)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .fontWeight(.semibold)
             Text(label)
-                .font(.caption2)
+                .appFont(AppTextRole.caption2)
                 .foregroundColor(.secondary)
         }
         .padding(.horizontal, 8)
@@ -1106,26 +1107,19 @@ private struct StatisticBadge: View {
 
 private struct ConfidenceBadge: View {
     let confidence: Double
-    
-    private var color: Color {
+
+    private var tone: CatbirdBadgeTone {
         if confidence >= 0.9 {
-            return .green
+            return .success
         } else if confidence >= 0.7 {
-            return .orange
+            return .warning
         } else {
-            return .red
+            return .danger
         }
     }
-    
+
     var body: some View {
-        Text(confidence, format: .percent.precision(.fractionLength(0)))
-            .font(.caption2)
-            .fontWeight(.medium)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.2))
-            .foregroundColor(color)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
+        CatbirdBadge(Text(confidence, format: .percent.precision(.fractionLength(0))), tone: tone)
     }
 }
 
@@ -1136,16 +1130,16 @@ private struct MetadataItem: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundColor(.secondary)
             Text(verbatim: value)
-                .font(.body)
+                .appFont(AppTextRole.body)
                 .fontWeight(.medium)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
         .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(Radius.sm.shape)
     }
 }
 

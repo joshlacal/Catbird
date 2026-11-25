@@ -266,36 +266,20 @@ struct AddToListSheet: View {
       ProgressView()
         .scaleEffect(1.5)
       Text("Loading your lists…")
-        .font(.headline)
+        .appFont(AppTextRole.headline)
         .foregroundStyle(.secondary)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
   
   private var emptyStateView: some View {
-    VStack(spacing: 20) {
-      Image(systemName: "list.bullet.rectangle")
-        .font(.system(size: 64))
-        .foregroundStyle(.secondary)
-      
-      VStack(spacing: 8) {
-        Text("No Lists Yet")
-          .font(.title2)
-          .fontWeight(.semibold)
-        
-        Text("Create your first list to organize and curate accounts.")
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-          .multilineTextAlignment(.center)
-      }
-      
-      Button("Create Your First List") {
-        viewModel?.showingCreateList = true
-      }
-      .buttonStyle(.borderedProminent)
-    }
-    .padding(40)
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    ListsStateView(
+      title: String(localized: "No Lists Yet"),
+      description: String(localized: "Create your first list to organize and curate accounts."),
+      systemImage: "list.bullet.rectangle",
+      actionTitle: String(localized: "Create Your First List"),
+      action: { viewModel?.showingCreateList = true }
+    )
   }
   
   @ViewBuilder
@@ -338,17 +322,17 @@ struct AddToListSheet: View {
         .frame(width: 40, height: 40)
         .overlay {
           Text(verbatim: String((userDisplayName ?? userHandle).prefix(1)).localizedUppercase)
-            .font(.headline)
+            .appFont(AppTextRole.headline)
             .fontWeight(.semibold)
         }
       
       VStack(alignment: .leading, spacing: 2) {
         Text(userDisplayName ?? userHandle)
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
           .fontWeight(.medium)
         
         Text(verbatim: "@\(userHandle)")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
       }
       
@@ -379,24 +363,24 @@ struct ListSelectionRow: View {
         }
       }
       .frame(width: 36, height: 36)
-      .clipShape(RoundedRectangle(cornerRadius: 6))
+      .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
       
       // List Info
       VStack(alignment: .leading, spacing: 2) {
         Text(list.name)
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
           .fontWeight(.medium)
           .lineLimit(1)
         
         if let description = list.description, !description.isEmpty {
           Text(description)
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
             .lineLimit(2)
         }
         
         Text("\(list.listItemCount ?? 0) members", comment: "Number of members on a user list — %1$lld is the member count.")
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundStyle(.tertiary)
       }
       
@@ -410,7 +394,7 @@ struct ListSelectionRow: View {
               .scaleEffect(0.8)
           } else {
             Image(systemName: isMember ? "checkmark.circle.fill" : "plus.circle")
-              .foregroundStyle(isMember ? .green : .blue)
+              .foregroundStyle(isMember ? Color.green : Color.accentColor)
           }
         }
       }
@@ -431,11 +415,11 @@ struct ListSelectionRow: View {
   }
   
   private var listPlaceholderIcon: some View {
-    RoundedRectangle(cornerRadius: 6)
+    RoundedRectangle(cornerRadius: 6, style: .continuous)
       .fill(.secondary.opacity(0.3))
       .overlay {
         Image(systemName: "list.bullet")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
       }
   }

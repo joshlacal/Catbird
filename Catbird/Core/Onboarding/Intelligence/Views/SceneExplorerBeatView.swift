@@ -27,18 +27,19 @@ struct SceneExplorerBeatView: View {
             Image(systemName: "exclamationmark.triangle.fill")
               .foregroundStyle(.orange)
             Text(errorMsg)
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundStyle(.primary)
               .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
             Button("Retry") {
               Task { await viewModel.reloadInitialCatalog() }
             }
-            .font(.caption.weight(.bold))
+            .appFont(AppTextRole.caption)
+            .fontWeight(.bold)
             .accessibilityIdentifier("intel.explorer.retry")
           }
           .padding(12)
-          .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+          .catbirdCard(.notice(.warning))
         }
         searchAndSuggestionsSection
         macroCategoryStrip
@@ -67,47 +68,30 @@ struct SceneExplorerBeatView: View {
   private var heroHeader: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 8) {
-        Group {
-          if viewModel.totalCommunitiesCount > 0 {
-            Label {
-              Text("\(viewModel.totalCommunitiesCount) Live Communities", comment: "Badge count of live communities in scene explorer.")
-            } icon: {
-              Image(systemName: "sparkles")
-            }
-          } else {
-            Label {
-              Text("Living Network Map", comment: "Badge title in scene explorer when count is loading.")
-            } icon: {
-              Image(systemName: "sparkles")
-            }
-          }
+        if viewModel.totalCommunitiesCount > 0 {
+          CatbirdBadge(
+            Text("\(viewModel.totalCommunitiesCount) Live Communities", comment: "Badge count of live communities in scene explorer."),
+            systemImage: "sparkles", tone: .accent)
+        } else {
+          CatbirdBadge(
+            Text("Living Network Map", comment: "Badge title in scene explorer when count is loading."),
+            systemImage: "sparkles", tone: .accent)
         }
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(Color.accentColor)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(Color.accentColor.opacity(0.12), in: Capsule())
 
         if viewModel.boostedCount > 0 {
-          Label {
-            Text("\(viewModel.boostedCount) Boosted 2×", comment: "Badge count of heart-boosted 2x scenes in explorer.")
-          } icon: {
-            Image(systemName: "heart.fill")
-          }
-          .font(.caption.weight(.semibold))
-          .foregroundStyle(.pink)
-          .padding(.horizontal, 10)
-          .padding(.vertical, 5)
-          .background(Color.pink.opacity(0.12), in: Capsule())
+          CatbirdBadge(
+            Text("\(viewModel.boostedCount) Boosted 2×", comment: "Badge count of heart-boosted 2x scenes in explorer."),
+            systemImage: "heart.fill", tone: .accent)
         }
       }
 
       Text("Find Your Corner of the Network")
-        .font(.title2.weight(.bold))
+        .appFont(AppTextRole.title2)
+        .fontWeight(.bold)
         .foregroundStyle(.primary)
 
       Text("Pick scenes that spark your curiosity. Tap the heart to double-weight favorites, or peek inside any card to read real posts before choosing.")
-        .font(.subheadline)
+        .appFont(AppTextRole.subheadline)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -162,22 +146,18 @@ struct SceneExplorerBeatView: View {
         ScrollView(.horizontal, showsIndicators: false) {
           HStack(spacing: 8) {
             Text("Try:")
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundStyle(.secondary)
 
             ForEach(Self.quickSearchSuggestions, id: \.self) { term in
-              Button {
-                viewModel.searchQuery = term
-                Task { await viewModel.performSearchNow() }
-              } label: {
-                Text(verbatim: term)
-                  .font(.caption.weight(.medium))
-                  .foregroundStyle(.primary)
-                  .padding(.horizontal, 10)
-                  .padding(.vertical, 5)
-                  .background(Color.secondary.opacity(0.12), in: Capsule())
-              }
-              .buttonStyle(.plain)
+              CatbirdChip(
+                title: Text(verbatim: term),
+                size: .sm,
+                action: {
+                  viewModel.searchQuery = term
+                  Task { await viewModel.performSearchNow() }
+                }
+              )
               .accessibilityIdentifier("intel.search.suggestion.\(term)")
             }
           }
@@ -193,26 +173,14 @@ struct SceneExplorerBeatView: View {
       HStack(spacing: 8) {
         ForEach(OnboardingMacroCategory.allCases) { category in
           let isSelected = viewModel.selectedMacroCategory == category
-          Button {
-            Task { await viewModel.selectMacroCategory(category) }
-          } label: {
-            HStack(spacing: 6) {
-              Image(systemName: category.symbolName)
-                .font(.caption.weight(.semibold))
-              Text(category.title)
-                .font(.subheadline.weight(isSelected ? .semibold : .regular))
-            }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 8)
-            .foregroundStyle(isSelected ? .white : .primary)
-            .background(
-              isSelected ? Color.accentColor : Color.secondary.opacity(0.12),
-              in: Capsule()
-            )
-          }
-          .buttonStyle(.plain)
+          CatbirdChip(
+            title: Text(category.title),
+            systemImage: category.symbolName,
+            isSelected: isSelected,
+            size: .md,
+            action: { Task { await viewModel.selectMacroCategory(category) } }
+          )
           .accessibilityIdentifier("intel.category.\(category.id)")
-          .accessibilityAddTraits(isSelected ? .isSelected : [])
         }
       }
     }
@@ -228,27 +196,15 @@ struct SceneExplorerBeatView: View {
         HStack(spacing: 8) {
           ForEach(scenes, id: \.sceneSlug) { scene in
             let isSelected = viewModel.selectedSceneSlug == scene.sceneSlug
-            Button {
-              Task { await viewModel.selectSceneFilter(slug: scene.sceneSlug) }
-            } label: {
-              HStack(spacing: 5) {
-                Image(systemName: scene.symbolName)
-                  .font(.caption2)
-                Text(scene.sceneTitle)
-                  .font(.caption.weight(.medium))
-                Text(scene.cardCount, format: .number)
-                  .font(.caption2.monospacedDigit())
-                  .foregroundStyle(isSelected ? .white.opacity(0.85) : .secondary)
-              }
-              .padding(.horizontal, 10)
-              .padding(.vertical, 6)
-              .foregroundStyle(isSelected ? .white : .primary)
-              .background(
-                isSelected ? Color.indigo : Color.secondary.opacity(0.09),
-                in: Capsule()
-              )
-            }
-            .buttonStyle(.plain)
+            CatbirdChip(
+              title: Text(verbatim: scene.sceneTitle) + Text(verbatim: " ")
+                + Text(scene.cardCount, format: .number)
+                  .foregroundStyle(isSelected ? Color.white.opacity(0.85) : Color.secondary),
+              systemImage: scene.symbolName,
+              isSelected: isSelected,
+              size: .sm,
+              action: { Task { await viewModel.selectSceneFilter(slug: scene.sceneSlug) } }
+            )
           }
         }
       }
@@ -261,11 +217,11 @@ struct SceneExplorerBeatView: View {
     VStack(alignment: .leading, spacing: 10) {
       HStack(spacing: 6) {
         Image(systemName: "sparkles.rectangle.stack.fill")
-          .foregroundStyle(.indigo)
+          .foregroundStyle(Color.accentColor)
         Text("From Your Orbit")
-          .font(.headline)
+          .appFont(AppTextRole.headline)
         Text("Based on accounts you already follow")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
       }
 
@@ -298,10 +254,11 @@ struct SceneExplorerBeatView: View {
     VStack(alignment: .leading, spacing: 12) {
       HStack {
         Text(gridSectionTitle)
-          .font(.headline)
+          .appFont(AppTextRole.headline)
         Spacer()
         Text("\(viewModel.displayedCommunities.count) shown", comment: "Count of community cards currently displayed in explorer grid.")
-          .font(.caption.monospacedDigit())
+          .appFont(AppTextRole.caption)
+          .monospacedDigit()
           .foregroundStyle(.secondary)
       }
 
@@ -309,7 +266,7 @@ struct SceneExplorerBeatView: View {
         VStack(spacing: 14) {
           ProgressView()
           Text("Mapping live communities…")
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
             .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
@@ -367,20 +324,21 @@ struct SceneExplorerBeatView: View {
                 HStack(spacing: 5) {
                   if isBoosted {
                     Image(systemName: "heart.fill")
-                      .font(.caption2)
-                      .foregroundStyle(.pink)
+                      .appFont(AppTextRole.caption2)
+                      .foregroundStyle(Color.accentColor)
                   }
                   Text(item.title)
-                    .font(.caption.weight(.semibold))
+                    .appFont(AppTextRole.caption)
+                    .fontWeight(.semibold)
                     .lineLimit(1)
                   Image(systemName: "xmark.circle.fill")
-                    .font(.caption2)
+                    .appFont(AppTextRole.caption2)
                     .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .background(
-                  isBoosted ? Color.pink.opacity(0.16) : Color.accentColor.opacity(0.15),
+                  isBoosted ? Color.accentColor.opacity(0.28) : Color.accentColor.opacity(0.15),
                   in: Capsule()
                 )
               }
@@ -400,7 +358,8 @@ struct SceneExplorerBeatView: View {
               Text("\(viewModel.selectedCount) scenes in your orbit", comment: "Bottom dock status showing how many scenes the user picked.")
             }
           }
-          .font(.subheadline.weight(.semibold))
+          .appFont(AppTextRole.subheadline)
+          .fontWeight(.semibold)
 
           Group {
             if viewModel.selectedCount == 0 {
@@ -411,7 +370,7 @@ struct SceneExplorerBeatView: View {
               Text("Great mix — ready to tune your feed rhythm", comment: "Bottom dock hint when 3 or more scenes are picked.")
             }
           }
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)
         }
@@ -423,19 +382,10 @@ struct SceneExplorerBeatView: View {
         } label: {
           HStack(spacing: 6) {
             Text("Tune My Taste", comment: "Primary button to advance from scene explorer to taste calibration.")
-              .font(.subheadline.weight(.bold))
             Image(systemName: "arrow.forward")
-              .font(.caption.weight(.bold))
           }
-          .foregroundStyle(.white)
-          .padding(.horizontal, 18)
-          .padding(.vertical, 12)
-          .background(
-            viewModel.canAdvanceFromExplorer ? Color.accentColor : Color.secondary.opacity(0.35),
-            in: Capsule()
-          )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.catbird(.primary, size: .md))
         .disabled(!viewModel.canAdvanceFromExplorer)
         .accessibilityIdentifier("intel.orbit.continue")
       }

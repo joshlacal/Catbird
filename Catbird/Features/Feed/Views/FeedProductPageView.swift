@@ -87,7 +87,7 @@ struct FeedProductPageView: View {
       .frame(maxWidth: 760)
       .frame(maxWidth: .infinity)
     }
-    .background(Color(platformColor: .platformSystemBackground))
+    .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     .navigationTitle(feed.displayName)
     #if os(iOS)
     .navigationBarTitleDisplayMode(.inline)
@@ -145,16 +145,13 @@ struct FeedProductPageView: View {
         ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
         : AnyLayout(HStackLayout(alignment: .center, spacing: 10))
       actionLayout {
-        FeedLibraryControls(feed: feed, onOpen: { onOpen(feed) }, minimumLabelHeight: 32, statusChip: true)
-          .buttonBorderShape(.capsule)
+        FeedLibraryButton(
+          feed: feed, size: .regular, onOpen: { onOpen(feed) }, showsStatus: true, showsEducation: true)
           .id(feed.id)
         Button { onOpen(feed) } label: {
           Label("Open Feed", systemImage: "arrow.up.forward")
-            .font(.subheadline.weight(.semibold))
-            .frame(minHeight: 36)
         }
-        .buttonStyle(.borderedProminent)
-        .buttonBorderShape(.capsule)
+        .buttonStyle(.catbird(.primary, size: .md))
         .accessibilityIdentifier("feed.discovery.open")
         if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
         Button { if liked { unlikeFeed() } else { likeFeed() } } label: {

@@ -789,24 +789,11 @@ private struct GroupMemberRow: View {
       Spacer()
 
       if isOwner {
-        Text("Owner")
-          .appFont(AppTextRole.caption)
-          .fontWeight(.medium)
-          .padding(.horizontal, 8)
-          .padding(.vertical, 4)
-          .background(Color.accentColor.opacity(0.15))
-          .foregroundStyle(Color.accentColor)
-          .clipShape(Capsule())
+        CatbirdBadge("Owner", tone: .accent)
       }
 
       if member.chatDisabled == true {
-        Text("Chat Disabled")
-          .appFont(AppTextRole.caption)
-          .padding(.horizontal, 8)
-          .padding(.vertical, 4)
-          .background(Color.red.opacity(0.15))
-          .foregroundStyle(.red)
-          .clipShape(Capsule())
+        CatbirdBadge("Chat Disabled", tone: .danger)
       }
     }
   }
@@ -885,7 +872,7 @@ struct ConversationInvitationView: View {
       VStack(spacing: 12) {
         Image(systemName: "message.circle")
           .appFont(size: 64)
-          .foregroundColor(.blue)
+          .foregroundColor(Color.accentColor)
         
         Text("New Conversation")
           .appFont(AppTextRole.title2)
@@ -956,7 +943,7 @@ struct ConversationInvitationView: View {
       }
       .padding()
       .background(Color.gray.opacity(0.1))
-      .clipShape(RoundedRectangle(cornerRadius: 12))
+      .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
       
       Spacer()
       
@@ -965,31 +952,19 @@ struct ConversationInvitationView: View {
         Button {
           acceptInvitation()
         } label: {
-          HStack {
-            if isAccepting {
-              ProgressView()
-                .scaleEffect(0.8)
-            }
-            Text("Accept")
-          }
-          .frame(maxWidth: .infinity)
+          Text("Accept")
+            .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.catbird(.primary, fullWidth: true, isLoading: isAccepting))
         .disabled(isAccepting || isDeclining)
         
         Button {
           declineInvitation()
         } label: {
-          HStack {
-            if isDeclining {
-              ProgressView()
-                .scaleEffect(0.8)
-            }
-            Text("Decline")
-          }
-          .frame(maxWidth: .infinity)
+          Text("Decline")
+            .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.catbird(.tonal, fullWidth: true, isLoading: isDeclining))
         .disabled(isAccepting || isDeclining)
       }
     }

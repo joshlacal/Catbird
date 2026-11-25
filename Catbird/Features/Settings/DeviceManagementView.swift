@@ -35,10 +35,10 @@ struct DeviceManagementView: View {
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Error Loading Devices")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                             .foregroundStyle(.red)
                         Text(error.localizedDescription)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                         Button("Try Again") {
                             Task {
@@ -51,12 +51,12 @@ struct DeviceManagementView: View {
                 Section {
                     VStack(alignment: .center, spacing: 8) {
                         Image(systemName: "iphone.slash")
-                            .font(.largeTitle)
+                            .appFont(AppTextRole.largeTitle)
                             .foregroundStyle(.secondary)
                         Text("No Devices Found")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         Text("Register a device to enable MLS messaging")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                     }
@@ -295,6 +295,14 @@ enum MLSDeviceActivityState: String, Equatable, Sendable {
         }
     }
 
+    var badgeTone: CatbirdBadgeTone {
+        switch self {
+        case .active: .success
+        case .dormant, .pendingApproval: .warning
+        case .revoked: .neutral
+        }
+    }
+
     var badgeTint: Color {
         switch self {
         case .active: .green
@@ -530,34 +538,22 @@ struct DeviceRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         Text(device.deviceName)
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         if isCurrentDevice {
-                            Text("This Device")
-                                .font(.caption2.weight(.semibold))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.blue.opacity(0.18))
-                                .foregroundStyle(.blue)
-                                .clipShape(Capsule())
+                            CatbirdBadge("This Device", tone: .accent)
                                 .accessibilityIdentifier("device-this-device-badge")
                         }
-                        Text(device.activityState.badgeTitle)
-                            .font(.caption2.weight(.medium))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(device.activityState.badgeTint.opacity(0.16))
-                            .foregroundStyle(device.activityState.badgeTint)
-                            .clipShape(Capsule())
+                        CatbirdBadge(Text(device.activityState.badgeTitle), tone: device.activityState.badgeTone)
                             .accessibilityIdentifier("device-status-badge-\(device.activityState.rawValue)")
                     }
 
                     Text(verbatim: "\(device.deviceId.prefix(8))… · \(formatDate(device.lastSeenAt))")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
 
                     if isCurrentDevice {
                         Text("Sign out in Account & Security to remove this device.")
-                            .font(.caption2)
+                            .appFont(AppTextRole.caption2)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -569,16 +565,15 @@ struct DeviceRow: View {
                         Button("Approve") {
                             onApprove()
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
+                        .buttonStyle(.catbird(.primary, size: .sm))
                         .accessibilityIdentifier("device-approve-\(device.deviceId)")
                     }
                     Label {
                         Text(device.keyPackageCount, format: .number)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                     } icon: {
                         Image(systemName: "key.fill")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                     }
                     .foregroundStyle(.secondary)
                 }
@@ -586,7 +581,7 @@ struct DeviceRow: View {
 
             if let deviceUUID = device.deviceUUID {
                 Text(verbatim: "UUID: \(deviceUUID.prefix(8))…")
-                    .font(.caption2)
+                    .appFont(AppTextRole.caption2)
                     .foregroundStyle(.tertiary)
             }
         }

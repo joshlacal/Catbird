@@ -231,16 +231,12 @@ private struct JoinRequestRow: View {
         Button("Reject", role: .destructive) {
           onReject()
         }
-        .buttonStyle(.bordered)
-        .buttonBorderShape(.capsule)
-        .controlSize(.small)
+        .buttonStyle(.catbird(.destructive, size: .sm))
 
         Button("Approve") {
           onApprove()
         }
-        .buttonStyle(.borderedProminent)
-        .buttonBorderShape(.capsule)
-        .controlSize(.small)
+        .buttonStyle(.catbird(.primary, size: .sm))
       }
     }
     .buttonStyle(.borderless)

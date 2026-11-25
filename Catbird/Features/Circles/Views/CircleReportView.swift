@@ -26,14 +26,14 @@ struct CircleReportView: View {
             "Report a post in Circle \"\(circle.name)\". Reports are reviewed privately and do not create public moderation labels.",
             comment: "Explanation at the top of the Circle post report sheet — %1$@ is the Circle name."
           )
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
             .foregroundStyle(.secondary)
         }
 
         if circle.isEncrypted {
           Section {
             Label(CircleReportCopy.disclosureConsent, systemImage: "key")
-              .font(.subheadline)
+              .appFont(AppTextRole.subheadline)
               .accessibilityLabel(CircleReportCopy.disclosureConsent)
           }
         }
@@ -58,11 +58,13 @@ struct CircleReportView: View {
         if let errorMessage {
           Section {
             Text(errorMessage)
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundStyle(.red)
           }
         }
       }
+      .scrollContentBackground(.hidden)
+      .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
       .navigationTitle("Report Circle Post")
       #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)

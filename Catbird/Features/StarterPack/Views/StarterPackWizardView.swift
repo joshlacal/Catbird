@@ -92,7 +92,7 @@ public struct StarterPackWizardView: View {
                         Button("Try Again") {
                             Task { await preloadEditStateIfNeeded() }
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.catbird(.primary, size: .md))
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -113,6 +113,7 @@ public struct StarterPackWizardView: View {
                 // Bottom Action Bar
                 bottomBar
             }
+            .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
             .navigationTitle(navigationTitle)
             #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
@@ -196,13 +197,8 @@ public struct StarterPackWizardView: View {
                     }
                 } label: {
                     Text("Back")
-                        .appFont(AppTextRole.subheadline)
-                        .fontWeight(.medium)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
-                        .background(Capsule().fill(Color.systemGray5))
-                        .foregroundColor(.primary)
                 }
+                .buttonStyle(.catbird(.tonal, size: .md))
                 .disabled(isSubmitting || isEditStateUnavailable)
             }
             
@@ -214,22 +210,9 @@ public struct StarterPackWizardView: View {
                         await finishWizard()
                     }
                 } label: {
-                    HStack(spacing: 8) {
-                        if isSubmitting {
-                            ProgressView()
-                                .tint(.white)
-                        }
-                        Text(submitButtonTitle)
-                            .appFont(AppTextRole.subheadline)
-                            .fontWeight(.semibold)
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 10)
-                    .background(
-                        Capsule().fill(draft.isValid && !isSubmitting && !isEditStateUnavailable ? Color.accentColor : Color.gray.opacity(0.4))
-                    )
-                    .foregroundColor(.white)
+                    Text(submitButtonTitle)
                 }
+                .buttonStyle(.catbird(.primary, size: .md, isLoading: isSubmitting))
                 .disabled(!draft.isValid || isSubmitting || isEditStateUnavailable)
             } else {
                 Button {
@@ -240,15 +223,8 @@ public struct StarterPackWizardView: View {
                     }
                 } label: {
                     Text("Next")
-                        .appFont(AppTextRole.subheadline)
-                        .fontWeight(.semibold)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 10)
-                        .background(
-                            Capsule().fill(isCurrentStepValid && !isEditStateUnavailable ? Color.accentColor : Color.gray.opacity(0.4))
-                        )
-                        .foregroundColor(.white)
                 }
+                .buttonStyle(.catbird(.primary, size: .md))
                 .disabled(!isCurrentStepValid || isEditStateUnavailable)
             }
         }

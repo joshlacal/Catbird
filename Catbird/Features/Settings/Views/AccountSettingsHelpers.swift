@@ -720,7 +720,7 @@ struct HandleUpdateSheet: View {
                     }
                     .padding(8)
                     .background(Color.secondary.opacity(0.1))
-                    .cornerRadius(8)
+                    .clipShape(Radius.sm.shape)
                     
                     // Method 2: HTTPS Well-Known
                     VStack(alignment: .leading, spacing: 4) {
@@ -747,7 +747,7 @@ struct HandleUpdateSheet: View {
                     }
                     .padding(8)
                     .background(Color.secondary.opacity(0.1))
-                    .cornerRadius(8)
+                    .clipShape(Radius.sm.shape)
                 }
             }
         }

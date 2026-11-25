@@ -9,6 +9,8 @@ struct DataBackupSettingsView: View {
   @State private var isBackingUp = false
   @State private var backupProgress: Double = 0
   @State private var showingRepositoryBrowser = false
+  /// Advanced: reveals the developer-oriented repository browser. Off by default.
+  @AppStorage("advancedRepositoryBrowserEnabled") private var advancedRepositoryBrowserEnabled = false
   @State private var errorMessage: String?
   @State private var showError = false
 
@@ -50,25 +52,25 @@ struct DataBackupSettingsView: View {
             Image(systemName: latest.status.systemImage)
               .foregroundStyle(Color(latest.status.color))
             Text(latest.status.displayName)
-              .font(.headline)
+              .appFont(AppTextRole.headline)
 
             Spacer()
 
             Text(latest.ageDescription)
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundStyle(.secondary)
           }
 
           HStack {
             Label(latest.formattedFileSize, systemImage: "doc.fill")
-              .font(.subheadline)
+              .appFont(AppTextRole.subheadline)
               .foregroundStyle(.secondary)
 
             Spacer()
 
             if latest.isIntegrityValid {
               Label("Verified", systemImage: "checkmark.seal.fill")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.green)
             }
           }
@@ -77,7 +79,7 @@ struct DataBackupSettingsView: View {
             Button("Verify Integrity") {
               verifyBackup(latest)
             }
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
           }
         }
         .padding(.vertical, 4)
@@ -93,7 +95,7 @@ struct DataBackupSettingsView: View {
         VStack(spacing: 8) {
           ProgressView(value: backupProgress)
           Text("Backing up…")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
         }
         .padding(.vertical, 4)
@@ -162,20 +164,20 @@ struct DataBackupSettingsView: View {
               HStack(spacing: 6) {
                 Image(systemName: record.status.systemImage)
                   .foregroundStyle(Color(record.status.color))
-                  .font(.caption)
+                  .appFont(AppTextRole.caption)
                 Text(record.status.displayName)
-                  .font(.subheadline)
+                  .appFont(AppTextRole.subheadline)
               }
 
               Text(record.createdDate, style: .date)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
             }
 
             Spacer()
 
             Text(record.formattedFileSize)
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundStyle(.secondary)
           }
           .padding(.vertical, 2)
@@ -190,10 +192,17 @@ struct DataBackupSettingsView: View {
   // MARK: - Data Explorer
 
   private var dataExplorerSection: some View {
-    Section("Data Explorer") {
-      Button("Browse Repository Data") {
-        showingRepositoryBrowser = true
+    Section {
+      Toggle("Show Repository Browser", isOn: $advancedRepositoryBrowserEnabled)
+      if advancedRepositoryBrowserEnabled {
+        Button("Browse Repository Data") {
+          showingRepositoryBrowser = true
+        }
       }
+    } header: {
+      Text("Advanced")
+    } footer: {
+      Text("A technical view of your repository data, intended for troubleshooting.")
     }
   }
 

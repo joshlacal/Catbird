@@ -91,10 +91,8 @@ struct CommunityStandardsAgreementView: View {
       .safeAreaInset(edge: .bottom) {
         Button(action: onAgree) {
           Text("Agree")
-            .appFont(AppTextRole.headline)
-            .frame(maxWidth: .infinity, minHeight: 44)
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
         .padding()
         .accessibilityIdentifier("agreement.agree")
       }

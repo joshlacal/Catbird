@@ -477,7 +477,7 @@ struct RequestRow: View {
             .lineLimit(1)
           if let badge = item.sender?.badge {
             VerificationBadgeView(kind: badge)
-              .font(.caption)
+              .appFont(AppTextRole.caption)
           }
           if item.isUnread {
             Circle()
@@ -519,7 +519,7 @@ struct RequestRow: View {
         moderationMenuItems
       } label: {
         Image(systemName: "ellipsis")
-          .font(.body.weight(.semibold))
+          .appFont(AppTextRole.body).fontWeight(.semibold)
           .foregroundStyle(.secondary)
           .frame(width: 32, height: 32)
           .contentShape(Rectangle())
@@ -575,7 +575,7 @@ private struct RequestContextLabelStyle: LabelStyle {
   func makeBody(configuration: Configuration) -> some View {
     HStack(spacing: DesignTokens.Spacing.xs) {
       configuration.icon
-        .font(.caption2)
+        .appFont(AppTextRole.caption2)
         .accessibilityHidden(true)
       configuration.title
         .designCaption()
@@ -649,8 +649,10 @@ struct RequestDecisionButtons: View {
   let onAccept: () -> Void
   let onDecline: () -> Void
 
+  private var buttonSize: CatbirdButtonSize { placement == .floating ? .lg : .md }
+
   var body: some View {
-    HStack(spacing: DesignTokens.Spacing.base) {
+    HStack(spacing: Space.md) {
       Button(action: onDecline) {
         buttonLabel(
           "Decline",
@@ -658,7 +660,11 @@ struct RequestDecisionButtons: View {
           showsProgress: inFlight == .decline
         )
       }
-      .modifier(RequestDeclineButtonStyle(placement: placement))
+      .modifier(
+        RequestDecisionButtonStyle(
+          isAccept: false, placement: placement, size: buttonSize,
+          isLoading: inFlight == .decline)
+      )
       .disabled(inFlight != nil || !canDecline)
 
       Button(action: onAccept) {
@@ -668,10 +674,13 @@ struct RequestDecisionButtons: View {
           showsProgress: inFlight == .accept
         )
       }
-      .modifier(RequestAcceptButtonStyle())
+      .modifier(
+        RequestDecisionButtonStyle(
+          isAccept: true, placement: placement, size: buttonSize,
+          isLoading: inFlight == .accept)
+      )
       .disabled(inFlight != nil || !canAccept)
     }
-    .controlSize(placement == .floating ? .large : .regular)
   }
 
   private func buttonLabel(
@@ -679,17 +688,47 @@ struct RequestDecisionButtons: View {
     progressLabel: LocalizedStringKey,
     showsProgress: Bool
   ) -> some View {
-    ZStack {
-      Text(title)
-        .fontWeight(.semibold)
-        .opacity(showsProgress ? 0 : 1)
-      if showsProgress {
-        ProgressView()
-          .accessibilityLabel(Text(progressLabel))
+    Text(title)
+      .opacity(showsProgress && usesGlass ? 0 : 1)
+      .overlay {
+        if showsProgress && usesGlass {
+          ProgressView().controlSize(.small)
+        }
       }
+      .frame(maxWidth: .infinity)
+      .accessibilityLabel(showsProgress ? Text(progressLabel) : Text(title))
+  }
+
+  /// Floating pair on iOS 26 / macOS 26 keeps the system glass styles, which
+  /// need no kit spinner support, so the spinner is drawn by the label.
+  private var usesGlass: Bool {
+    if #available(iOS 26.0, macOS 26.0, *) { return placement == .floating }
+    return false
+  }
+}
+
+/// Kit button style inline and before iOS 26; system glass buttons when
+/// floating over scrolling content on iOS 26 / macOS 26 (the bar background
+/// draws no backdrop of its own there).
+struct RequestDecisionButtonStyle: ViewModifier {
+  let isAccept: Bool
+  let placement: RequestDecisionPlacement
+  let size: CatbirdButtonSize
+  let isLoading: Bool
+
+  @ViewBuilder
+  func body(content: Content) -> some View {
+    if #available(iOS 26.0, macOS 26.0, *), placement == .floating {
+      if isAccept {
+        content.modifier(RequestAcceptButtonStyle()).controlSize(.large)
+      } else {
+        content.modifier(RequestDeclineButtonStyle(placement: placement)).controlSize(.large)
+      }
+    } else {
+      content.buttonStyle(
+        .catbird(isAccept ? .primary : .tonal, size: size, fullWidth: true, isLoading: isLoading)
+      )
     }
-    .frame(maxWidth: .infinity, minHeight: 44)
-    .contentShape(Rectangle())
   }
 }
 

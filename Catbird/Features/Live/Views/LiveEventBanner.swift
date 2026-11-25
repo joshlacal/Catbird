@@ -38,21 +38,21 @@ struct LiveEventBanner: View {
             Image(systemName: "eye.slash")
                 .foregroundColor(.secondary)
             Text(retryHideAll ? "All live events hidden" : "Live event hidden")
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundColor(.primary)
             Spacer()
             Button {
                 Task { await undoHide() }
             } label: {
                 Text("Undo")
-                    .font(.subheadline.bold())
+                    .appFont(AppTextRole.subheadline).fontWeight(.bold)
                     .foregroundColor(.accentColor)
             }
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 16)
         .frame(height: style == .wide ? 60 : 44)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .catbirdClip(.md)
         .padding(.horizontal)
     }
 
@@ -92,7 +92,7 @@ struct LiveEventBanner: View {
                                 .fill(Color.red)
                                 .frame(width: 8, height: 8)
                             Text("LIVE", comment: "Badge indicating an active live event")
-                                .font(.caption2.bold())
+                                .appFont(AppTextRole.caption2).fontWeight(.bold)
                                 .foregroundColor(.white)
                         }
                         .padding(.horizontal, 6)
@@ -101,7 +101,8 @@ struct LiveEventBanner: View {
                         .clipShape(Capsule())
 
                         Text(layout?.title ?? event.title)
-                            .font(style == .wide ? .headline.bold() : .subheadline.bold())
+                            .appFont(style == .wide ? AppTextRole.headline : AppTextRole.subheadline)
+                            .fontWeight(.bold)
                             .foregroundColor(.white)
                             .lineLimit(2)
                     }
@@ -122,7 +123,7 @@ struct LiveEventBanner: View {
                         }
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 20))
+                            .appFont(size: 20)
                             .foregroundColor(.white.opacity(0.8))
                     } primaryAction: {
                         Task { await hideThisEvent() }
@@ -133,7 +134,7 @@ struct LiveEventBanner: View {
                 .padding(style == .wide ? 14 : 10)
             }
             .frame(height: style == .wide ? 120 : 80)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .catbirdClip(.md)
         }
         .buttonStyle(.plain)
         .padding(.horizontal)

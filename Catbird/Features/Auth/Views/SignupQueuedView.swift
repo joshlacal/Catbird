@@ -53,7 +53,7 @@ public struct SignupQueuedView: View {
                             .frame(width: 100, height: 100)
                         
                         Image(systemName: "hourglass.circle.fill")
-                            .font(.system(size: 64))
+                            .font(.system(size: 64, weight: .regular))
                             .foregroundStyle(Color.accentColor)
                             .symbolEffect(.pulse, options: .repeating)
                     }
@@ -61,11 +61,11 @@ public struct SignupQueuedView: View {
                     // Title & Description
                     VStack(spacing: 8) {
                         Text("You’re in Line")
-                            .font(.title)
+                            .appFont(AppTextRole.title1)
                             .fontWeight(.bold)
                         
                         Text("Bluesky is getting a lot of new sign-ups right now. Your account is in line and will be ready soon.")
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 24)
@@ -80,7 +80,7 @@ public struct SignupQueuedView: View {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.red)
                             Text(error)
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundStyle(.red)
                         }
                         .padding(.horizontal, 24)
@@ -105,19 +105,15 @@ public struct SignupQueuedView: View {
                                 Text(isCheckingStatus ? "Checking…" : "Check My Status")
                                     .fontWeight(.semibold)
                             }
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 50)
-                            .background(Color.accentColor)
-                            .foregroundColor(.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
                         }
+                        .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
                         .disabled(isCheckingStatus)
                         
                         Button(role: .destructive) {
                             handleSignOut()
                         } label: {
                             Text("Sign Out")
-                                .font(.subheadline)
+                                .appFont(AppTextRole.subheadline)
                                 .foregroundStyle(.secondary)
                         }
                         .disabled(isCheckingStatus)
@@ -163,7 +159,7 @@ public struct SignupQueuedView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Position in Queue", comment: "Header label above the user's numeric position in the signup waiting list.")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                         
                         Text("#\(place)", comment: "User's numbered position in the signup waiting list, e.g. #42.")
@@ -174,7 +170,7 @@ public struct SignupQueuedView: View {
                     Spacer()
                     
                     Image(systemName: "person.3.fill")
-                        .font(.title)
+                        .appFont(AppTextRole.title1)
                         .foregroundStyle(.secondary.opacity(0.6))
                 }
                 .padding(.horizontal, 16)
@@ -186,11 +182,11 @@ public struct SignupQueuedView: View {
             
             HStack(spacing: 12) {
                 Image(systemName: "clock.fill")
-                    .font(.body)
+                    .appFont(AppTextRole.body)
                     .foregroundStyle(.secondary)
                 
                 Text(formattedEstimateText)
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundStyle(.secondary)
                 
                 Spacer()
@@ -200,7 +196,7 @@ public struct SignupQueuedView: View {
             .padding(.top, placeInQueue == nil ? 16 : 0)
         }
         .background(Color(platformColor: .platformSecondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
     
     private var formattedEstimateText: String {

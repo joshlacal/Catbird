@@ -554,7 +554,7 @@ struct MessageRequestsEmptyState: View {
       Text("When someone you don’t follow messages you, their request waits here until you accept or decline it.")
     } actions: {
       Button("Who Can Message You", action: onOpenSettings)
-        .buttonStyle(.bordered)
+        .buttonStyle(.catbird(.tonal))
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .accessibilityIdentifier("messageRequests.empty")
@@ -644,7 +644,7 @@ struct MessageRequestDetailView: View {
             .multilineTextAlignment(.center)
           if let badge = item.sender?.badge {
             VerificationBadgeView(kind: badge)
-              .font(.caption)
+              .appFont(AppTextRole.caption)
           }
         }
         if let handle = item.sender?.secondaryHandle {
@@ -661,8 +661,7 @@ struct MessageRequestDetailView: View {
       }
       if let sender = item.sender, sender.canOpenProfile {
         Button("View Profile") { onOpenProfile(sender.did) }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
+          .buttonStyle(.catbird(.tonal, size: .sm))
           .accessibilityIdentifier("messageRequests.detail.viewProfile")
       }
     }
@@ -753,7 +752,7 @@ struct MessageRequestDetailView: View {
       Spacer(minLength: 0)
       if participant.canOpenProfile {
         Image(systemName: "chevron.forward")
-          .font(.footnote.weight(.semibold))
+          .appFont(AppTextRole.footnote).fontWeight(.semibold)
           .foregroundStyle(.tertiary)
       }
     }
