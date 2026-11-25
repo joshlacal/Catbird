@@ -16,6 +16,7 @@ struct MacOSChatSidebar: View {
   @Binding var searchText: String
 
   var onNewConversation: () -> Void = {}
+  @State private var deviceApproval = DeviceApprovalModel()
 
   private let logger = Logger(subsystem: "blue.catbird", category: "MacOSChatSidebar")
 
@@ -24,10 +25,16 @@ struct MacOSChatSidebar: View {
       if !searchText.isEmpty {
         searchResultsContent
       } else {
+        if appState.isMLSRuntimeAllowed, deviceApproval.copy != nil {
+          Section {
+            DeviceApprovalCard(model: deviceApproval)
+          }
+        }
         conversationListContent
       }
     }
     .listStyle(.sidebar)
+    .modifier(DeviceApprovalTracking(model: deviceApproval))
     .searchable(text: $searchText, placement: .sidebar, prompt: "Search")
     .onChange(of: searchText) { _, newValue in
       appState.chatManager.searchLocal(searchTerm: newValue, currentUserDID: appState.userDID)

@@ -139,7 +139,7 @@ struct DeviceManagementView: View {
         } message: {
             Text("Are you sure you want to revoke all other authorized devices? This device will remain active.")
         }
-        .alert("Couldn’t Revoke Device", isPresented: Binding(get: { viewModel.deleteError != nil }, set: { if !$0 { viewModel.deleteError = nil } })) {
+        .alert(viewModel.failedAction.alertTitle, isPresented: Binding(get: { viewModel.deleteError != nil }, set: { if !$0 { viewModel.deleteError = nil } })) {
             Button("OK") {
                 viewModel.deleteError = nil
             }
@@ -662,6 +662,20 @@ final class DeviceManagementViewModel {
     var isLoading = false
     var error: Error?
     var deleteError: Error?
+    /// Which action `deleteError` came from, so its alert is titled for it.
+    var failedAction: DeviceAction = .revoke
+
+    enum DeviceAction {
+        case approve
+        case revoke
+
+        var alertTitle: String {
+            switch self {
+            case .approve: "Couldn’t Approve Device"
+            case .revoke: "Couldn’t Revoke Device"
+            }
+        }
+    }
     var showDeleteConfirmation = false
     var showClearAllConfirmation = false
     var deviceToDelete: DeviceRowModel?
@@ -812,6 +826,7 @@ final class DeviceManagementViewModel {
             await loadDevices()
         } catch {
             logger.error("Failed to approve device \(device.deviceId): \(error.localizedDescription)")
+            failedAction = .approve
             deleteError = error
         }
     }
@@ -828,6 +843,7 @@ final class DeviceManagementViewModel {
         let activeCurrentId = currentDeviceId ?? appState?.resolvedMLSDeviceID()
         guard device.canRevoke(currentDeviceId: activeCurrentId) else {
             logger.warning("Blocked attempt to self-revoke or re-revoke device \(device.deviceId)")
+            failedAction = .revoke
             deleteError = NSError(
                 domain: "DeviceManagement",
                 code: 1,
@@ -880,9 +896,11 @@ final class DeviceManagementViewModel {
                 )
             }
             devices.removeAll { DeviceRowModel.matchesDeviceID($0.deviceId, device.deviceId) }
+            failedAction = .revoke
             deleteError = receiptPersistenceError
         } catch {
             logger.error("Failed to revoke device: \(error.localizedDescription)")
+            failedAction = .revoke
             deleteError = error
         }
     }

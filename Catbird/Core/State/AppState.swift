@@ -1850,7 +1850,29 @@ final class AppState {
         let defaults = defaultsOverride
             ?? UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier)
             ?? .standard
+        guard defaultsOverride != nil || Self.isProtectedDataAvailable else {
+            // Before the first unlock the app-group defaults read as empty, so a stored id
+            // can't be told apart from a missing one. Never mint and persist an id then: it
+            // would replace this device's id and strand its approval.
+            return Self.existingMLSDeviceID(for: userDID, in: defaults)
+                ?? Self.unpersistedLockedDeviceID
+        }
         return Self.resolveOrCreateMLSDeviceID(for: userDID, in: defaults)
+    }
+
+    /// Stands in for the device id while protected data is unavailable. Never stored and
+    /// never enrolled, because the coordinator doesn't open until protected data is back.
+    nonisolated static let unpersistedLockedDeviceID = UUID().uuidString.lowercased()
+
+    /// False on iOS between a restart and the first unlock, when the app-group container
+    /// can't be read.
+    @MainActor
+    static var isProtectedDataAvailable: Bool {
+        #if os(iOS)
+        UIApplication.shared.isProtectedDataAvailable
+        #else
+        true
+        #endif
     }
 
     /// The OAuth scopes this account's session holds, as the gateway reports them, for
@@ -1904,6 +1926,13 @@ final class AppState {
 
         if let existingTask = mlsCoordinatorInitTask {
             return await existingTask.value
+        }
+
+        guard Self.isProtectedDataAvailable else {
+            // Before the first unlock after a restart, the stored device id reads as
+            // missing. Opening now would enroll a new, pending device for this account.
+            logger.info("MLS: protected data unavailable; not opening the coordinator yet")
+            return nil
         }
 
         mlsServiceState.status = .initializing

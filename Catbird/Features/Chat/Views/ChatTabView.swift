@@ -104,6 +104,7 @@ struct ChatTabView: View {
   @State private var isTabVisible = false
   fileprivate let logger = Logger(subsystem: "blue.catbird", category: "ChatUI")
   @State private var mlsConversationPrompt: MLSConversationPrompt?
+  @State private var deviceApproval = DeviceApprovalModel()
 
   /// Maximum convos to fetch in a single eager-refresh batch.
   /// Bounds battery + network cost; remaining convos catch up via per-convo WS on open
@@ -321,6 +322,14 @@ struct ChatTabView: View {
           }
         }
 
+        if mlsChatEnabledForCurrentAccount, deviceApproval.copy != nil {
+          Section {
+            DeviceApprovalCard(model: deviceApproval)
+              .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+              .listRowSeparator(.hidden)
+          }
+        }
+
         Section {
           ForEach(coordinator.conversations) { item in
             unifiedRow(for: item)
@@ -345,6 +354,7 @@ struct ChatTabView: View {
     // items in section" crash when an update lands mid-transition).
     .id(appState.userDID)
     .listStyle(.plain)
+    .modifier(DeviceApprovalTracking(model: deviceApproval))
     .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search")
     .onChange(of: searchText) { _, newValue in
