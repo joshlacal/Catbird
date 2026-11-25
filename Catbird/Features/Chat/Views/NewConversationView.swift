@@ -732,7 +732,7 @@ struct NewConversationView: View {
     isCheckingExisting = true
     defer { isCheckingExisting = false }
 
-    guard await appState.getOrOpenMLSCoordinator() != nil else {
+    guard let coordinator = await appState.getOrOpenMLSCoordinator() else {
       guard !Task.isCancelled else { return }
       errorMessage = appState.spacesEligibility.flatMap { $0.eligible ? nil : $0.userMessage }
         ?? String(
@@ -747,6 +747,16 @@ struct NewConversationView: View {
       guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
       ExistingConversationFinder.revealIfHidden(existing.id, accountDID: accountDID)
       openEncryptedConversation(existing.id)
+      return
+    }
+
+    // Say so before they write anything: the delivery service refuses every new chat from a
+    // device that another of the account's devices has not approved yet.
+    if await MLSDirectChatStart.isAwaitingApproval(coordinator) {
+      guard !Task.isCancelled, appState.userDID == accountDID else { return }
+      errorTitle = String(localized: "Encrypted Chat Unavailable", comment: "Alert title when account is not eligible for encrypted chat")
+      errorMessage = ChatFailureMessage.pendingDeviceText
+      showingError = true
       return
     }
 
