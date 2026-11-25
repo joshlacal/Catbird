@@ -7,11 +7,11 @@
     },
     "PetrelCatbird": {
       "repository": "joshlacal/PetrelCatbird",
-      "revision": "ac51194baf1442b9f4428cfbf4ce35ead7086e57"
+      "revision": "896808005a892fa5044d2c5e067573bbb9f352c0"
     },
     "CatbirdMLSCore": {
       "repository": "joshlacal/CatbirdMLSCore",
-      "revision": "0cf2092043e77c0cc8c5905dc66b7b38b9e727da"
+      "revision": "46a44c09ae97145e2d8c0935221afa0211a6bfad"
     }
   },
   "nativeArtifact": {
