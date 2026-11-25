@@ -323,7 +323,7 @@ struct AdvancedSettingsView: View {
         .frame(maxWidth: .infinity)
       }
       .disabled(!hasUnsavedChanges || isSaving)
-      .buttonStyle(.borderedProminent)
+      .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
     }
   }
   

@@ -40,33 +40,16 @@ public struct SearchFilterBar: View {
         filtersChip
 
         ForEach(summaryItems) { item in
-          Button(action: onFiltersTap) {
-            HStack(spacing: 4) {
-              Image(systemName: item.icon)
-                .appFont(AppTextRole.caption)
-              Text(item.text)
-                .appFont(AppTextRole.caption)
-                .lineLimit(1)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .foregroundStyle(Color.accentColor)
-            .background(
-              Capsule().fill(Color.accentColor.opacity(0.12))
-            )
-          }
-          .buttonStyle(.plain)
+          CatbirdChip(
+            title: Text(item.text), systemImage: item.icon, size: .md, action: onFiltersTap)
         }
 
         if activeFilterCount > 0, let onResetFilters {
           Button(action: onResetFilters) {
             Text("Clear", comment: "Button to clear all active search filters")
               .appFont(AppTextRole.caption.weight(.medium))
-              .foregroundStyle(.secondary)
-              .padding(.horizontal, 10)
-              .padding(.vertical, 6)
           }
-          .buttonStyle(.plain)
+          .buttonStyle(.catbird(.quiet, size: .sm))
           .accessibilityLabel(Text("Clear filters", comment: "Accessibility label for button to reset search filters"))
         }
       }
@@ -101,14 +84,14 @@ public struct SearchFilterBar: View {
       .padding(.vertical, 6)
       .foregroundStyle(activeFilterCount > 0 ? Color.accentColor : Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
       .background(
-        Capsule().fill(
+        Capsule(style: .continuous).fill(
           activeFilterCount > 0
             ? Color.accentColor.opacity(0.15)
             : Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme)
         )
       )
       .overlay(
-        Capsule()
+        Capsule(style: .continuous)
           .stroke(
             activeFilterCount > 0
               ? Color.accentColor.opacity(0.3)

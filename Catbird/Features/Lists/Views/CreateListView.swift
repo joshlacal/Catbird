@@ -278,16 +278,16 @@ struct CreateListView: View {
           .resizable()
           .scaledToFill()
           .frame(width: 60, height: 60)
-          .clipShape(RoundedRectangle(cornerRadius: 8))
+          .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         #elseif os(macOS)
         Image(nsImage: avatarImage)
           .resizable()
           .scaledToFill()
           .frame(width: 60, height: 60)
-          .clipShape(RoundedRectangle(cornerRadius: 8))
+          .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         #endif
       } else {
-        RoundedRectangle(cornerRadius: 8)
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
           .fill(Color.gray.opacity(0.3))
           .frame(width: 60, height: 60)
           .overlay {
@@ -302,25 +302,22 @@ struct CreateListView: View {
   private func avatarControls(viewModel: CreateListViewModel) -> some View {
     VStack(alignment: .leading, spacing: 4) {
       Text("List Avatar")
-        .font(.headline)
+        .appFont(AppTextRole.headline)
       Text("Choose an image to represent your list")
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .foregroundStyle(.secondary)
       
       HStack {
         Button("Choose Photo") {
           showingPhotoPicker = true
         }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
+        .buttonStyle(.catbird(.tonal, size: .sm))
         
         if viewModel.avatarImage != nil {
           Button("Remove") {
             viewModel.clearAvatar()
           }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
-          .foregroundStyle(.red)
+          .buttonStyle(.catbird(.destructive, size: .sm))
         }
       }
     }
@@ -358,11 +355,11 @@ struct CreateListView: View {
             ProgressView()
               .scaleEffect(1.5)
             Text("Creating list…")
-              .font(.headline)
+              .appFont(AppTextRole.headline)
               .foregroundStyle(.white)
           }
           .padding(24)
-          .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+          .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
     }
   }
@@ -428,7 +425,7 @@ struct CreateListView: View {
             "\(viewModel.name.count)/\(maxNameLength)",
             comment: "Character count indicator for list name — %1$lld is the current character count, %2$lld is the maximum allowed."
           )
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
         }
       }
@@ -457,7 +454,7 @@ struct CreateListView: View {
               "\(viewModel.description.count)/\(maxDescriptionLength)",
               comment: "Character count indicator for list description — %1$lld is the current character count, %2$lld is the maximum allowed."
             )
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundStyle(.secondary)
             Spacer()
           }
@@ -489,10 +486,10 @@ struct CreateListView: View {
   @ViewBuilder
   private func listTypeDescription(title: LocalizedStringResource, subtitle: LocalizedStringResource) -> some View {
     Text(title)
-      .font(.caption)
+      .appFont(AppTextRole.caption)
       .fontWeight(.medium)
     Text(subtitle)
-      .font(.caption2)
+      .appFont(AppTextRole.caption2)
       .foregroundStyle(.secondary)
   }
 }

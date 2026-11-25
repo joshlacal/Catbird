@@ -25,7 +25,7 @@ struct StreamplaceVideoCard: View {
 
         // Play button overlay
         Image(systemName: "play.circle.fill")
-          .font(.system(size: 44))
+          .appFont(size: 44)
           .foregroundStyle(.white.opacity(0.9))
           .shadow(radius: 4)
 
@@ -44,7 +44,7 @@ struct StreamplaceVideoCard: View {
           }
         }
       }
-      .clipShape(RoundedRectangle(cornerRadius: 8))
+      .catbirdClip(.sm)
 
       // Title
       Text(video.video.title)

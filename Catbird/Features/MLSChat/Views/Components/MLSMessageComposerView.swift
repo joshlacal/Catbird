@@ -202,7 +202,7 @@ import SwiftUI
           .foregroundColor(.accentColor)
       case .groupInvitation:
         Label("Group invitation", systemImage: "person.2.fill")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
       case .unknown:
         Label("Attachment", systemImage: "paperclip")

@@ -42,7 +42,7 @@ struct ProfileSectionView: View {
                     Button("Try Again") {
                         Task { await loadContent() }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.catbird(.primary, size: .md))
                 }
             } else {
                 // Main content view once loading is complete
@@ -267,14 +267,9 @@ struct ProfileSectionView: View {
             HStack(spacing: 8) {
               Image(systemName: "plus")
               Text("Create Starter Pack")
-                .fontWeight(.semibold)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(Capsule().fill(Color.accentColor))
-            .foregroundColor(.white)
           }
-          .buttonStyle(.plain)
+          .buttonStyle(.catbird(.primary, size: .md))
         }
       }
     } else {
@@ -472,7 +467,7 @@ struct ProfileSectionHostView: View {
                     Button("Try Again") {
                         Task { await viewModel.loadProfile() }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.catbird(.primary, size: .md))
                 }
                 .navigationTitle(tab.title)
             } else {

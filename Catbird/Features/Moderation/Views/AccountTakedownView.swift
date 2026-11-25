@@ -74,17 +74,17 @@ struct AccountTakedownView: View {
     private var headerView: some View {
         VStack(spacing: 16) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 64))
+                .appFont(size: 64)
                 .foregroundStyle(.red)
                 .padding(.top, 16)
             
             Text("Account Taken Down")
-                .font(.title)
+                .appFont(AppTextRole.title1)
                 .fontWeight(.bold)
                 .multilineTextAlignment(.center)
             
             Text(statusMessage)
-                .font(.body)
+                .appFont(AppTextRole.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 8)
@@ -112,10 +112,8 @@ struct AccountTakedownView: View {
                     Text("Submit Appeal")
                 }
                 .fontWeight(.semibold)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
             
             Button {
                 showingAccountSwitcher = true
@@ -125,10 +123,8 @@ struct AccountTakedownView: View {
                     Text("Switch / Add Account")
                 }
                 .fontWeight(.medium)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.catbird(.tonal, size: .lg, fullWidth: true))
             .disabled(isSigningOut)
             
             Button {
@@ -146,10 +142,8 @@ struct AccountTakedownView: View {
                     Text("Sign Out")
                 }
                 .fontWeight(.medium)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.catbird(.tonal, size: .lg, fullWidth: true))
             .disabled(isSigningOut)
         }
         .padding(.top, 16)
@@ -160,11 +154,11 @@ struct AccountTakedownView: View {
     private var appealFormView: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Appeal Takedown")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .fontWeight(.semibold)
             
             Text("Explain why you believe your account should be restored. A moderator will review your appeal.")
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundStyle(.secondary)
             
             VStack(alignment: .trailing, spacing: 6) {
@@ -172,12 +166,12 @@ struct AccountTakedownView: View {
                     .frame(minHeight: 140, maxHeight: 220)
                     .padding(8)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 10)
+                        Radius.md.shape
                             .stroke(isOverLimit ? Color.red : Color.secondary.opacity(0.3), lineWidth: 1)
                     )
                 
                 Text("\(appealDetails.count)/\(maxAppealCharacters)")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(isOverLimit ? .red : .secondary)
             }
             
@@ -186,7 +180,7 @@ struct AccountTakedownView: View {
                     showingAppealForm = false
                     errorMessage = nil
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.catbird(.tonal, size: .md))
                 .disabled(isSubmitting)
                 
                 Spacer()
@@ -204,16 +198,14 @@ struct AccountTakedownView: View {
                         Text("Submit Appeal")
                     }
                     .fontWeight(.semibold)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.catbird(.primary, size: .md))
                 .disabled(!canSubmit)
             }
         }
         .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            Radius.md.shape
                 .fill(Color.secondary.opacity(0.08))
         )
         .padding(.top, 8)
@@ -224,15 +216,15 @@ struct AccountTakedownView: View {
     private var appealSubmittedView: some View {
         VStack(spacing: 16) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 48))
+                .appFont(size: 48)
                 .foregroundStyle(.green)
             
             Text("Appeal Submitted")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .fontWeight(.bold)
             
             Text("Your appeal was received and is waiting for a moderator to review it. You’ll be notified when a decision is made.")
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             
@@ -243,15 +235,13 @@ struct AccountTakedownView: View {
             } label: {
                 Text("Sign Out")
                     .fontWeight(.medium)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.catbird(.tonal, size: .lg, fullWidth: true))
             .padding(.top, 8)
         }
         .padding(20)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            Radius.md.shape
                 .fill(Color.secondary.opacity(0.08))
         )
         .padding(.top, 8)
@@ -260,19 +250,7 @@ struct AccountTakedownView: View {
     // MARK: - Error Banner
     
     private func errorBanner(_ message: String) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: "exclamationmark.circle.fill")
-                .foregroundStyle(.red)
-            Text(message)
-                .font(.subheadline)
-                .foregroundStyle(.primary)
-            Spacer()
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.red.opacity(0.12))
-        )
+        CatbirdNotice(tone: .error, message: Text(message))
     }
     
     // MARK: - Actions

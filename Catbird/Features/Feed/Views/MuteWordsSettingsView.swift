@@ -125,7 +125,7 @@ struct MuteWordsSettingsView: View {
         Button(action: addWordIfValid) {
           Image(systemName: "plus.circle.fill")
             .foregroundStyle(newMuteWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 
-                .secondary : Color.blue)
+                .secondary : Color.accentColor)
             .frame(minWidth: 44, minHeight: 44)
             .contentShape(Rectangle())
         }
@@ -291,10 +291,9 @@ struct MuteWordsSettingsView: View {
           await loadMuteWords()
         }
       }
-      .buttonStyle(.borderedProminent)
+      .buttonStyle(.catbird(.tonal, size: .sm))
       .disabled(isLoading || isSaving)
       .accessibilityIdentifier("settings.mutedWords.retry")
-      .controlSize(.small)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .spacingBase(.vertical)
@@ -332,7 +331,7 @@ struct MuteWordsSettingsView: View {
       VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
         HStack(spacing: DesignTokens.Spacing.xs) {
           Image(systemName: "info.circle")
-            .foregroundStyle(.blue)
+            .foregroundStyle(Color.accentColor)
             .designCaption()
           Text("How Muted Words Work")
             .designCallout()

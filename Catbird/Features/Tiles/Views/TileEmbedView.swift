@@ -26,7 +26,7 @@ struct TileEmbedView: View {
           if isLoadingResources {
             ProgressView()
               .padding(8)
-              .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+              .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
           }
         }
       }
@@ -50,7 +50,7 @@ struct TileEmbedView: View {
       VStack(spacing: 8) {
         TileCardView(tile: tile)
         Text("Live tiles require iOS 26 or later")
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundStyle(.secondary)
       }
     }

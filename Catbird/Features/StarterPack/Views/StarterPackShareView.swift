@@ -65,11 +65,8 @@ public struct StarterPackShareView: View {
                             Text("Share Starter Pack")
                                 .fontWeight(.semibold)
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Capsule().fill(Color.accentColor))
-                        .foregroundColor(.white)
                     }
+                    .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
                     
                     // Copy Link Button
                     Button {
@@ -80,11 +77,8 @@ public struct StarterPackShareView: View {
                             Text(copiedLink ? "Link Copied!" : "Copy Link")
                                 .fontWeight(.semibold)
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Capsule().fill(Color.systemGray5))
-                        .foregroundColor(.primary)
                     }
+                    .buttonStyle(.catbird(.tonal, size: .lg, fullWidth: true))
                     
                     // QR Code Card Button
                     Button {
@@ -95,11 +89,8 @@ public struct StarterPackShareView: View {
                             Text("Show QR Code")
                                 .fontWeight(.semibold)
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Capsule().fill(Color.systemGray5))
-                        .foregroundColor(.primary)
                     }
+                    .buttonStyle(.catbird(.tonal, size: .lg, fullWidth: true))
                 }
                 .padding(.horizontal)
                 
@@ -176,7 +167,7 @@ public struct StarterPackShareView: View {
         }
         .padding(16)
         .background(Color.systemGray6)
-        .cornerRadius(16)
+        .catbirdClip(.lg)
     }
     
     // MARK: - Copy Action

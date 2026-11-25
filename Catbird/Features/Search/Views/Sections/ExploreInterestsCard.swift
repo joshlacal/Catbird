@@ -35,7 +35,7 @@ public struct ExploreInterestsCard: View {
           HStack(spacing: 6) {
             Image(systemName: "sparkles")
               .foregroundColor(.accentColor)
-              .font(.subheadline)
+              .appFont(AppTextRole.subheadline)
             Text("Your Interests")
               .appFont(fontManager.scaledCustomFont(size: 17, weight: .bold, width: 120, relativeTo: .headline))
               .foregroundColor(.primary)
@@ -51,7 +51,7 @@ public struct ExploreInterestsCard: View {
 
         Button(action: onDismiss) {
           Image(systemName: "xmark")
-            .font(.caption.weight(.semibold))
+            .appFont(AppTextRole.caption.weight(.semibold))
             .foregroundColor(.secondary)
             .frame(width: 44, height: 44)
             .contentShape(Rectangle())
@@ -64,13 +64,7 @@ public struct ExploreInterestsCard: View {
         ScrollView(.horizontal, showsIndicators: false) {
           HStack(spacing: 6) {
             ForEach(userInterests, id: \.self) { interest in
-              Text(BlueskyInterest.displayName(for: interest))
-                .appFont(AppTextRole.caption)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Color.accentColor.opacity(0.12))
-                .foregroundColor(.accentColor)
-                .clipShape(Capsule())
+              CatbirdChip(title: Text(BlueskyInterest.displayName(for: interest)), size: .sm)
             }
           }
           .padding(.vertical, 2)
@@ -78,25 +72,16 @@ public struct ExploreInterestsCard: View {
       }
 
       Button(action: onEditInterests) {
-        HStack(spacing: 4) {
+        HStack(spacing: Space.xs) {
           Image(systemName: "slider.horizontal.3")
-            .font(.caption)
           Text(
             userInterests.isEmpty
               ? LocalizedStringResource("Add Interests", comment: "Button to choose interests when none are selected")
               : LocalizedStringResource("Edit Interests", comment: "Button to edit selected user interests")
           )
-            .appFont(AppTextRole.caption)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .background(Color.accentColor)
-        .foregroundColor(.white)
-        .clipShape(Capsule())
-        .frame(minHeight: 44)
-        .contentShape(Rectangle())
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.catbird(.primary, size: .sm))
       .padding(.top, 4)
     }
     .padding(DesignTokens.Spacing.base)

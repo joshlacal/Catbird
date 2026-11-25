@@ -106,14 +106,9 @@ struct StarterPackCardView: View {
                 }
                 .padding(.top, 4)
             }
-            .padding(16)
+            .padding(Space.lg)
             .frame(maxWidth: .infinity)
-            .background(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
-            .cornerRadius(12)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme), lineWidth: 1)
-            )
+            .catbirdCard(.embed)
         }
         .buttonStyle(.plain)
     }

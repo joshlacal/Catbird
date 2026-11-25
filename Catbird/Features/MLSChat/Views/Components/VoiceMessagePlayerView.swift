@@ -60,14 +60,14 @@ struct VoiceMessagePlayerView: View {
         .layoutPriority(-1)
 
         Text(formattedDuration)
-          .font(.caption.monospacedDigit())
+          .appFont(AppTextRole.caption).monospacedDigit()
           .foregroundStyle(isOwnMessage ? .white.opacity(0.7) : .secondary)
           .fixedSize()
       }
 
       if let error = loadError {
         Text(error)
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundStyle(.red.opacity(0.8))
           .lineLimit(2)
       }
@@ -80,14 +80,14 @@ struct VoiceMessagePlayerView: View {
         } label: {
           HStack(spacing: 4) {
             Image(systemName: "text.quote")
-              .font(.caption2)
+              .appFont(AppTextRole.caption2)
             if showTranscript {
               Text(transcript)
-                .font(.caption2)
+                .appFont(AppTextRole.caption2)
                 .lineLimit(nil)
             } else {
               Text("Show transcript", comment: "Button to reveal the text transcript of a voice message")
-                .font(.caption2)
+                .appFont(AppTextRole.caption2)
                 .lineLimit(1)
             }
           }

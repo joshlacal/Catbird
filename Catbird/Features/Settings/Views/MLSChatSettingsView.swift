@@ -50,7 +50,7 @@ struct MLSChatSettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
               Text("Labyrinth Backup & Recovery")
               Text("Recovery code, passkey PRF, post-quantum device pairing, and history restore")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
             }
           } icon: {
@@ -68,12 +68,12 @@ struct MLSChatSettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
               Text("Chat Diagnostics")
               Text("View delivery errors, recovery events, and export logs")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
             }
           } icon: {
             Image(systemName: "stethoscope")
-              .foregroundStyle(.blue)
+              .foregroundStyle(Color.accentColor)
           }
         }
       }

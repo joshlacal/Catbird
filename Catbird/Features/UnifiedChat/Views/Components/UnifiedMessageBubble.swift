@@ -124,13 +124,13 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
     }
   }
 
-  /// A media-only shared post shows its own 12pt card chrome (`feedEmbedCardStyle()`),
+  /// A media-only shared post shows its own Radius.md card chrome (`.catbirdCard(.embed)`),
   /// so the surface clips to that radius instead of trimming the card's hairline.
   private var surfaceCornerRadius: CGFloat {
     guard isMediaOnly, let embed = message.embed else { return cornerRadius }
     switch embed {
     case .blueskyRecord, .post:
-      return 12
+      return Radius.md.value
     default:
       return cornerRadius
     }
@@ -148,7 +148,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
         HStack {
           Spacer()
           Text(message.text)
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
           Spacer()
         }
@@ -215,7 +215,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
       .frame(width: 32, height: 32)
       .overlay {
         Text(verbatim: message.senderDisplayName?.prefix(1).localizedUppercase ?? "?")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .fontWeight(.medium)
           .foregroundStyle(.secondary)
       }
@@ -274,7 +274,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
       if showSenderInfo, showSenderName, groupPosition.isFirstInGroup, !message.isFromCurrentUser,
          let name = message.senderDisplayName {
         Text(name)
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
           .padding(.leading, 4)
       }
@@ -349,12 +349,12 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
       if groupPosition.isLastInGroup {
         HStack(spacing: 4) {
           Text(message.sentAt, style: .time)
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .foregroundStyle(.secondary)
 
           if message.isEdited {
             Text("(edited)")
-              .font(.caption2)
+              .appFont(AppTextRole.caption2)
               .foregroundStyle(.secondary)
           }
 
@@ -374,13 +374,13 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
         case .retrying(let attempt, let nextAttemptAt, let reason):
           HStack(spacing: 4) {
             Image(systemName: "arrow.clockwise")
-              .font(.caption2)
+              .appFont(AppTextRole.caption2)
             let remaining = max(1, Int(ceil(nextAttemptAt.timeIntervalSinceNow)))
             Text(
               "\(reason) (retrying in \(remaining)s, attempt \(attempt))",
               comment: "Status below an outgoing message being retried. %1$@ is the reason, %2$lld is seconds remaining, %3$lld is attempt number."
             )
-              .font(.caption)
+              .appFont(AppTextRole.caption)
           }
           .foregroundStyle(.secondary)
           .accessibilityLabel("Retrying message send: \(reason)")
@@ -388,9 +388,9 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
         case .waitingForPeer(let reason):
           HStack(spacing: 4) {
             Image(systemName: "person.crop.circle.badge.clock")
-              .font(.caption2)
+              .appFont(AppTextRole.caption2)
             Text(reason)
-              .font(.caption)
+              .appFont(AppTextRole.caption)
           }
           .foregroundStyle(.orange)
           .accessibilityLabel("Waiting for peer device action: \(reason)")
@@ -403,7 +403,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
               Image(systemName: "exclamationmark.circle.fill")
               Text("Not delivered: \(reason). Tap to retry.")
             }
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.red)
           }
           .buttonStyle(.plain)
@@ -446,14 +446,14 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
         } else if mlsDebugInfo != nil {
           HStack(spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundStyle(.orange)
             Text("Message unavailable")
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundStyle(message.isFromCurrentUser ? .white.opacity(0.85) : .secondary)
             Spacer(minLength: 0)
             Image(systemName: "info.circle")
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundStyle(message.isFromCurrentUser ? .white.opacity(0.85) : .secondary)
           }
           .accessibilityHint("Tap for error details")
@@ -475,7 +475,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
             attributedText: message.attributedText,
             isCurrentUser: message.isFromCurrentUser
           )
-          .font(.body)
+          .appFont(AppTextRole.body)
           .lineLimit(nil)
           .fixedSize(horizontal: false, vertical: true)
 
@@ -529,14 +529,14 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
         VStack(alignment: .leading, spacing: 2) {
           if let name = reply.senderDisplayName {
             Text(name)
-              .font(.caption2)
+              .appFont(AppTextRole.caption2)
               .fontWeight(.semibold)
               .foregroundStyle(message.isFromCurrentUser ? Color.white.opacity(0.9) : Color.primary)
               .lineLimit(1)
           }
 
           Text(reply.previewText)
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .foregroundStyle(message.isFromCurrentUser ? Color.white.opacity(0.75) : Color.secondary)
             .lineLimit(2)
         }
@@ -610,10 +610,10 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
       var body: some View {
         VStack(alignment: .leading, spacing: 4) {
           Text(label)
-            .font(.footnote)
+            .appFont(AppTextRole.footnote)
             .foregroundStyle(.secondary)
           Text(verbatim: value)
-            .font(.body)
+            .appFont(AppTextRole.body)
             .textSelection(.enabled)
         }
         .padding(.vertical, 2)
@@ -628,33 +628,33 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
     switch message.sendState {
     case .sending:
       Image(systemName: "clock")
-        .font(.caption2)
+        .appFont(AppTextRole.caption2)
         .foregroundStyle(.secondary)
         .symbolEffect(.pulse)
     case .retrying:
       Image(systemName: "arrow.clockwise")
-        .font(.caption2)
+        .appFont(AppTextRole.caption2)
         .foregroundStyle(.orange)
         .symbolEffect(.rotate)
     case .waitingForPeer:
       Image(systemName: "person.crop.circle.badge.clock")
-        .font(.caption2)
+        .appFont(AppTextRole.caption2)
         .foregroundStyle(.orange)
     case .sent, .delivered:
       EmptyView()
     case .read:
       Image(systemName: "checkmark")
-        .font(.caption2)
+        .appFont(AppTextRole.caption2)
         .foregroundStyle(Color.accentColor)
         .overlay {
           Image(systemName: "checkmark")
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .foregroundStyle(Color.accentColor)
             .offset(x: 4)
         }
     case .failed:
       Image(systemName: "exclamationmark.circle.fill")
-        .font(.caption2)
+        .appFont(AppTextRole.caption2)
         .foregroundStyle(.red)
     }
   }
@@ -876,7 +876,7 @@ struct UnifiedQuickReactionBar: View {
           onReactionSelected(emoji)
         } label: {
           Text(emoji)
-            .font(.title2)
+            .appFont(AppTextRole.title2)
         }
         .buttonStyle(ReactionButtonStyle())
       }
@@ -886,7 +886,7 @@ struct UnifiedQuickReactionBar: View {
         onMoreTapped()
       } label: {
         Image(systemName: "plus")
-          .font(.title3.weight(.medium))
+          .appFont(AppTextRole.title3).fontWeight(.medium)
           .foregroundStyle(.secondary)
       }
       .buttonStyle(ReactionButtonStyle())

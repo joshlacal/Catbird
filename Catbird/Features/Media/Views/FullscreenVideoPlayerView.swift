@@ -59,7 +59,7 @@ struct FullscreenVideoPlayerView: View {
                     dismiss()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.body.weight(.semibold))
+                        .appFont(AppTextRole.body).fontWeight(.semibold)
                         .foregroundStyle(.white)
                         .frame(width: 44, height: 44)
                         .background(.ultraThinMaterial, in: Circle())

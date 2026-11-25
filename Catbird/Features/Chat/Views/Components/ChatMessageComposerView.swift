@@ -235,7 +235,7 @@ struct ChatMessageComposerView: View {
 
   private var characterCounter: some View {
     Text(verbatim: "\(messageLength.formatted())/\(ChatManager.maxMessageGraphemes.formatted())")
-      .font(.caption2.monospacedDigit())
+      .appFont(AppTextRole.caption2).monospacedDigit()
       .foregroundStyle(isOverLimit ? Color.red : Color.secondary)
       .fixedSize()
       .accessibilityLabel(

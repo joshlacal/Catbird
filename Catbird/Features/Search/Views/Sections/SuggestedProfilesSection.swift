@@ -119,24 +119,9 @@ public struct SuggestedProfilesSection: View {
     let title = category.map { BlueskyInterest(rawValue: $0)?.displayName ?? $0.localizedCapitalized }
       ?? String(localized: "For You", comment: "Suggested accounts category tab for personalized recommendations")
 
-    return Button {
+    return CatbirdChip(title: Text(title), isSelected: isSelected) {
       onSelectCategory(category)
-    } label: {
-      Text(title)
-        .appFont(AppTextRole.subheadline)
-        .fontWeight(isSelected ? .semibold : .regular)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .foregroundStyle(isSelected ? Color.white : Color.primary)
-        .background(
-          Capsule()
-            .fill(isSelected ? Color.accentColor : Color.secondary.opacity(0.12))
-        )
-        .frame(minHeight: 44)
-        .contentShape(Rectangle())
     }
-    .buttonStyle(.plain)
-    .accessibilityAddTraits(isSelected ? [.isSelected] : [])
   }
 
   @ViewBuilder
@@ -157,14 +142,13 @@ public struct SuggestedProfilesSection: View {
     } else if profiles.isEmpty {
       VStack(spacing: 8) {
         Image(systemName: "person.slash")
-          .font(.system(size: 28))
+          .appFont(size: 28, weight: .regular, relativeTo: .title)
           .foregroundColor(.secondary)
         Text("No suggestions right now")
           .appFont(AppTextRole.subheadline)
           .foregroundColor(.secondary)
         Button("Try Again", action: onRefresh)
-          .appFont(size: Typography.Size.subheadline, weight: .medium, relativeTo: .subheadline)
-          .frame(minHeight: 44)
+          .buttonStyle(.catbird(.tonal, size: .sm))
       }
       .frame(maxWidth: .infinity)
       .padding(.vertical, 20)
@@ -199,7 +183,7 @@ public struct SuggestedProfilesSection: View {
                 .foregroundStyle(.primary)
                 .lineLimit(2)
               if let badgeKind = VerificationBadge.kind(for: profile.verification, did: profile.did) {
-                VerificationBadgeView(kind: badgeKind).font(.caption)
+                VerificationBadgeView(kind: badgeKind).appFont(AppTextRole.caption)
               }
             }
             Text(verbatim: "@\(profile.handle)")

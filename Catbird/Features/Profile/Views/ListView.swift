@@ -25,17 +25,17 @@ struct ListView: View {
                 VStack(spacing: 16) {
                     Image(systemName: "exclamationmark.triangle")
                         .foregroundColor(.orange)
-                        .font(.title2)
+                        .appFont(AppTextRole.title2)
                     Text("Failed to load list")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                     Text(error)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                     Button("Try Again") {
                         Task { await loadList() }
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.catbird(.primary, size: .md))
                 }
                 .padding()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -64,7 +64,7 @@ struct ListView: View {
                                     await loadMoreItems()
                                 }
                             }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(.catbird(.tonal, size: .sm))
                             .frame(maxWidth: .infinity)
                             .padding()
                         } else if isLoading && !listItems.isEmpty {

@@ -73,11 +73,11 @@ struct ScenePeekMembersSection: View {
     VStack(alignment: .leading, spacing: 10) {
       VStack(alignment: .leading, spacing: 2) {
         Label(title, systemImage: systemImage)
-          .font(.headline)
+          .appFont(AppTextRole.headline)
           .accessibilityAddTraits(.isHeader)
         if let caption {
           Text(caption)
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
         }
       }
@@ -120,42 +120,31 @@ struct ScenePeekMemberRow: View {
       AvatarThumbView(
         url: profile?.avatarURL,
         fallbackText: profile?.displayName ?? member.did.didString(),
-        size: 40,
+        size: AvatarSize.md,
         scale: displayScale
       )
 
       VStack(alignment: .leading, spacing: 2) {
         HStack(spacing: 6) {
           Text(displayName)
-            .font(.subheadline.weight(.semibold))
+            .appFont(AppTextRole.subheadline)
+            .fontWeight(.semibold)
             .lineLimit(1)
-          Text(role.badgeTitle)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(Color.accentColor)
-            .lineLimit(1)
+          CatbirdBadge(Text(role.badgeTitle), tone: .accent)
             .fixedSize()
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Color.accentColor.opacity(0.12), in: Capsule())
           if let tierLabel {
-            Text(tierLabel)
-              .font(.caption2.weight(.semibold))
-              .foregroundStyle(.secondary)
-              .lineLimit(1)
+            CatbirdBadge(Text(tierLabel), tone: .neutral)
               .fixedSize()
-              .padding(.horizontal, 6)
-              .padding(.vertical, 2)
-              .background(Color.secondary.opacity(0.12), in: Capsule())
           }
         }
         if let handle = profile?.handle {
           Text(verbatim: "@\(handle)")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
             .lineLimit(1)
         }
         Text(member.whyPicked)
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundStyle(.secondary)
           .lineLimit(1)
       }
@@ -176,36 +165,19 @@ struct ScenePeekMemberRow: View {
   private var trailingAccessory: some View {
     if inLineup {
       Image(systemName: "checkmark.circle.fill")
-        .font(.title3)
+        .appFont(AppTextRole.title3)
         .foregroundStyle(Color.accentColor)
         .accessibilityLabel(Text("In your lineup", comment: "Accessibility label indicating member is already included in the starting lineup."))
     } else {
-      Button(action: onTogglePin) {
-        Group {
-          if isPinned {
-            Label {
-              Text("Pinned", comment: "Button state showing creator is pinned into the starting lineup.")
-            } icon: {
-              Image(systemName: "pin.fill")
-            }
-          } else {
-            Label {
-              Text("Pin", comment: "Button action to pin a creator into the starting lineup.")
-            } icon: {
-              Image(systemName: "pin")
-            }
-          }
-        }
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(isPinned ? .white : Color.accentColor)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-          isPinned ? Color.accentColor : Color.accentColor.opacity(0.12),
-          in: Capsule()
-        )
-      }
-      .buttonStyle(.plain)
+      CatbirdChip(
+        title: isPinned
+          ? Text("Pinned", comment: "Button state showing creator is pinned into the starting lineup.")
+          : Text("Pin", comment: "Button action to pin a creator into the starting lineup."),
+        systemImage: isPinned ? "pin.fill" : "pin",
+        isSelected: isPinned,
+        size: .sm,
+        action: onTogglePin
+      )
       .accessibilityLabel(
         isPinned
           ? Text("Unpin \(displayName)", comment: "Accessibility action to unpin a creator — variable is display name.")

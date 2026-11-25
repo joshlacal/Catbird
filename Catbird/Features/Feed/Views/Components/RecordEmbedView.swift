@@ -556,12 +556,6 @@ extension View {
     /// Shared chrome for quote, link and site cards so sibling embeds share one
     /// radius, fill and hairline.
     func feedEmbedCardStyle() -> some View {
-        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
-        return self
-            .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
-            .clipShape(shape)
-            .overlay {
-                shape.strokeBorder(Color.gray.opacity(0.3), lineWidth: 1)
-            }
+        catbirdCard(.embed)
     }
 }

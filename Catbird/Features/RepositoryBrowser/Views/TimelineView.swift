@@ -115,44 +115,51 @@ struct RepositoryTimelineView: View {
     
     // MARK: - Empty Timeline View
     
+    @ViewBuilder
     private var emptyTimelineView: some View {
+        if let errorMessage = viewModel.errorMessage {
+            ErrorStateView(
+                error: NSError(
+                    domain: "RepositoryBrowser", code: 0,
+                    userInfo: [NSLocalizedDescriptionKey: errorMessage]),
+                context: errorMessage,
+                retryAction: { viewModel.loadPosts() })
+        } else {
+            emptyTimelineContent
+        }
+    }
+
+    private var emptyTimelineContent: some View {
         VStack(spacing: 20) {
             Image(systemName: "calendar.badge.exclamationmark")
-                .font(.system(size: 64))
+                .appFont(size: 64)
                 .foregroundColor(.secondary)
-            
+
             Text("No Timeline Data")
-                .font(.title2)
+                .appFont(AppTextRole.title2)
                 .fontWeight(.semibold)
-            
-            if let errorMessage = viewModel.errorMessage {
-                Text("Error: \(errorMessage)")
-                    .foregroundColor(.red)
-                    .padding()
-                    .background(Color.red.opacity(0.1))
-                    .cornerRadius(8)
-            } else {
-                Text("No posts found in this repository's timeline. This could indicate parsing issues or an empty repository.")
-                    .multilineTextAlignment(.center)
-                    .foregroundColor(.secondary)
-            }
-            
+
+            Text("No posts found in this repository's timeline. This could indicate parsing issues or an empty repository.")
+                .multilineTextAlignment(.center)
+                .foregroundColor(.secondary)
+
+            #if DEBUG
             // Debug information
             VStack(spacing: 8) {
                 Text("Debug Information")
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                     .foregroundColor(.secondary)
                 
                 Text(verbatim: "Repository ID: \(repository.id.uuidString)")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                 
                 Text("Expected Posts: \(repository.postCount.formatted(.number))", comment: "Diagnostic label showing expected post count in empty timeline state.")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                 
                 Text("Parsing Status: \(repository.parsingStatus.displayName)", comment: "Diagnostic label showing repository parsing status.")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                 
                 if repository.parsingConfidenceScore > 0 {
@@ -160,18 +167,19 @@ struct RepositoryTimelineView: View {
                         "Parsing Confidence: \(repository.parsingConfidenceScore.formatted(.percent.precision(.fractionLength(1))))",
                         comment: "Diagnostic label showing repository parsing confidence percentage."
                     )
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                 }
             }
             .padding()
             .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-            .cornerRadius(8)
-            
+            .clipShape(Radius.sm.shape)
+            #endif
+
             Button("Retry Loading") {
                 viewModel.loadPosts()
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.catbird(.tonal))
         }
         .padding()
         .frame(maxHeight: .infinity)
@@ -377,7 +385,7 @@ private struct ExperimentalTimelineHeader: View {
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("TIMELINE RECONSTRUCTION")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .fontWeight(.semibold)
                         .foregroundColor(.orange)
                     
@@ -385,7 +393,7 @@ private struct ExperimentalTimelineHeader: View {
                         "Timeline reconstructed from \(repository.userHandle)'s parsed repository data. Accuracy not guaranteed.",
                         comment: "Disclaimer header on repository timeline view. Placeholder is the repository owner's handle."
                     )
-                        .font(.caption2)
+                        .appFont(AppTextRole.caption2)
                         .foregroundColor(.secondary)
                 }
                 
@@ -410,7 +418,7 @@ private struct TimelineDateHeader: View {
     var body: some View {
         HStack {
             Text(date, format: Date.FormatStyle(date: .complete, time: .omitted))
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .fontWeight(.semibold)
                 .foregroundColor(.primary)
             Spacer()
@@ -435,7 +443,7 @@ private struct TimelinePostRow: View {
                         PostTypeIcon(post: post)
                         
                         Text(post.createdAt, format: Date.FormatStyle(date: .omitted, time: .shortened))
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                     }
                     
@@ -444,7 +452,7 @@ private struct TimelinePostRow: View {
                     if !post.parseSuccessful {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundColor(.orange)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                     }
                     
                     ConfidenceBadge(confidence: post.parseConfidence)
@@ -452,7 +460,7 @@ private struct TimelinePostRow: View {
                 
                 // Post content (using safe display text)
                 Text(post.displayText)
-                    .font(.body)
+                    .appFont(AppTextRole.body)
                     .foregroundColor(.primary)
                     .multilineTextAlignment(.leading)
                     .lineLimit(6)
@@ -465,8 +473,8 @@ private struct TimelinePostRow: View {
                         } icon: {
                             Image(systemName: "arrowshape.turn.up.left")
                         }
-                            .font(.caption2)
-                            .foregroundColor(.blue)
+                            .appFont(AppTextRole.caption2)
+                            .foregroundColor(Color.accentColor)
                     }
                     
                     if post.quotedRecordKey != nil {
@@ -475,7 +483,7 @@ private struct TimelinePostRow: View {
                         } icon: {
                             Image(systemName: "quote.bubble")
                         }
-                            .font(.caption2)
+                            .appFont(AppTextRole.caption2)
                             .foregroundColor(.green)
                     }
                     
@@ -485,7 +493,7 @@ private struct TimelinePostRow: View {
                         } icon: {
                             Image(systemName: "photo")
                         }
-                            .font(.caption2)
+                            .appFont(AppTextRole.caption2)
                             .foregroundColor(.purple)
                     }
                     
@@ -495,7 +503,7 @@ private struct TimelinePostRow: View {
                         } icon: {
                             Image(systemName: "link")
                         }
-                            .font(.caption2)
+                            .appFont(AppTextRole.caption2)
                             .foregroundColor(.orange)
                     }
                     
@@ -515,7 +523,7 @@ private struct PostTypeIcon: View {
         Group {
             if post.replyToRecordKey != nil {
                 Image(systemName: "arrowshape.turn.up.left.fill")
-                    .foregroundColor(.blue)
+                    .foregroundColor(Color.accentColor)
             } else if post.quotedRecordKey != nil {
                 Image(systemName: "quote.bubble.fill")
                     .foregroundColor(.green)
@@ -524,32 +532,25 @@ private struct PostTypeIcon: View {
                     .foregroundColor(.primary)
             }
         }
-        .font(.caption)
+        .appFont(AppTextRole.caption)
     }
 }
 
 private struct ConfidenceBadge: View {
     let confidence: Double
-    
-    private var color: Color {
+
+    private var tone: CatbirdBadgeTone {
         if confidence >= 0.9 {
-            return .green
+            return .success
         } else if confidence >= 0.7 {
-            return .orange
+            return .warning
         } else {
-            return .red
+            return .danger
         }
     }
-    
+
     var body: some View {
-        Text(confidence, format: .percent.precision(.fractionLength(0)))
-            .font(.caption2)
-            .fontWeight(.medium)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.2))
-            .foregroundColor(color)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
+        CatbirdBadge(Text(confidence, format: .percent.precision(.fractionLength(0))), tone: tone)
     }
 }
 
@@ -560,10 +561,10 @@ private struct StatisticBadge: View {
     var body: some View {
         VStack(alignment: .center, spacing: 2) {
             Text(verbatim: value)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .fontWeight(.semibold)
             Text(label)
-                .font(.caption2)
+                .appFont(AppTextRole.caption2)
                 .foregroundColor(.secondary)
         }
         .padding(.horizontal, 8)
@@ -579,7 +580,6 @@ private struct PostDetailView: View {
     let post: ParsedPost
     let repository: RepositoryRecord
     @Environment(\.dismiss) private var dismiss
-    @State private var showingRawData = false
     
     var body: some View {
         NavigationView {
@@ -589,7 +589,7 @@ private struct PostDetailView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Text("Post Details")
-                                .font(.title2)
+                                .appFont(AppTextRole.title2)
                                 .fontWeight(.bold)
                             
                             Spacer()
@@ -598,7 +598,7 @@ private struct PostDetailView: View {
                         }
                         
                         Text(post.ageDescription)
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                             .foregroundColor(.secondary)
                     }
                     
@@ -607,19 +607,19 @@ private struct PostDetailView: View {
                     // Post content
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Content")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         
                         Text(post.displayText)
-                            .font(.body)
+                            .appFont(AppTextRole.body)
                             .padding()
                             .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .clipShape(Radius.sm.shape)
                     }
                     
                     // Metadata
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Metadata")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         
                         MetadataGrid(post: post)
                     }
@@ -627,26 +627,19 @@ private struct PostDetailView: View {
                     // Technical details
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Technical Details")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         
                         TechnicalDetailsView(post: post)
                     }
                     
                     if !post.parseSuccessful {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("Parse Error")
-                                .font(.headline)
-                                .foregroundColor(.red)
-                            
-                            Text(
-                                post.parseErrorMessage
-                                    ?? String(localized: "Unknown parsing error", comment: "Fallback message when a post record failed to parse without a specific error message.")
-                            )
-                                .font(.body)
-                                .foregroundColor(.red)
-                                .padding()
-                                .background(Color.red.opacity(0.1))
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                            CatbirdNotice(
+                                tone: .error,
+                                title: Text("Parse Error"),
+                                message: Text(
+                                  post.parseErrorMessage
+                                    ?? String(localized: "Unknown parsing error", comment: "Fallback message when a post record failed to parse without a specific error message.")))
                         }
                     }
                 }
@@ -662,16 +655,8 @@ private struct PostDetailView: View {
                         dismiss()
                     }
                 }
-                
-                ToolbarItem(placement: .automatic) {
-                    Button("Raw Data") {
-                        showingRawData = true
-                    }
-                }
             }
-            .sheet(isPresented: $showingRawData) {
-                RawDataView(post: post)
-            }
+            .modifier(PostRawDataSheet(post: post))
         }
     }
 }
@@ -723,16 +708,16 @@ private struct MetadataItem: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundColor(.secondary)
             Text(verbatim: value)
-                .font(.body)
+                .appFont(AppTextRole.body)
                 .fontWeight(.medium)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
         .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(Radius.sm.shape)
     }
 }
 
@@ -746,7 +731,7 @@ private struct TechnicalDetailsView: View {
                     .fontWeight(.medium)
                 Spacer()
                 Text(verbatim: post.recordCID)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }
@@ -757,7 +742,7 @@ private struct TechnicalDetailsView: View {
                         .fontWeight(.medium)
                     Spacer()
                     Text(verbatim: replyKey)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
@@ -769,7 +754,7 @@ private struct TechnicalDetailsView: View {
                         .fontWeight(.medium)
                     Spacer()
                     Text(verbatim: quoteKey)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
@@ -777,10 +762,11 @@ private struct TechnicalDetailsView: View {
         }
         .padding()
         .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(Radius.sm.shape)
     }
 }
 
+#if DEBUG
 private struct RawDataView: View {
     let post: ParsedPost
     @Environment(\.dismiss) private var dismiss
@@ -795,49 +781,49 @@ private struct RawDataView: View {
                             .foregroundColor(.orange)
                         
                         Text("Raw CBOR data for debugging purposes only")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                     }
                     .padding()
                     .background(Color.orange.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(Radius.sm.shape)
                     
                     // Raw data
                     VStack(alignment: .leading, spacing: 8) {
                         Text("CBOR Data (\(post.rawCBORData.count) bytes)", comment: "Section header showing raw CBOR payload size in bytes.")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         
                         Text(verbatim: post.rawCBORData.map { String(format: "%02x", $0) }.joined(separator: " "))
                             .font(.system(.caption, design: .monospaced))
                             .padding()
                             .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .clipShape(Radius.sm.shape)
                     }
                     
                     // JSON representations
                     if !post.facets.isEmpty && post.facets != "[]" {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Facets (Rich Text)")
-                                .font(.headline)
+                                .appFont(AppTextRole.headline)
                             
                             Text(verbatim: post.facets)
                                 .font(.system(.caption, design: .monospaced))
                                 .padding()
                                 .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .clipShape(Radius.sm.shape)
                         }
                     }
                     
                     if !post.embeds.isEmpty && post.embeds != "[]" {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Embeds")
-                                .font(.headline)
+                                .appFont(AppTextRole.headline)
                             
                             Text(verbatim: post.embeds)
                                 .font(.system(.caption, design: .monospaced))
                                 .padding()
                                 .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .clipShape(Radius.sm.shape)
                         }
                     }
                 }
@@ -857,6 +843,7 @@ private struct RawDataView: View {
         }
     }
 }
+#endif
 
 // MARK: - Supporting Types
 
@@ -926,4 +913,33 @@ enum PostTypeFilter: String, CaseIterable {
     
     return RepositoryTimelineView(repository: sampleRepository)
         .modelContainer(for: [RepositoryRecord.self, ParsedPost.self], inMemory: true)
+}
+
+// MARK: - Debug Raw Data
+
+/// Adds the "Raw Data" toolbar button and its sheet in debug builds only.
+/// Release builds get the content unchanged.
+private struct PostRawDataSheet: ViewModifier {
+    let post: ParsedPost
+    #if DEBUG
+    @State private var showingRawData = false
+    #endif
+
+    func body(content: Content) -> some View {
+        #if DEBUG
+        content
+            .toolbar {
+                ToolbarItem(placement: .automatic) {
+                    Button("Raw Data") {
+                        showingRawData = true
+                    }
+                }
+            }
+            .sheet(isPresented: $showingRawData) {
+                RawDataView(post: post)
+            }
+        #else
+        content
+        #endif
+    }
 }

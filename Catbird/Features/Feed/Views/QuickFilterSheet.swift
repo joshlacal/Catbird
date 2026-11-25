@@ -91,7 +91,7 @@ struct QuickFilterSheet: View {
       .padding(.horizontal, 16)
       .padding(.vertical, 14)
       .background {
-        RoundedRectangle(cornerRadius: 12)
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
           .fill(isEnabled ? Color.accentColor : Color.systemGray6)
       }
     }
@@ -140,7 +140,7 @@ struct QuickFilterSheet: View {
       .padding(.horizontal, 16)
       .padding(.vertical, 14)
       .background {
-        RoundedRectangle(cornerRadius: 12)
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
           .fill(isEnabled ? Color.accentColor : Color.systemGray6)
       }
     }

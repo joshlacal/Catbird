@@ -27,34 +27,23 @@ struct TimelinePreviewBeatView: View {
   private var headerSection: some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack(spacing: 8) {
-        Label("Live Feed Preview", systemImage: "rectangle.stack.person.crop.fill")
-          .font(.caption.weight(.semibold))
-          .foregroundStyle(Color.accentColor)
-          .padding(.horizontal, 10)
-          .padding(.vertical, 5)
-          .background(Color.accentColor.opacity(0.12), in: Capsule())
+        CatbirdBadge("Live Feed Preview", systemImage: "rectangle.stack.person.crop.fill", tone: .accent)
 
         Spacer()
 
         if viewModel.previewEstimatedDailyPosts > 0 {
-          Label {
-            Text("~\(viewModel.previewEstimatedDailyPosts) posts/day", comment: "Estimated daily post volume badge.")
-          } icon: {
-            Image(systemName: "waveform.path.ecg")
-          }
-          .font(.caption.weight(.semibold).monospacedDigit())
-          .foregroundStyle(.secondary)
-          .padding(.horizontal, 10)
-          .padding(.vertical, 5)
-          .background(Color.secondary.opacity(0.12), in: Capsule())
+          CatbirdBadge(
+            Text("~\(viewModel.previewEstimatedDailyPosts) posts/day", comment: "Estimated daily post volume badge."),
+            systemImage: "waveform.path.ecg", tone: .neutral)
         }
       }
 
       Text("A Taste of Tomorrow’s Timeline")
-        .font(.title2.weight(.bold))
+        .appFont(AppTextRole.title2)
+        .fontWeight(.bold)
 
       Text("Real recent posts from the communities in your orbit. Tap Pin Voice on anyone you already love to lock them into your starting lineup.")
-        .font(.subheadline)
+        .appFont(AppTextRole.subheadline)
         .foregroundStyle(.secondary)
     }
   }
@@ -80,16 +69,9 @@ struct TimelinePreviewBeatView: View {
       Spacer()
 
       if !viewModel.pinnedDIDs.isEmpty {
-        Label {
-          Text("\(viewModel.pinnedDIDs.count) pinned", comment: "Badge showing how many authors the user pinned during timeline preview.")
-        } icon: {
-          Image(systemName: "pin.fill")
-        }
-        .font(.caption.weight(.semibold).monospacedDigit())
-        .foregroundStyle(Color.accentColor)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Color.accentColor.opacity(0.14), in: Capsule())
+        CatbirdBadge(
+          Text("\(viewModel.pinnedDIDs.count) pinned", comment: "Badge showing how many authors the user pinned during timeline preview."),
+          systemImage: "pin.fill", tone: .accent)
       }
     }
   }
@@ -100,7 +82,7 @@ struct TimelinePreviewBeatView: View {
       VStack(spacing: 12) {
         ProgressView()
         Text("Hydrating real posts across your chosen scenes…")
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
           .foregroundStyle(.secondary)
       }
       .frame(maxWidth: .infinity)
@@ -108,12 +90,12 @@ struct TimelinePreviewBeatView: View {
     } else if viewModel.previewPosts.isEmpty {
       VStack(spacing: 12) {
         Image(systemName: "sparkles.rectangle.stack")
-          .font(.system(size: 36))
+          .appFont(size: 36, weight: .regular, relativeTo: .body)
           .foregroundStyle(Color.accentColor)
         Text("Ready to Assemble Your Lineup")
-          .font(.headline)
+          .appFont(AppTextRole.headline)
         Text("Continue to review the accounts picked from each of your scenes, with per-account controls.")
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
       }
@@ -159,21 +141,19 @@ struct TimelinePreviewBeatView: View {
       HStack(spacing: 10) {
         VStack(alignment: .leading, spacing: 1) {
           Text("See My Starting Lineup")
-            .font(.headline)
+            .appFont(AppTextRole.headline)
           Text("Inspect roles, Originals-Only taming & feeds")
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .opacity(0.88)
+            .lineLimit(2)
         }
         Spacer()
         Image(systemName: "arrow.forward.circle.fill")
-          .font(.title3)
+          .appFont(AppTextRole.title3)
       }
-      .foregroundStyle(.white)
-      .padding(.horizontal, 20)
-      .frame(height: 54)
-      .background(Color.accentColor, in: Capsule())
+      .padding(.vertical, Space.sm)
     }
-    .buttonStyle(.plain)
+    .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
     .accessibilityIdentifier("intel.preview.toLineup")
     .padding(.horizontal, 16)
     .padding(.vertical, 10)
@@ -192,17 +172,6 @@ private struct PreviewPacePill: View {
   let action: () -> Void
 
   var body: some View {
-    Button(action: action) {
-      Text(title)
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(isSelected ? .white : .primary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background(
-          Capsule()
-            .fill(isSelected ? Color.accentColor : Color.secondary.opacity(0.12))
-        )
-    }
-    .buttonStyle(.plain)
+    CatbirdChip(title: Text(title), isSelected: isSelected, size: .sm, action: action)
   }
 }

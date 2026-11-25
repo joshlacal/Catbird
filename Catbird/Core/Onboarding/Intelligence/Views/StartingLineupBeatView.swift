@@ -27,23 +27,24 @@ struct StartingLineupBeatView: View {
               Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
               Text(errorMsg)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.primary)
               Spacer()
               Button("Retry") {
                 Task { await viewModel.solveStartingLineup() }
               }
-              .font(.caption.weight(.bold))
+              .appFont(AppTextRole.caption)
+              .fontWeight(.bold)
             }
             .padding(12)
-            .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .catbirdCard(.notice(.warning))
           }
 
           if viewModel.isSolvingBundle {
             VStack(spacing: 12) {
               ProgressView()
               Text("Picking voices from each of your scenes…")
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity)
@@ -83,36 +84,35 @@ struct StartingLineupBeatView: View {
       HStack(alignment: .top) {
         VStack(alignment: .leading, spacing: 4) {
           Label("Your Starting Lineup", systemImage: "person.3.sequence.fill")
-            .font(.caption.weight(.semibold))
+            .appFont(AppTextRole.caption)
+            .fontWeight(.semibold)
             .foregroundStyle(Color.accentColor)
           Text(viewModel.lineupHeadline)
-            .font(.title2.weight(.bold))
+            .appFont(AppTextRole.title2)
+            .fontWeight(.bold)
         }
 
         Spacer()
 
         VStack(alignment: .trailing, spacing: 4) {
-          Label {
-            Text("~\(viewModel.activeEstimatedDailyPosts) posts/day", comment: "Estimated daily post volume badge.")
-          } icon: {
-            Image(systemName: "metronome.fill")
-          }
-          .font(.caption.weight(.bold).monospacedDigit())
-          .foregroundStyle(Color.accentColor)
-          .padding(.horizontal, 10)
-          .padding(.vertical, 5)
-          .background(Color.accentColor.opacity(0.12), in: Capsule())
+          CatbirdBadge(
+            Text("~\(viewModel.activeEstimatedDailyPosts) posts/day", comment: "Estimated daily post volume badge."),
+            systemImage: "metronome.fill",
+            tone: .accent
+          )
+          .monospacedDigit()
 
           if viewModel.activeOriginalsOnlyCount > 0 {
             Text("\(viewModel.activeOriginalsOnlyCount) in Originals Only", comment: "Count of lineup accounts set to Originals Only mode.")
-              .font(.caption2.weight(.semibold))
+              .appFont(AppTextRole.caption2)
+              .fontWeight(.semibold)
               .foregroundStyle(.secondary)
           }
         }
       }
 
       Text(viewModel.lineupSummaryLine)
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .foregroundStyle(.secondary)
         .accessibilityIdentifier("intel.lineup.summaryLine")
 
@@ -147,18 +147,15 @@ struct StartingLineupBeatView: View {
         VStack(alignment: .leading, spacing: 10) {
           HStack(spacing: 8) {
             Image(systemName: "person.3.fill")
-              .font(.subheadline.weight(.bold))
+              .appFont(AppTextRole.subheadline)
+              .fontWeight(.bold)
               .foregroundStyle(Color.accentColor)
             Text(section.title)
-              .font(.headline)
+              .appFont(AppTextRole.headline)
               .lineLimit(2)
             Spacer()
-            Text(section.items.count, format: .number)
-              .font(.caption.weight(.bold).monospacedDigit())
-              .foregroundStyle(.secondary)
-              .padding(.horizontal, 8)
-              .padding(.vertical, 4)
-              .background(Color.secondary.opacity(0.12), in: Capsule())
+            CatbirdBadge(Text(section.items.count, format: .number), tone: .neutral)
+              .monospacedDigit()
           }
           .accessibilityElement(children: .combine)
 
@@ -187,33 +184,20 @@ struct StartingLineupBeatView: View {
     if let neighbors = viewModel.solvedBundle?.harmoniousNeighbors, !neighbors.isEmpty {
       VStack(alignment: .leading, spacing: 10) {
         Label("Harmonious Adjacent Scenes", systemImage: "point.3.connected.trianglepath.dotted")
-          .font(.headline)
+          .appFont(AppTextRole.headline)
         Text("Low-friction neighboring communities that pair naturally with your picks.")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
 
         ScrollView(.horizontal, showsIndicators: false) {
           HStack(spacing: 10) {
             ForEach(neighbors, id: \.communityId) { neighbor in
-              Button {
-                Task { await viewModel.addHarmoniousNeighborAndResolve(neighbor) }
-              } label: {
-                HStack(spacing: 6) {
-                  Image(systemName: "plus.circle.fill")
-                    .foregroundStyle(Color.accentColor)
-                  Text(neighbor.title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(
-                  Capsule()
-                    .fill(Color.secondary.opacity(0.1))
-                )
-              }
-              .buttonStyle(.plain)
+              CatbirdChip(
+                title: Text(verbatim: neighbor.title),
+                systemImage: "plus.circle.fill",
+                size: .md,
+                action: { Task { await viewModel.addHarmoniousNeighborAndResolve(neighbor) } }
+              )
             }
           }
         }
@@ -226,9 +210,9 @@ struct StartingLineupBeatView: View {
     if !viewModel.hydratedFeeds.isEmpty {
       VStack(alignment: .leading, spacing: 10) {
         Label("Pin Community Feeds", systemImage: "pin.circle.fill")
-          .font(.headline)
+          .appFont(AppTextRole.headline)
         Text("Save dedicated topic feeds right onto your home feed bar.")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
 
         ForEach(viewModel.hydratedFeeds) { feed in
@@ -240,20 +224,21 @@ struct StartingLineupBeatView: View {
               AvatarThumbView(
                 url: feed.avatarURL,
                 fallbackText: feed.displayName,
-                size: 38,
+                size: AvatarSize.md,
                 scale: displayScale
               )
 
               VStack(alignment: .leading, spacing: 2) {
                 Text(feed.displayName)
-                  .font(.subheadline.weight(.semibold))
+                  .appFont(AppTextRole.subheadline)
+                  .fontWeight(.semibold)
                   .foregroundStyle(.primary)
                 Text("by @\(feed.creatorHandle) · \(feed.communityTitle)", comment: "Feed attribution line — %1$@ is creator handle, %2$@ is community title.")
-                  .font(.caption2)
+                  .appFont(AppTextRole.caption2)
                   .foregroundStyle(.secondary)
                 if !feed.description.isEmpty {
                   Text(feed.description)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                 }
@@ -262,12 +247,12 @@ struct StartingLineupBeatView: View {
               Spacer()
 
               Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .font(.title3)
+                .appFont(AppTextRole.title3)
                 .foregroundStyle(isSelected ? Color.accentColor : .secondary)
             }
             .padding(12)
             .background(
-              RoundedRectangle(cornerRadius: 16, style: .continuous)
+              Radius.lg.shape
                 .fill(Color.secondary.opacity(0.07))
             )
           }
@@ -282,9 +267,10 @@ struct StartingLineupBeatView: View {
     if !viewModel.hydratedStarterPacks.isEmpty {
       VStack(alignment: .leading, spacing: 8) {
         Label("Inspectable Starter Packs", systemImage: "shippingbox.fill")
-          .font(.subheadline.weight(.semibold))
+          .appFont(AppTextRole.subheadline)
+          .fontWeight(.semibold)
         Text("Tap to inspect members — never bulk-followed automatically, so your feed stays crisp.")
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundStyle(.secondary)
 
         ForEach(viewModel.hydratedStarterPacks) { pack in
@@ -298,21 +284,24 @@ struct StartingLineupBeatView: View {
                 .foregroundStyle(Color.accentColor)
               VStack(alignment: .leading, spacing: 2) {
                 Text(pack.name)
-                  .font(.caption.weight(.semibold))
+                  .appFont(AppTextRole.caption)
+                  .fontWeight(.semibold)
                   .foregroundStyle(.primary)
                 Text(
                   "Curated by @\(pack.creatorHandle) · \(pack.joinedAllTimeCount) joined",
                   comment: "Starter pack attribution and join count — %1$@ is creator handle, %2$lld is number of users who joined."
                 )
-                .font(.caption2)
+                .appFont(AppTextRole.caption2)
                 .foregroundStyle(.secondary)
               }
               Spacer()
               HStack(spacing: 4) {
                 Text("Inspect", comment: "Button label to inspect starter pack members.")
-                  .font(.caption2.weight(.semibold))
+                  .appFont(AppTextRole.caption2)
+                  .fontWeight(.semibold)
                 Image(systemName: "chevron.forward")
-                  .font(.caption2.weight(.bold))
+                  .appFont(AppTextRole.caption2)
+                  .fontWeight(.bold)
               }
               .foregroundStyle(Color.accentColor)
             }
@@ -343,26 +332,18 @@ struct StartingLineupBeatView: View {
               .tint(.white)
           } else {
             Image(systemName: "paperplane.fill")
-              .font(.subheadline.weight(.bold))
           }
           Text(commitButtonTitle)
-            .font(.headline)
         }
-        .foregroundStyle(.white)
-        .frame(maxWidth: .infinity)
-        .frame(height: 52)
-        .background(
-          Capsule()
-            .fill(canCommit ? Color.accentColor : Color.secondary.opacity(0.35))
-        )
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
       .disabled(!canCommit)
       .accessibilityIdentifier("intel.lineup.commitButton")
 
       if let onSkipAll, viewModel.mode == .newAccountOnboarding {
         Button("Skip for Now", action: onSkipAll)
-          .font(.caption.weight(.semibold))
+          .appFont(AppTextRole.caption)
+          .fontWeight(.semibold)
           .foregroundStyle(.secondary)
           .disabled(viewModel.isCommitting)
           .accessibilityIdentifier("intel.lineup.skipAll")
@@ -421,16 +402,7 @@ private struct SummaryMetricPill: View {
   let symbol: String
 
   var body: some View {
-    HStack(spacing: 5) {
-      Image(systemName: symbol)
-        .font(.caption2)
-      Text(label)
-        .font(.caption2.weight(.semibold))
-    }
-    .foregroundStyle(.secondary)
-    .padding(.horizontal, 10)
-    .padding(.vertical, 5)
-    .background(Color.secondary.opacity(0.1), in: Capsule())
+    CatbirdBadge(Text(verbatim: label), systemImage: symbol, tone: .neutral)
   }
 }
 
@@ -454,30 +426,32 @@ private struct LineupAccountRowView: View {
         AvatarThumbView(
           url: profile?.avatarURL,
           fallbackText: profile?.displayName ?? recommendation.did.didString(),
-          size: 44,
+          size: AvatarSize.lg,
           scale: displayScale
         )
 
         VStack(alignment: .leading, spacing: 3) {
           Text(profile?.displayName ?? String(localized: "Community Voice", comment: "Fallback display name for a lineup creator whose profile is loading."))
-            .font(.subheadline.weight(.bold))
+            .appFont(AppTextRole.subheadline)
+            .fontWeight(.bold)
             .lineLimit(1)
 
           if let handle = profile?.handle {
             Text(verbatim: "@\(handle)")
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundStyle(.secondary)
               .lineLimit(1)
           }
 
           Text(recommendation.whyPicked)
-            .font(.caption2.weight(.medium))
+            .appFont(AppTextRole.caption2)
+            .fontWeight(.medium)
             .foregroundStyle(Color.accentColor)
             .lineLimit(1)
 
           if let bio = profile?.bio, !bio.isEmpty {
             Text(bio)
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundStyle(.secondary)
               .lineLimit(2)
           }
@@ -485,57 +459,32 @@ private struct LineupAccountRowView: View {
 
         Spacer(minLength: 4)
 
-        Button(action: onToggleFollow) {
-          Image(systemName: isEnabled ? "checkmark.circle.fill" : "plus.circle")
-            .font(.title2)
-            .foregroundStyle(isEnabled ? Color.accentColor : .secondary)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(
-          isEnabled
+        CatbirdIconButton(
+          systemImage: isEnabled ? "checkmark.circle.fill" : "plus.circle",
+          label: isEnabled
             ? Text("Included in lineup", comment: "Accessibility label when account is switched on in starting lineup.")
-            : Text("Excluded from lineup", comment: "Accessibility label when account is switched off in starting lineup.")
+            : Text("Excluded from lineup", comment: "Accessibility label when account is switched off in starting lineup."),
+          style: .quiet,
+          action: onToggleFollow
         )
       }
 
       HStack(spacing: 8) {
-        HStack(spacing: 4) {
-          Image(systemName: role.symbolName)
-            .font(.caption2)
-          Text(role.badgeTitle)
-            .font(.caption2.weight(.medium))
-            .lineLimit(1)
-        }
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color.secondary.opacity(0.1), in: Capsule())
-        .accessibilityElement(children: .combine)
+        CatbirdBadge(Text(role.badgeTitle), systemImage: role.symbolName, tone: .neutral)
+          .accessibilityElement(children: .combine)
 
         Spacer()
 
         if isEnabled {
-          Button(action: onToggleOriginalsOnly) {
-            HStack(spacing: 4) {
-              Image(systemName: isOriginalsOnly ? "sparkles" : "arrow.2.squarepath")
-                .font(.caption2)
-              if isOriginalsOnly {
-                Text("Originals Only", comment: "Delivery mode chip hiding reposts from this creator.")
-                  .font(.caption2.weight(.semibold))
-              } else {
-                Text("All Posts", comment: "Delivery mode chip showing both posts and reposts from this creator.")
-                  .font(.caption2.weight(.semibold))
-              }
-            }
-            .foregroundStyle(isOriginalsOnly ? Color.accentColor : .secondary)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(
-              Capsule()
-                .fill(isOriginalsOnly ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.1))
-            )
-          }
-          .buttonStyle(.plain)
+          CatbirdChip(
+            title: isOriginalsOnly
+              ? Text("Originals Only", comment: "Delivery mode chip hiding reposts from this creator.")
+              : Text("All Posts", comment: "Delivery mode chip showing both posts and reposts from this creator."),
+            systemImage: isOriginalsOnly ? "sparkles" : "arrow.2.squarepath",
+            isSelected: isOriginalsOnly,
+            size: .sm,
+            action: onToggleOriginalsOnly
+          )
           .accessibilityLabel(
             isOriginalsOnly
               ? Text("Originals Only enabled", comment: "Accessibility label when reposts are hidden for this creator.")
@@ -543,19 +492,12 @@ private struct LineupAccountRowView: View {
           )
         }
 
-        Button(action: onSwap) {
-          HStack(spacing: 4) {
-            Image(systemName: "arrow.triangle.2.circlepath")
-              .font(.caption2)
-            Text("Swap")
-              .font(.caption2.weight(.semibold))
-          }
-          .foregroundStyle(.secondary)
-          .padding(.horizontal, 9)
-          .padding(.vertical, 5)
-          .background(Color.secondary.opacity(0.1), in: Capsule())
-        }
-        .buttonStyle(.plain)
+        CatbirdChip(
+          title: Text("Swap"),
+          systemImage: "arrow.triangle.2.circlepath",
+          size: .sm,
+          action: onSwap
+        )
         .accessibilityLabel("Swap for another voice")
       }
     }

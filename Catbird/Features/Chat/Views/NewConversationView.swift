@@ -422,25 +422,19 @@ struct NewConversationView: View {
           }
         }
       } label: {
-        if isCheckingExisting {
-          ProgressView()
-            .frame(maxWidth: .infinity)
-        } else {
-          Group {
-            if selectedDIDs.isEmpty {
-              Text("Continue")
-            } else {
-              Text(
-                "Continue (\(selectedDIDs.count))",
-                comment: "Continue button showing selected contact count (%lld = selected count)"
-              )
-            }
+        Group {
+          if selectedDIDs.isEmpty {
+            Text("Continue")
+          } else {
+            Text(
+              "Continue (\(selectedDIDs.count))",
+              comment: "Continue button showing selected contact count (%lld = selected count)"
+            )
           }
-          .fontWeight(.semibold)
-          .frame(maxWidth: .infinity)
         }
+        .frame(maxWidth: .infinity)
       }
-      .buttonStyle(.borderedProminent)
+      .buttonStyle(.catbird(.primary, fullWidth: true, isLoading: isCheckingExisting))
       .disabled(!canContinueSelection || isCheckingExisting)
     }
     .padding(.horizontal)
@@ -520,7 +514,7 @@ struct NewConversationView: View {
               Text("Creating Secure Group")
             }
           }
-          .font(.title3)
+          .appFont(AppTextRole.title3)
           .fontWeight(.semibold)
           .foregroundColor(.white)
           Text(creationProgress)

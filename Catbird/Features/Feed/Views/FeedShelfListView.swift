@@ -41,8 +41,7 @@ struct FeedShelfListView: View {
               .padding(16)
           } else if storefront.popularCursor != nil {
             Button("Load More Feeds") { storefront.loadMorePopular() }
-              .buttonStyle(.bordered)
-              .frame(maxWidth: .infinity, minHeight: 44)
+              .buttonStyle(.catbird(.tonal, fullWidth: true))
               .padding(16)
           }
 
@@ -72,8 +71,7 @@ struct FeedShelfListView: View {
             Button("Load More \(category.shortTitle) Feeds") {
               storefront.loadCategoryIfNeeded(category, loadMore: true)
             }
-            .buttonStyle(.bordered)
-            .frame(maxWidth: .infinity, minHeight: 44)
+            .buttonStyle(.catbird(.tonal, fullWidth: true))
             .padding(16)
           }
         }

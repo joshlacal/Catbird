@@ -22,7 +22,7 @@ struct MLSSystemMessageView: View {
       Spacer()
 
       Text(systemMessage.displayText(profiles: profiles, currentUserDID: currentUserDID ?? ""))
-        .font(.footnote)
+        .appFont(AppTextRole.footnote)
         .foregroundColor(.secondary)
         .padding(.horizontal, DesignTokens.Spacing.base)
         .padding(.vertical, DesignTokens.Spacing.xs)

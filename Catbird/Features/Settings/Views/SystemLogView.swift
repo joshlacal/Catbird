@@ -146,7 +146,7 @@ private struct StatusBarView: View {
       if !logService.filterSettings.searchText.isEmpty {
         Text("• Filtered")
           .appCaption()
-          .foregroundStyle(.blue)
+          .foregroundStyle(Color.accentColor)
       }
       
       Spacer()
@@ -174,7 +174,7 @@ private struct EmptyStateView: View {
           .progressViewStyle(CircularProgressViewStyle())
       } else {
         Image(systemName: "doc.text.magnifyingglass")
-          .font(.system(size: 48))
+          .appFont(size: 48)
           .foregroundStyle(.secondary)
         
         Text("No log entries found")
@@ -233,7 +233,7 @@ private struct LogEntryRow: View {
           // Log level indicator
           Image(systemName: entry.level.systemImage)
             .foregroundStyle(entry.level.color)
-            .font(.caption)
+            .appFont(AppTextRole.caption)
           
           Text(entry.level.displayName)
             .appCaption()
@@ -280,7 +280,7 @@ private struct ErrorView: View {
   var body: some View {
     VStack(spacing: 16) {
       Image(systemName: "exclamationmark.triangle")
-        .font(.system(size: 48))
+        .appFont(size: 48)
         .foregroundStyle(.orange)
       
       Text("Failed to Load Logs")
@@ -296,7 +296,7 @@ private struct ErrorView: View {
           await onRetry()
         }
       }
-      .buttonStyle(.borderedProminent)
+      .buttonStyle(.catbird(.primary))
     }
     .padding()
     .frame(maxWidth: .infinity, maxHeight: .infinity)

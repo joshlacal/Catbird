@@ -548,11 +548,7 @@ struct ListDetailView: View {
           .frame(maxWidth: .infinity)
       }
     }
-    .appFont(AppTextRole.subheadline)
-    .fontWeight(.semibold)
-    .buttonStyle(.bordered)
-    .buttonBorderShape(.capsule)
-    .controlSize(.regular)
+    .buttonStyle(.catbird(.tonal, size: .md))
   }
 
   private func creatorLine(for listDetails: AppBskyGraphDefs.ListView) -> String {

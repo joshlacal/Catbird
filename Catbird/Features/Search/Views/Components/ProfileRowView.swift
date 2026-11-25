@@ -88,7 +88,7 @@ struct ProfileRowView: View {
 
             if let badgeKind = VerificationBadge.kind(for: profile.verification, did: profile.did) {
                 VerificationBadgeView(kind: badgeKind)
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
             }
             if AutomationBadge.isSelfDeclared(labels: extractLabels(from: profile), authorDID: profile.did) {
                 AutomationBadgeView()
@@ -168,13 +168,9 @@ struct ProfileRowView: View {
             Button {
                 showUnblockConfirmation = true
             } label: {
-                buttonLabel(
-                    LocalizedStringResource("Unblock", comment: "Button to unblock a blocked user account"),
-                    color: .white,
-                    backgroundColor: .red
-                )
+                Text(LocalizedStringResource("Unblock", comment: "Button to unblock a blocked user account"))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.catbird(.destructive, size: .sm))
             .accessibilityHint(Text("You blocked this account", comment: "Accessibility hint on unblock button in profile search row"))
             .confirmationDialog(
                 Text(
@@ -203,7 +199,7 @@ struct ProfileRowView: View {
             }
             
         case .following:
-            Button {
+            FollowButton(state: .following, size: .compact) {
                 Task {
                     let previous = effectiveStatus
                     optimisticStatus = .notFollowing
@@ -213,17 +209,10 @@ struct ProfileRowView: View {
                         optimisticStatus = previous
                     }
                 }
-            } label: {
-                buttonLabel(
-                    LocalizedStringResource("Following", comment: "Button label indicating the user is currently following this account"),
-                    color: .primary,
-                    backgroundColor: Color.secondary.opacity(0.15)
-                )
             }
-            .buttonStyle(.plain)
             
         case .notFollowing, .unknown:
-            Button {
+            FollowButton(state: .notFollowing, size: .compact) {
                 Task {
                     let previous = effectiveStatus
                     optimisticStatus = .following
@@ -233,14 +222,7 @@ struct ProfileRowView: View {
                         optimisticStatus = previous
                     }
                 }
-            } label: {
-                buttonLabel(
-                    LocalizedStringResource("Follow", comment: "Button action to follow an account"),
-                    color: .white,
-                    backgroundColor: .accentColor
-                )
             }
-            .buttonStyle(.plain)
         }
     }
 
@@ -260,27 +242,6 @@ struct ProfileRowView: View {
         if viewer.blocking != nil { return .blocking }
         if viewer.following != nil { return .following }
         return .notFollowing
-    }
-    
-    // Reusable button label
-    @ViewBuilder
-    private func buttonLabel(_ text: LocalizedStringResource, color: Color, backgroundColor: Color, outlined: Bool = false) -> some View {
-        Text(text)
-            .appFont(AppTextRole.subheadline)
-            .fontWeight(.semibold)
-            .foregroundColor(color)
-            .padding(.horizontal, DesignTokens.Spacing.base)
-            .padding(.vertical, 7)
-            .frame(minWidth: 88)
-            .background(
-                Capsule()
-                    .fill(backgroundColor)
-            )
-            .overlay(
-                Capsule()
-                    .strokeBorder(outlined ? Color.secondary.opacity(0.45) : Color.clear, lineWidth: 1)
-            )
-            .contentShape(Capsule())
     }
     
     private func extractLabels(from profile: any ProfileDisplayable) -> [ComAtprotoLabelDefs.Label]? {

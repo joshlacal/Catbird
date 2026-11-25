@@ -25,6 +25,7 @@ struct StreamplaceVideoListView: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
+    .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     .navigationTitle("Streamplace Videos")
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
@@ -88,7 +89,7 @@ struct StreamplaceVideoListView: View {
     VStack(spacing: 16) {
       Spacer()
       Image(systemName: "play.rectangle.fill")
-        .font(.system(size: 48))
+        .appFont(size: 48)
         .foregroundColor(.secondary)
       Text("No Videos")
         .appFont(AppTextRole.title3)

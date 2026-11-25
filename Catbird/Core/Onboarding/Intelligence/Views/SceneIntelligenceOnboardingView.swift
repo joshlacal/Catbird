@@ -52,7 +52,7 @@ public struct SceneIntelligenceOnboardingView: View {
         VStack(spacing: 12) {
           ProgressView()
           Text("Opening Scene Explorer…")
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
             .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -162,21 +162,10 @@ public struct SceneIntelligenceOnboardingView: View {
     return VStack(spacing: 8) {
       HStack(spacing: 10) {
         if vm.currentBeat != .explorer {
-          Button {
-            vm.goBackOneBeat()
-          } label: {
-            HStack(spacing: 4) {
-              Image(systemName: "chevron.backward")
-                .font(.caption.weight(.bold))
-              Text("Back")
-                .font(.caption.weight(.semibold))
-            }
-            .foregroundStyle(Color.accentColor)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Color.accentColor.opacity(0.12), in: Capsule())
-          }
-          .buttonStyle(.plain)
+          CatbirdChip(
+            title: "Back", systemImage: "chevron.backward", size: .sm,
+            action: { vm.goBackOneBeat() }
+          )
           .accessibilityIdentifier("intel.nav.back")
         }
 
@@ -196,7 +185,8 @@ public struct SceneIntelligenceOnboardingView: View {
 
               if isActive {
                 Text(beat.title)
-                  .font(.caption2.weight(.bold))
+                  .appFont(AppTextRole.caption2)
+                  .fontWeight(.bold)
                   .foregroundStyle(.primary)
                   .lineLimit(1)
               }
@@ -204,7 +194,7 @@ public struct SceneIntelligenceOnboardingView: View {
             .padding(.horizontal, isActive ? 8 : 2)
             .padding(.vertical, 4)
             .background(
-              Capsule()
+              Capsule(style: .continuous)
                 .fill(isActive ? Color.accentColor.opacity(0.12) : Color.clear)
             )
           }
@@ -214,7 +204,8 @@ public struct SceneIntelligenceOnboardingView: View {
 
         if let onSkip, vm.currentBeat == .explorer, mode == .newAccountOnboarding {
           Button("Skip", action: onSkip)
-            .font(.caption.weight(.semibold))
+            .appFont(AppTextRole.caption)
+            .fontWeight(.semibold)
             .foregroundStyle(.secondary)
             .accessibilityIdentifier("intel.nav.skip")
         }
@@ -233,7 +224,7 @@ public struct SceneIntelligenceOnboardingView: View {
         Spacer(minLength: 28)
 
         Image(systemName: "sparkles")
-          .font(.system(size: 64, weight: .bold))
+          .appFont(size: 64, weight: .bold, relativeTo: .body)
           .foregroundStyle(Color.accentColor)
           .padding(24)
           .adaptiveGlassEffect(style: .regular, in: Circle())
@@ -246,11 +237,12 @@ public struct SceneIntelligenceOnboardingView: View {
               Text("Your Orbit Is Live", comment: "Celebration title after completing scene onboarding.")
             }
           }
-          .font(.largeTitle.weight(.bold))
+          .appFont(AppTextRole.largeTitle)
+          .fontWeight(.bold)
           .multilineTextAlignment(.center)
 
           Text(vm.celebrationSummaryLine)
-            .font(.body)
+            .appFont(AppTextRole.body)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
             .padding(.horizontal, 28)
@@ -288,20 +280,13 @@ public struct SceneIntelligenceOnboardingView: View {
             HStack(spacing: 8) {
               if mode == .tuneExistingFeed {
                 Text("Back to Catbird", comment: "Button to exit scene tuning and return to the app.")
-                  .font(.headline)
               } else {
                 Text("Continue", comment: "Button to advance from scene onboarding celebration.")
-                  .font(.headline)
               }
               Image(systemName: "arrow.forward")
-                .font(.headline)
             }
-            .foregroundStyle(.white)
-            .frame(maxWidth: .infinity)
-            .frame(height: 54)
-            .background(Color.accentColor, in: Capsule())
           }
-          .buttonStyle(.plain)
+          .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
           .accessibilityIdentifier("intel.celebration.continue")
 
           if mode == .tuneExistingFeed {
@@ -309,11 +294,8 @@ public struct SceneIntelligenceOnboardingView: View {
               Task { await vm.resetSession() }
             } label: {
               Label("Explore More Scenes", systemImage: "arrow.counterclockwise")
-                .font(.subheadline.weight(.semibold))
-                .frame(maxWidth: .infinity, minHeight: 44)
             }
-            .buttonStyle(.bordered)
-            .buttonBorderShape(.capsule)
+            .buttonStyle(.catbird(.tonal, size: .lg, fullWidth: true))
             .accessibilityIdentifier("intel.celebration.rerun")
           }
         }
@@ -333,12 +315,16 @@ private struct CelebrationStatCard: View {
   var body: some View {
     VStack(spacing: 6) {
       Image(systemName: symbol)
-        .font(.subheadline.weight(.bold))
+        .appFont(AppTextRole.subheadline)
+        .fontWeight(.bold)
         .foregroundStyle(Color.accentColor)
       Text(value, format: .number)
-        .font(.title2.weight(.bold).monospacedDigit())
+        .appFont(AppTextRole.title2)
+        .fontWeight(.bold)
+        .monospacedDigit()
       Text(label)
-        .font(.caption2.weight(.medium))
+        .appFont(AppTextRole.caption2)
+        .fontWeight(.medium)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
     }

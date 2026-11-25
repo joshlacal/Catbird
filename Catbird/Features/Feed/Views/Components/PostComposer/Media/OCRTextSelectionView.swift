@@ -57,7 +57,7 @@ struct OCRTextSelectionView: View {
                 await detectText()
               }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.catbird(.primary))
           }
         } else if detectedRegions.isEmpty {
           VStack(spacing: 16) {
@@ -250,7 +250,7 @@ struct OCRTextSelectionViewLegacy: View {
                 await detectText()
               }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.catbird(.primary))
           }
         } else if detectedRegions.isEmpty {
           VStack(spacing: 16) {

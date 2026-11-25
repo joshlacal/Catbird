@@ -206,7 +206,7 @@ struct ConversationInvitationRow: View {
           Text("Decline")
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.catbird(.tonal, fullWidth: true))
         .disabled(isProcessing)
         
         Button {
@@ -214,16 +214,10 @@ struct ConversationInvitationRow: View {
           onAccept(conversation)
           isProcessing = false
         } label: {
-          HStack {
-            if isProcessing {
-              ProgressView()
-                .scaleEffect(0.8)
-            }
-            Text("Accept")
-          }
-          .frame(maxWidth: .infinity)
+          Text("Accept")
+            .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.catbird(.primary, fullWidth: true, isLoading: isProcessing))
         .disabled(isProcessing)
       }
     }

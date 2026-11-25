@@ -91,9 +91,9 @@ struct ChatSettingsView: View {
         HStack {
           VStack(alignment: .leading, spacing: 4) {
             Text("Encrypted Chat")
-              .font(.body)
+              .appFont(AppTextRole.body)
             Text("Enable end-to-end encrypted messaging")
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundColor(.secondary)
           }
           Spacer()
@@ -121,7 +121,7 @@ struct ChatSettingsView: View {
           } label: {
             HStack {
               Image(systemName: "lock.shield")
-                .foregroundColor(.blue)
+                .foregroundColor(Color.accentColor)
               Text("Encrypted Chat Settings")
             }
           }
@@ -591,7 +591,7 @@ struct ChatDataExportView: View {
             Label("Share Export File", systemImage: "square.and.arrow.up")
               .frame(maxWidth: .infinity)
           }
-          .buttonStyle(.borderedProminent)
+          .buttonStyle(.catbird(.primary, fullWidth: true))
         }
 
         Spacer()

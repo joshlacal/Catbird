@@ -27,18 +27,19 @@ struct NuxAnnouncementView: View {
                         .frame(width: 100, height: 100)
 
                     Image(systemName: iconName)
-                        .font(.system(size: 48))
+                        .font(.system(size: 48, weight: .regular))
                         .foregroundStyle(iconGradient)
                 }
 
                 // Title & Description
                 VStack(spacing: 10) {
                     Text(title)
-                        .font(.title2.bold())
+                        .appFont(AppTextRole.title2)
+                        .fontWeight(.bold)
                         .multilineTextAlignment(.center)
 
                     Text(description)
-                        .font(.body)
+                        .appFont(AppTextRole.body)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 8)
@@ -52,7 +53,7 @@ struct NuxAnnouncementView: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.red)
                         Text(errorMessage)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.red)
                             .multilineTextAlignment(.leading)
                         Spacer()
@@ -61,11 +62,11 @@ struct NuxAnnouncementView: View {
                         } label: {
                             Text("Try Again", comment: "Button retrying saving the feature announcement dismissal.")
                         }
-                        .font(.caption.bold())
+                        .appFont(AppTextRole.caption)
+                        .fontWeight(.bold)
                     }
                     .padding(10)
-                    .background(Color.red.opacity(0.1))
-                    .cornerRadius(8)
+                    .catbirdCard(.notice(.error))
                 }
 
                 // Actions
@@ -79,12 +80,9 @@ struct NuxAnnouncementView: View {
                                     .tint(.white)
                             }
                             Text(actionButtonTitle)
-                                .font(.headline)
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 4)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
                     .disabled(isSaving)
 
                     Button {
@@ -104,7 +102,7 @@ struct NuxAnnouncementView: View {
                         completeAndDismiss()
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 20))
+                            .appFont(size: 20, weight: .regular, relativeTo: .body)
                             .foregroundColor(.secondary)
                     }
                     .accessibilityLabel(Text("Close", comment: "Accessibility label for the button closing a feature announcement sheet."))
@@ -136,16 +134,9 @@ struct NuxAnnouncementView: View {
     }
 
     private var iconGradient: LinearGradient {
-        switch nuxID {
-        case .draftsAnnouncement:
-            return LinearGradient(colors: [.blue, .cyan], startPoint: .topLeading, endPoint: .bottomTrailing)
-        case .bookmarksAnnouncement:
-            return LinearGradient(colors: [.purple, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
-        case .groupChatsAnnouncement:
-            return LinearGradient(colors: [.orange, .pink], startPoint: .topLeading, endPoint: .bottomTrailing)
-        case .activitySubscriptions:
-            return LinearGradient(colors: [.red, .orange], startPoint: .topLeading, endPoint: .bottomTrailing)
-        }
+        LinearGradient(
+            colors: [Color.accentColor, Color.accentColor.opacity(0.65)],
+            startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
     private var title: LocalizedStringResource {

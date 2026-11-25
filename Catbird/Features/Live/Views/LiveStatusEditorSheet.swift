@@ -45,11 +45,11 @@ public struct LiveStatusEditorSheet: View {
                     if !streamURLString.isEmpty && !validation.isValid {
                         if let error = validation.error {
                             Text(error)
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundColor(.red)
                         } else {
                             Text("Invalid URL")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundColor(.red)
                         }
                     }
@@ -57,7 +57,7 @@ public struct LiveStatusEditorSheet: View {
                     Text("Stream URL")
                 } footer: {
                     Text("Allowed hosts: Twitch, YouTube, Streamplace, Bluecast, Substack, Beehiiv, Skylight, ESPN, NBA.")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                 }
 
                 if let card = previewCard {
@@ -65,17 +65,17 @@ public struct LiveStatusEditorSheet: View {
                         VStack(alignment: .leading, spacing: 6) {
                             if !card.title.isEmpty {
                                 Text(card.title)
-                                    .font(.headline)
+                                    .appFont(AppTextRole.headline)
                             } else if let apexDomain = validation.apexDomain {
                                 Text(verbatim: apexDomain)
-                                    .font(.headline)
+                                    .appFont(AppTextRole.headline)
                             } else {
                                 Text("Live Stream", comment: "Fallback title for a live stream preview card")
-                                    .font(.headline)
+                                    .appFont(AppTextRole.headline)
                             }
                             if !card.description.isEmpty {
                                 Text(card.description)
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .foregroundColor(.secondary)
                                     .lineLimit(2)
                             }
@@ -97,7 +97,7 @@ public struct LiveStatusEditorSheet: View {
                 if let errorMessage {
                     Section {
                         Text(errorMessage)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.red)
                     }
                 }
@@ -117,6 +117,8 @@ public struct LiveStatusEditorSheet: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
             .navigationTitle(
                 isLive
                     ? Text("Edit Live", comment: "Navigation title when editing an active live stream status")

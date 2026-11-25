@@ -104,7 +104,7 @@ struct MacOSChatSidebar: View {
               VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                   Text(verbatim: profile.displayName ?? profile.handle.description)
-                    .font(.body)
+                    .appFont(AppTextRole.body)
                     .lineLimit(1)
                     .truncationMode(.tail)
                   if let badgeKind = VerificationBadge.kind(
@@ -112,11 +112,11 @@ struct MacOSChatSidebar: View {
                     did: profile.did
                   ) {
                     VerificationBadgeView(kind: badgeKind)
-                      .font(.caption)
+                      .appFont(AppTextRole.caption)
                   }
                 }
                 Text(verbatim: "@\(profile.handle.description)")
-                  .font(.caption)
+                  .appFont(AppTextRole.caption)
                   .foregroundStyle(.secondary)
                   .lineLimit(1)
               }

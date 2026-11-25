@@ -41,22 +41,22 @@ struct BlockedConversationFooter: View {
     VStack(spacing: 10) {
       if let errorMessage {
         Text(errorMessage)
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.red)
           .multilineTextAlignment(.center)
       }
 
       HStack(spacing: 8) {
         Image(systemName: "person.crop.circle.badge.xmark")
-          .font(.title3)
+          .appFont(AppTextRole.title3)
           .foregroundStyle(.secondary)
 
         VStack(alignment: .leading, spacing: 2) {
           Text(statusText)
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
             .foregroundStyle(.secondary)
           Text("Message history is readable.")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.tertiary)
         }
 
@@ -69,15 +69,9 @@ struct BlockedConversationFooter: View {
           Button {
             unblockDirectly(did: did)
           } label: {
-            if isProcessing {
-              ProgressView()
-                .controlSize(.small)
-            } else {
-              Text("Unblock")
-                .fontWeight(.medium)
-            }
+            Text("Unblock")
           }
-          .buttonStyle(.borderedProminent)
+          .buttonStyle(.catbird(.primary, isLoading: isProcessing))
           .disabled(isProcessing)
 
         case .listBlock:
@@ -85,9 +79,8 @@ struct BlockedConversationFooter: View {
             showingListBlockDialog = true
           } label: {
             Text("Unblock")
-              .fontWeight(.medium)
           }
-          .buttonStyle(.borderedProminent)
+          .buttonStyle(.catbird(.primary))
           .disabled(isProcessing)
 
         case .blockedBy, .none:
@@ -104,9 +97,8 @@ struct BlockedConversationFooter: View {
               Text("Leave Chat")
             }
           }
-          .fontWeight(.medium)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.catbird(.destructive))
         .disabled(isProcessing)
       }
       .frame(maxWidth: .infinity, alignment: .leading)

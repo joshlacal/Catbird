@@ -17,7 +17,7 @@ struct AboutSettingsView: View {
                         .resizable()
                         .scaledToFit()
                         .frame(width: 120, height: 120)
-                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                        .clipShape(Radius.lg.shape)
                         .accessibilityHidden(true)
 
                     VStack(spacing: 8) {

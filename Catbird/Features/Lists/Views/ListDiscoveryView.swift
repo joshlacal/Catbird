@@ -286,7 +286,7 @@ struct ListDiscoveryView: View {
         }
       }
       .padding(.horizontal, 16)
-      .padding(.vertical, 8)
+      .padding(.vertical, Space.xs)
     }
     .background(.regularMaterial)
   }
@@ -296,7 +296,7 @@ struct ListDiscoveryView: View {
       ProgressView()
         .scaleEffect(1.5)
       Text("Finding lists…")
-        .font(.headline)
+        .appFont(AppTextRole.headline)
         .foregroundStyle(.secondary)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -304,37 +304,15 @@ struct ListDiscoveryView: View {
   
   @ViewBuilder
   private func emptyStateView(viewModel: ListDiscoveryViewModel) -> some View {
-    VStack(spacing: 24) {
-      Image(systemName: "magnifyingglass.circle")
-        .font(.system(size: 64))
-        .foregroundStyle(.secondary)
-      
-      VStack(spacing: 8) {
-        Text("No Lists Found")
-          .font(.title2)
-          .fontWeight(.semibold)
-        
-        Group {
-          if viewModel.searchText.isEmpty {
-            Text("There are no public lists to discover at the moment")
-          } else {
-            Text("No lists match your search terms")
-          }
-        }
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-          .multilineTextAlignment(.center)
-      }
-      
-      if !viewModel.searchText.isEmpty {
-        Button("Clear Search") {
-          viewModel.searchText = ""
-        }
-        .buttonStyle(.bordered)
-      }
-    }
-    .padding(40)
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    ListsStateView(
+      title: String(localized: "No Lists Found"),
+      description: viewModel.searchText.isEmpty
+        ? String(localized: "There are no public lists to discover at the moment")
+        : String(localized: "No lists match your search terms"),
+      systemImage: "magnifyingglass.circle",
+      actionTitle: viewModel.searchText.isEmpty ? nil : String(localized: "Clear Search"),
+      action: viewModel.searchText.isEmpty ? nil : { viewModel.searchText = "" }
+    )
   }
   
   @ViewBuilder
@@ -385,17 +363,7 @@ struct FilterChip: View {
   let onTap: () -> Void
   
   var body: some View {
-    Button(action: onTap) {
-      Text(title)
-        .font(.subheadline)
-        .fontWeight(.medium)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(isSelected ? .blue : Color(.quaternarySystemFill))
-        .foregroundStyle(isSelected ? .white : .primary)
-        .clipShape(Capsule())
-    }
-    .buttonStyle(.plain)
+    CatbirdChip(title: Text(title), isSelected: isSelected, action: onTap)
   }
 }
 
@@ -419,13 +387,13 @@ struct DiscoveryListRow: View {
             }
           }
           .frame(width: 56, height: 56)
-          .clipShape(RoundedRectangle(cornerRadius: 12))
+          .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
           
           // List Info
           VStack(alignment: .leading, spacing: 4) {
             HStack {
               Text(list.name)
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .foregroundStyle(.primary)
                 .lineLimit(1)
               
@@ -436,20 +404,20 @@ struct DiscoveryListRow: View {
             
             if let description = list.description, !description.isEmpty {
               Text(description)
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
             }
             
             HStack {
               Text("By @\(list.creator.handle)", comment: "List creator attribution — %1$@ is the creator's handle (without @).")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
               
               Spacer()
               
               Text("\(list.listItemCount ?? 0) members", comment: "Number of members on a user list — %1$lld is the member count.")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.tertiary)
             }
           }
@@ -462,7 +430,7 @@ struct DiscoveryListRow: View {
           } label: {
             Text("View List", comment: "Action button to open a discovered user list.")
           }
-          .buttonStyle(.bordered)
+          .buttonStyle(.catbird(.tonal, size: .md))
           .frame(maxWidth: .infinity)
           
           Button {
@@ -470,7 +438,7 @@ struct DiscoveryListRow: View {
           } label: {
             Text("Follow", comment: "Action button verb to subscribe to or follow a discovered list.")
           }
-          .buttonStyle(.borderedProminent)
+          .buttonStyle(.catbird(.primary, size: .md))
           .frame(maxWidth: .infinity)
         }
       }
@@ -480,18 +448,18 @@ struct DiscoveryListRow: View {
   }
   
   private var listPlaceholderIcon: some View {
-    RoundedRectangle(cornerRadius: 12)
+    RoundedRectangle(cornerRadius: 12, style: .continuous)
       .fill(.secondary.opacity(0.3))
       .overlay {
         Image(systemName: "list.bullet")
-          .font(.title2)
+          .appFont(AppTextRole.title2)
           .foregroundStyle(.secondary)
       }
   }
   
   private var purposeIcon: some View {
     Image(systemName: iconForPurpose)
-      .font(.caption)
+      .appFont(AppTextRole.caption)
       .foregroundStyle(colorForPurpose)
       .padding(4)
       .background(colorForPurpose.opacity(0.2))

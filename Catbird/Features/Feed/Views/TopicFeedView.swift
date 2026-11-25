@@ -144,7 +144,7 @@ private struct TopicTabContentView: View {
               await state.refresh(topic: topic, appState: appState)
             }
           }
-          .buttonStyle(.borderedProminent)
+          .buttonStyle(.catbird(.primary))
           Spacer()
         }
       } else if state.posts.isEmpty && state.hasLoadedInitial {

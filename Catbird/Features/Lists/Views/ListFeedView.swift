@@ -258,13 +258,13 @@ struct ListFeedView: View {
           }
         }
         .frame(width: 56, height: 56)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         
         // List Info
         VStack(alignment: .leading, spacing: 4) {
           HStack(spacing: 8) {
             Text(listDetails.name)
-              .font(.headline)
+              .appFont(AppTextRole.headline)
               .fontWeight(.semibold)
               .lineLimit(1)
             
@@ -273,7 +273,7 @@ struct ListFeedView: View {
           
           if let description = listDetails.description, !description.isEmpty {
             Text(description)
-              .font(.subheadline)
+              .appFont(AppTextRole.subheadline)
               .foregroundStyle(.secondary)
               .lineLimit(2)
           }
@@ -283,11 +283,11 @@ struct ListFeedView: View {
               "\(listDetails.listItemCount ?? viewModel.members.count) members",
               comment: "Number of members on a user list — %1$lld is the member count."
             )
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundStyle(.tertiary)
             
             Text("by @\(listDetails.creator.handle)", comment: "List creator attribution — %1$@ is the creator's handle (without @).")
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundStyle(.tertiary)
           }
         }
@@ -347,11 +347,11 @@ struct ListFeedView: View {
               
               VStack(alignment: .leading, spacing: 2) {
                 Text(member.displayName ?? member.handle.description)
-                  .font(.subheadline)
+                  .appFont(AppTextRole.subheadline)
                   .fontWeight(.medium)
                 
                 Text(verbatim: "@\(member.handle)")
-                  .font(.caption)
+                  .appFont(AppTextRole.caption)
                   .foregroundStyle(.secondary)
               }
               
@@ -392,11 +392,11 @@ struct ListFeedView: View {
   }
   
   private var listPlaceholderIcon: some View {
-    RoundedRectangle(cornerRadius: 12)
+    RoundedRectangle(cornerRadius: 12, style: .continuous)
       .fill(.secondary.opacity(0.3))
       .overlay {
         Image(systemName: "list.bullet")
-          .font(.title2)
+          .appFont(AppTextRole.title2)
           .foregroundStyle(.secondary)
       }
   }
@@ -404,9 +404,9 @@ struct ListFeedView: View {
   private func purposeBadge(_ purpose: AppBskyGraphDefs.ListPurpose) -> some View {
     HStack(spacing: 4) {
       Image(systemName: iconForPurpose(purpose))
-        .font(.caption2)
+        .appFont(AppTextRole.caption2)
       Text(textForPurpose(purpose))
-        .font(.caption2)
+        .appFont(AppTextRole.caption2)
         .fontWeight(.medium)
     }
     .foregroundStyle(colorForPurpose(purpose))

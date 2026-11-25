@@ -131,7 +131,7 @@ public struct WelcomeOnboardingView: View {
     private var progressHeader: some View {
         HStack(spacing: 6) {
             ForEach(0..<4, id: \.self) { stepIndex in
-                Capsule()
+                Capsule(style: .continuous)
                     .fill(stepIndex <= currentStep ? Color.accentColor : Color.secondary.opacity(0.2))
                     .frame(height: 4)
                     .animation(.easeInOut(duration: 0.25), value: currentStep)
@@ -147,11 +147,11 @@ public struct WelcomeOnboardingView: View {
                 VStack(spacing: 20) {
                     VStack(spacing: 8) {
                         Text("Choose Your Interests")
-                            .font(.title2)
+                            .appFont(AppTextRole.title2)
                             .fontWeight(.bold)
                         
                         Text("Select topics you care about to discover tailored feeds and creators.")
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal)
@@ -183,7 +183,7 @@ public struct WelcomeOnboardingView: View {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.red)
                             Text(error)
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundStyle(.red)
                         }
                         .padding(.horizontal, 24)
@@ -210,20 +210,15 @@ public struct WelcomeOnboardingView: View {
                                 Text("Save & Continue (\(selectedInterests.count))", comment: "Button to save selected interests and advance — variable is selected count.")
                             }
                         }
-                        .fontWeight(.semibold)
                     }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 50)
-                    .background(Color.accentColor)
-                    .foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
+                .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
                 .disabled(isSavingInterests)
                 
                 Button("Skip for Now") {
                     advanceStep()
                 }
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundStyle(.secondary)
                 .disabled(isSavingInterests)
             }
@@ -242,17 +237,17 @@ public struct WelcomeOnboardingView: View {
                 Spacer(minLength: 24)
                 
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 80))
+                    .appFont(size: 80, weight: .regular, relativeTo: .body)
                     .foregroundStyle(.tint)
                     .symbolEffect(.bounce.wholeSymbol, options: .repeat(1))
                 
                 VStack(spacing: 12) {
                     Text("You’re All Set")
-                        .font(.largeTitle)
+                        .appFont(AppTextRole.largeTitle)
                         .fontWeight(.bold)
                     
                     Text("Welcome to Bluesky on Catbird. Choose community feeds or start exploring now.")
-                        .font(.body)
+                        .appFont(AppTextRole.body)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 32)
@@ -270,21 +265,14 @@ public struct WelcomeOnboardingView: View {
                         isShowingFeedDiscovery = true
                     } label: {
                         Label("Choose Feeds", systemImage: "plus.circle")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, minHeight: 52)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.catbird(.tonal, size: .lg, fullWidth: true))
                     .accessibilityHint("Optional. Discover and save community feeds")
 
                     Button(action: finishOnboarding) {
                         Text("Start Exploring")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 52)
-                            .background(Color.accentColor)
-                            .foregroundColor(.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
                     }
+                    .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 32)
@@ -305,19 +293,19 @@ public struct WelcomeOnboardingView: View {
         VStack(spacing: 10) {
             HStack(spacing: 12) {
                 Image(systemName: "sparkles.rectangle.stack.fill")
-                    .font(.title2)
+                    .appFont(AppTextRole.title2)
                     .foregroundStyle(.accent)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     if let name = context.name {
                         Text(name)
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                     } else {
                         Text("Starter Pack", comment: "Fallback title for a Bluesky Starter Pack.")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                     }
                     Text(starterPackStatusText)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                 }
                 
@@ -335,13 +323,14 @@ public struct WelcomeOnboardingView: View {
                     } label: {
                         Text("Try Again", comment: "Retry button when starter pack finalization fails.")
                     }
-                    .font(.caption.bold())
+                    .appFont(AppTextRole.caption)
+                    .fontWeight(.bold)
                 }
             }
             
             if let error = effectiveError {
                 Text(error)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -353,7 +342,7 @@ public struct WelcomeOnboardingView: View {
                     } icon: {
                         Image(systemName: "person.badge.plus")
                     }
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
                     if result.pinnedFeedsCount > 0 {
                         Label {
@@ -361,7 +350,7 @@ public struct WelcomeOnboardingView: View {
                         } icon: {
                             Image(systemName: "pin.fill")
                         }
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                     }
                 }
@@ -369,7 +358,7 @@ public struct WelcomeOnboardingView: View {
         }
         .padding(16)
         .background(Color.secondary.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .padding(.horizontal, 24)
     }
     

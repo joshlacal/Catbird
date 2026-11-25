@@ -127,11 +127,11 @@ struct RepositoryConnectionsView: View {
     private var emptyConnectionsView: some View {
         VStack(spacing: 20) {
             Image(systemName: "person.2.badge.minus")
-                .font(.system(size: 64))
+                .appFont(size: 64)
                 .foregroundColor(.secondary)
             
             Text("No Connection Data")
-                .font(.title2)
+                .appFont(AppTextRole.title2)
                 .fontWeight(.semibold)
             
             Text("No social connections found in this repository. This could indicate parsing issues or no follow/follower records in the backup.")
@@ -141,7 +141,7 @@ struct RepositoryConnectionsView: View {
             Button("Retry Loading") {
                 viewModel.loadConnections()
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.catbird(.tonal))
         }
         .padding()
     }
@@ -268,7 +268,7 @@ private struct ExperimentalConnectionsHeader: View {
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("CONNECTIONS ANALYSIS")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .fontWeight(.semibold)
                         .foregroundColor(.orange)
                     
@@ -276,7 +276,7 @@ private struct ExperimentalConnectionsHeader: View {
                         "Social connections parsed from \(repository.userHandle)'s repository data. Results may be incomplete.",
                         comment: "Disclaimer header on connections analysis view. Placeholder is the repository owner's handle."
                     )
-                        .font(.caption2)
+                        .appFont(AppTextRole.caption2)
                         .foregroundColor(.secondary)
                 }
                 
@@ -336,14 +336,14 @@ private struct ConnectionTypeSummary: View {
                 Image(systemName: displayInfo.icon)
                     .foregroundColor(displayInfo.color)
                 Text(displayInfo.name)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .fontWeight(.medium)
                 Spacer()
             }
             
             HStack {
                 Text(count, format: .number)
-                    .font(.title2)
+                    .appFont(AppTextRole.title2)
                     .fontWeight(.bold)
                     .foregroundColor(displayInfo.color)
                 Spacer()
@@ -351,7 +351,7 @@ private struct ConnectionTypeSummary: View {
         }
         .padding()
         .background(displayInfo.color.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(Radius.sm.shape)
     }
 }
 
@@ -365,7 +365,7 @@ private struct ConnectionsTimelineChart: View {
                     x: .value("Date", point.date),
                     y: .value("Connections", point.count)
                 )
-                .foregroundStyle(.blue.gradient)
+                .foregroundStyle(Color.accentColor.gradient)
             }
         }
         .chartXAxis {
@@ -398,12 +398,12 @@ private struct ConnectionRowView: View {
                     
                     VStack(alignment: .leading, spacing: 2) {
                         Text(verbatim: shortDID)
-                            .font(.body)
+                            .appFont(AppTextRole.body)
                             .fontWeight(.medium)
                             .foregroundColor(.primary)
                         
                         Text(connection.ageDescription)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                     }
                     
@@ -413,7 +413,7 @@ private struct ConnectionRowView: View {
                         if !connection.parseSuccessful {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundColor(.orange)
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                         }
                         
                         ConfidenceBadge(confidence: connection.parseConfidence)
@@ -422,7 +422,7 @@ private struct ConnectionRowView: View {
                 
                 if connection.targetUserDID != shortDID {
                     Text(verbatim: connection.targetUserDID)
-                        .font(.caption2)
+                        .appFont(AppTextRole.caption2)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
@@ -449,7 +449,7 @@ private struct ConnectionTypeIcon: View {
             switch type.lowercased() {
             case "follow":
                 Image(systemName: "person.badge.plus.fill")
-                    .foregroundColor(.blue)
+                    .foregroundColor(Color.accentColor)
             case "block":
                 Image(systemName: "person.badge.minus.fill")
                     .foregroundColor(.red)
@@ -461,7 +461,7 @@ private struct ConnectionTypeIcon: View {
                     .foregroundColor(.gray)
             }
         }
-        .font(.caption)
+        .appFont(AppTextRole.caption)
     }
 }
 
@@ -471,7 +471,6 @@ private struct ConnectionDetailView: View {
     let connection: ParsedConnection
     let repository: RepositoryRecord
     @Environment(\.dismiss) private var dismiss
-    @State private var showingRawData = false
     
     var body: some View {
         NavigationView {
@@ -481,7 +480,7 @@ private struct ConnectionDetailView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Text("Connection Details")
-                                .font(.title2)
+                                .appFont(AppTextRole.title2)
                                 .fontWeight(.bold)
                             
                             Spacer()
@@ -490,7 +489,7 @@ private struct ConnectionDetailView: View {
                         }
                         
                         Text(connection.ageDescription)
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                             .foregroundColor(.secondary)
                     }
                     
@@ -499,7 +498,7 @@ private struct ConnectionDetailView: View {
                     // Connection info
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Connection Information")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         
                         ConnectionMetadataGrid(connection: connection)
                     }
@@ -507,26 +506,19 @@ private struct ConnectionDetailView: View {
                     // Technical details
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Technical Details")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         
                         ConnectionTechnicalDetailsView(connection: connection)
                     }
                     
                     if !connection.parseSuccessful {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("Parse Error")
-                                .font(.headline)
-                                .foregroundColor(.red)
-                            
-                            Text(
-                                connection.parseErrorMessage
-                                    ?? String(localized: "Unknown parsing error", comment: "Fallback message when a record failed to parse without a specific error message.")
-                            )
-                                .font(.body)
-                                .foregroundColor(.red)
-                                .padding()
-                                .background(Color.red.opacity(0.1))
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                            CatbirdNotice(
+                                tone: .error,
+                                title: Text("Parse Error"),
+                                message: Text(
+                                  connection.parseErrorMessage
+                                    ?? String(localized: "Unknown parsing error", comment: "Fallback message when a record failed to parse without a specific error message.")))
                         }
                     }
                 }
@@ -542,16 +534,8 @@ private struct ConnectionDetailView: View {
                         dismiss()
                     }
                 }
-                
-                ToolbarItem(placement: .automatic) {
-                    Button("Raw Data") {
-                        showingRawData = true
-                    }
-                }
             }
-            .sheet(isPresented: $showingRawData) {
-                ConnectionRawDataView(connection: connection)
-            }
+            .modifier(ConnectionRawDataSheet(connection: connection))
         }
     }
 }
@@ -589,7 +573,7 @@ private struct ConnectionTechnicalDetailsView: View {
                     .fontWeight(.medium)
                 Spacer()
                 Text(verbatim: connection.recordCID)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }
@@ -599,16 +583,17 @@ private struct ConnectionTechnicalDetailsView: View {
                     .fontWeight(.medium)
                 Spacer()
                 Text("\(connection.rawCBORData.count) bytes", comment: "Byte size of raw CBOR record data.")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
             }
         }
         .padding()
         .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(Radius.sm.shape)
     }
 }
 
+#if DEBUG
 private struct ConnectionRawDataView: View {
     let connection: ParsedConnection
     @Environment(\.dismiss) private var dismiss
@@ -623,23 +608,23 @@ private struct ConnectionRawDataView: View {
                             .foregroundColor(.orange)
                         
                         Text("Raw CBOR data for debugging purposes only")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                     }
                     .padding()
                     .background(Color.orange.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(Radius.sm.shape)
                     
                     // Raw data
                     VStack(alignment: .leading, spacing: 8) {
                         Text("CBOR Data (\(connection.rawCBORData.count) bytes)", comment: "Section header showing raw CBOR payload size in bytes.")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         
                         Text(verbatim: connection.rawCBORData.map { String(format: "%02x", $0) }.joined(separator: " "))
                             .font(.system(.caption, design: .monospaced))
                             .padding()
                             .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .clipShape(Radius.sm.shape)
                     }
                 }
                 .padding()
@@ -658,6 +643,7 @@ private struct ConnectionRawDataView: View {
         }
     }
 }
+#endif
 
 // MARK: - Analytics View
 
@@ -672,7 +658,7 @@ private struct ConnectionsAnalyticsView: View {
                     // Summary statistics
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Connection Analytics")
-                            .font(.title2)
+                            .appFont(AppTextRole.title2)
                             .fontWeight(.bold)
                         
                         LazyVGrid(columns: [
@@ -713,7 +699,7 @@ private struct ConnectionsAnalyticsView: View {
                     if !viewModel.connectionTimeline.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Connection Timeline")
-                                .font(.headline)
+                                .appFont(AppTextRole.headline)
                             
                             ConnectionsTimelineChart(timeline: viewModel.connectionTimeline)
                                 .frame(height: 300)
@@ -723,7 +709,7 @@ private struct ConnectionsAnalyticsView: View {
                     // Type breakdown
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Connection Types")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         
                         ForEach(Array(viewModel.connectionsByType.keys.sorted()), id: \.self) { type in
                             HStack {
@@ -736,7 +722,7 @@ private struct ConnectionsAnalyticsView: View {
                             }
                             .padding()
                             .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .clipShape(Radius.sm.shape)
                         }
                     }
                 }
@@ -781,19 +767,19 @@ private struct AnalyticsCard: View {
                 Image(systemName: icon)
                     .foregroundColor(color)
                 Text(title)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                 Spacer()
             }
             
             Text(verbatim: value)
-                .font(.title2)
+                .appFont(AppTextRole.title2)
                 .fontWeight(.bold)
                 .foregroundColor(color)
         }
         .padding()
         .background(color.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(Radius.sm.shape)
     }
 }
 
@@ -868,10 +854,10 @@ private struct StatisticBadge: View {
     var body: some View {
         VStack(alignment: .center, spacing: 2) {
             Text(verbatim: value)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .fontWeight(.semibold)
             Text(label)
-                .font(.caption2)
+                .appFont(AppTextRole.caption2)
                 .foregroundColor(.secondary)
         }
         .padding(.horizontal, 8)
@@ -883,26 +869,19 @@ private struct StatisticBadge: View {
 
 private struct ConfidenceBadge: View {
     let confidence: Double
-    
-    private var color: Color {
+
+    private var tone: CatbirdBadgeTone {
         if confidence >= 0.9 {
-            return .green
+            return .success
         } else if confidence >= 0.7 {
-            return .orange
+            return .warning
         } else {
-            return .red
+            return .danger
         }
     }
-    
+
     var body: some View {
-        Text(confidence, format: .percent.precision(.fractionLength(0)))
-            .font(.caption2)
-            .fontWeight(.medium)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.2))
-            .foregroundColor(color)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
+        CatbirdBadge(Text(confidence, format: .percent.precision(.fractionLength(0))), tone: tone)
     }
 }
 
@@ -913,16 +892,16 @@ private struct MetadataItem: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundColor(.secondary)
             Text(verbatim: value)
-                .font(.body)
+                .appFont(AppTextRole.body)
                 .fontWeight(.medium)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
         .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(Radius.sm.shape)
     }
 }
 
@@ -936,4 +915,33 @@ private struct MetadataItem: View {
     
     return RepositoryConnectionsView(repository: sampleRepository)
         .modelContainer(for: [RepositoryRecord.self, ParsedConnection.self], inMemory: true)
+}
+
+// MARK: - Debug Raw Data
+
+/// Adds the "Raw Data" toolbar button and its sheet in debug builds only.
+/// Release builds get the content unchanged.
+private struct ConnectionRawDataSheet: ViewModifier {
+    let connection: ParsedConnection
+    #if DEBUG
+    @State private var showingRawData = false
+    #endif
+
+    func body(content: Content) -> some View {
+        #if DEBUG
+        content
+            .toolbar {
+                ToolbarItem(placement: .automatic) {
+                    Button("Raw Data") {
+                        showingRawData = true
+                    }
+                }
+            }
+            .sheet(isPresented: $showingRawData) {
+                ConnectionRawDataView(connection: connection)
+            }
+        #else
+        content
+        #endif
+    }
 }

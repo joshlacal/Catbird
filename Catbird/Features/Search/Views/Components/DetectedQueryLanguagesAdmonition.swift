@@ -53,7 +53,7 @@ public struct DetectedQueryLanguagesAdmonition: View {
     VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
       HStack(spacing: 6) {
         Image(systemName: "character.bubble")
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
           .foregroundColor(.accentColor)
 
         Text("Filter by detected language", comment: "Banner heading offering language filter pills for detected search query languages")
@@ -65,22 +65,9 @@ public struct DetectedQueryLanguagesAdmonition: View {
         HStack(spacing: 8) {
           ForEach(detectedLanguages, id: \.self) { langCode in
             let langName = Self.localizedLanguageName(for: langCode, locale: locale)
-            Button {
+            CatbirdChip(title: Text(langName), systemImage: "globe", size: .sm) {
               onSelectLanguage(langCode)
-            } label: {
-              HStack(spacing: 4) {
-                Image(systemName: "globe")
-                  .font(.caption2)
-                Text(langName)
-                  .appFont(AppTextRole.caption)
-              }
-              .padding(.horizontal, 10)
-              .padding(.vertical, 6)
-              .background(Color.accentColor.opacity(0.12))
-              .foregroundColor(.accentColor)
-              .clipShape(Capsule())
             }
-            .buttonStyle(.plain)
             .accessibilityLabel(
               Text(
                 "Filter by \(langName)",
@@ -94,11 +81,11 @@ public struct DetectedQueryLanguagesAdmonition: View {
     }
     .padding(DesignTokens.Spacing.md)
     .background(
-      RoundedRectangle(cornerRadius: DesignTokens.Size.radiusMD)
+      RoundedRectangle(cornerRadius: DesignTokens.Size.radiusMD, style: .continuous)
         .fill(Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme))
     )
     .overlay(
-      RoundedRectangle(cornerRadius: DesignTokens.Size.radiusMD)
+      RoundedRectangle(cornerRadius: DesignTokens.Size.radiusMD, style: .continuous)
         .stroke(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme), lineWidth: 0.5)
     )
     .padding(.horizontal)

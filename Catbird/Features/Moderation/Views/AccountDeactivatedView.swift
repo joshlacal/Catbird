@@ -53,17 +53,17 @@ struct AccountDeactivatedView: View {
     private var headerView: some View {
         VStack(spacing: 16) {
             Image(systemName: "person.crop.circle.badge.xmark")
-                .font(.system(size: 64))
+                .appFont(size: 64)
                 .foregroundStyle(.orange)
                 .padding(.top, 16)
             
             Text("Account Deactivated")
-                .font(.title)
+                .appFont(AppTextRole.title1)
                 .fontWeight(.bold)
                 .multilineTextAlignment(.center)
             
             Text(statusMessage)
-                .font(.body)
+                .appFont(AppTextRole.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 8)
@@ -97,10 +97,8 @@ struct AccountDeactivatedView: View {
                     Text("Reactivate Account")
                 }
                 .fontWeight(.semibold)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
             .disabled(isReactivating || isSigningOut)
             
             Button {
@@ -111,10 +109,8 @@ struct AccountDeactivatedView: View {
                     Text("Switch / Add Account")
                 }
                 .fontWeight(.medium)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.catbird(.tonal, size: .lg, fullWidth: true))
             .disabled(isReactivating || isSigningOut)
             
             Button {
@@ -132,10 +128,8 @@ struct AccountDeactivatedView: View {
                     Text("Sign Out")
                 }
                 .fontWeight(.medium)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.catbird(.tonal, size: .lg, fullWidth: true))
             .disabled(isReactivating || isSigningOut)
         }
         .padding(.top, 16)
@@ -144,19 +138,7 @@ struct AccountDeactivatedView: View {
     // MARK: - Error Banner
     
     private func errorBanner(_ message: String) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: "exclamationmark.circle.fill")
-                .foregroundStyle(.red)
-            Text(message)
-                .font(.subheadline)
-                .foregroundStyle(.primary)
-            Spacer()
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.red.opacity(0.12))
-        )
+        CatbirdNotice(tone: .error, message: Text(message))
     }
     
     // MARK: - Handlers
