@@ -3970,20 +3970,20 @@ final class AppState {
     /// Explicitly invoked from the user-facing Spaces gate button after an opt-in attempt.
     ///
     /// - Parameter present: Shows the server's consent page and returns its callback URL.
-    /// - Returns: Text to show when the permissions were not granted; `nil` when they were,
+    /// - Returns: What to show when the permissions were not granted; `nil` when they were,
     ///   or when the user closed the consent page.
     @MainActor
     func reauthorizeSpacesForMLS(
         present: @escaping @MainActor (URL) async throws -> URL
-    ) async -> String? {
+    ) async -> EncryptedChatPermissionFailure? {
         // Re-authorizing is an explicit request to use encrypted chat.
         ExperimentalSettings.shared.enableMLSChat(for: userDID)
         guard var coordinator = await getOrOpenMLSCoordinator() else {
-            return "Encrypted chat isn’t available right now. Please try again."
+            return .unavailable
         }
         var scopes = await resolveGrantedOAuthScopes()
         var status = try? await coordinator.checkSpacesEligibility(grantedScopes: scopes)
-        var failure: String?
+        var failure: EncryptedChatPermissionFailure?
 
         let missing: Set<String>
         if case .missingOAuthScopes(let missingScopes)? = status?.reason {
@@ -4005,20 +4005,29 @@ final class AppState {
                 scopes = granted.sorted()
                 // The upgrade replaced the session; take the coordinator that follows it.
                 guard let current = await getOrOpenMLSCoordinator() else {
-                    return "Encrypted chat isn’t available right now. Please try again."
+                    return .unavailable
                 }
                 coordinator = current
                 status = try? await coordinator.checkSpacesEligibility(grantedScopes: scopes)
                 if status?.eligible != true {
                     logger.error("MLS: Server granted \(granted.count) scopes but encrypted chat is still not eligible")
-                    failure = "Your server didn’t grant every permission encrypted chat needs."
+                    var stillMissing: [String] = []
+                    if case .missingOAuthScopes(let remaining)? = status?.reason {
+                        stillMissing = remaining.sorted()
+                    }
+                    failure = .partialGrant(missing: stillMissing)
                 }
             } catch let error as GatewayPermissionError where error == .cancelled {
                 return nil
             } catch {
-                logger.error("MLS: Encrypted-chat permission request failed: \(error.localizedDescription)")
-                failure = (error as? LocalizedError)?.errorDescription
-                    ?? "Couldn’t get permission from your server. Please try again."
+                let detail: String
+                if case .upgradeFailed(let message)? = error as? GatewayPermissionError {
+                    detail = message
+                } else {
+                    detail = error.localizedDescription
+                }
+                logger.error("MLS: Encrypted-chat permission request failed: \(detail, privacy: .public)")
+                failure = EncryptedChatPermissionFailure(error: error)
             }
         }
 
