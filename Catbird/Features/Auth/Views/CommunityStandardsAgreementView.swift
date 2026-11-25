@@ -98,10 +98,8 @@ struct CommunityStandardsAgreementView: View {
       .safeAreaInset(edge: .bottom) {
         Button(action: onAgree) {
           Text("Agree")
-            .appFont(AppTextRole.headline)
-            .frame(maxWidth: .infinity, minHeight: 44)
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
         .padding()
         .accessibilityIdentifier("agreement.agree")
       }
@@ -116,7 +114,20 @@ struct CommunityStandardsAgreementView: View {
         }
       }
     }
+    .modifier(CommunityStandardsSheetFrame())
     .interactiveDismissDisabled()
+  }
+}
+
+/// macOS sheets size to their content's ideal size; this one's wrapping text would
+/// ask for a single long line, so give the sheet a readable size there. iOS is unchanged.
+private struct CommunityStandardsSheetFrame: ViewModifier {
+  func body(content: Content) -> some View {
+    #if os(macOS)
+    content.frame(minWidth: 440, idealWidth: 520, minHeight: 420, idealHeight: 560)
+    #else
+    content
+    #endif
   }
 }
 

@@ -110,11 +110,11 @@ public struct OnboardingAvatarStep: View {
                 // Header
                 VStack(spacing: 8) {
                     Text("Add a Profile Picture")
-                        .font(.title2)
+                        .appFont(AppTextRole.title2)
                         .fontWeight(.bold)
                     
                     Text("Choose a photo or build an avatar to help friends recognize you.")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
@@ -154,14 +154,15 @@ public struct OnboardingAvatarStep: View {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.red)
                             Text(error)
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundStyle(.red)
                         }
                         
                         Button("Try Again") {
                             saveAndContinue()
                         }
-                        .font(.caption.bold())
+                        .appFont(AppTextRole.caption)
+                        .fontWeight(.bold)
                         .foregroundStyle(.accent)
                     }
                     .padding(.horizontal)
@@ -179,18 +180,14 @@ public struct OnboardingAvatarStep: View {
                             Text(primaryButtonTitle)
                                 .fontWeight(.semibold)
                         }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .background(Color.accentColor)
-                        .foregroundColor(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
                     }
+                    .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
                     .disabled(isUploading || (avatarMode == .photo && selectedPhoto == nil))
                     
                     Button("Skip for Now") {
                         onSkip()
                     }
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundStyle(.secondary)
                     .disabled(isUploading)
                 }
@@ -237,7 +234,7 @@ public struct OnboardingAvatarStep: View {
             // Symbol Grid
             VStack(alignment: .leading, spacing: 10) {
                 Text("Select an Icon")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 24)
@@ -249,15 +246,15 @@ public struct OnboardingAvatarStep: View {
                             hasCustomizedSticker = true
                         } label: {
                             ZStack {
-                                RoundedRectangle(cornerRadius: 12)
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
                                     .fill(selectedSymbol == symbol ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.1))
                                     .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
                                             .stroke(selectedSymbol == symbol ? Color.accentColor : Color.clear, lineWidth: 2)
                                     )
                                 
                                 Image(systemName: symbol)
-                                    .font(.system(size: 24))
+                                    .font(.system(size: 24, weight: .regular))
                                     .foregroundColor(selectedSymbol == symbol ? .accentColor : .primary)
                             }
                             .frame(height: 52)
@@ -273,7 +270,7 @@ public struct OnboardingAvatarStep: View {
             // Color Palette
             VStack(alignment: .leading, spacing: 10) {
                 Text("Select Background Color")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 24)
@@ -319,13 +316,8 @@ public struct OnboardingAvatarStep: View {
                         Text("Choose Another Photo", comment: "Button to replace the currently selected avatar photo.")
                     }
                 }
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-                .frame(height: 50)
-                .background { Color.secondary.opacity(0.15) }
-                .foregroundColor(.primary)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
             }
+            .buttonStyle(.catbird(.tonal, size: .lg, fullWidth: true))
             .padding(.horizontal, 24)
             .onChange(of: selectedPhotoItem) { _, newItem in
                 Task {
@@ -414,7 +406,7 @@ public struct OnboardingAvatarStep: View {
             .frame(width: 512, height: 512)
             .overlay(
                 Image(systemName: selectedSymbol)
-                    .font(.system(size: 240, weight: .semibold))
+                    .font(.system(size: 240, weight: .semibold)) // fixed raster for uploaded avatar: must not scale
                     .foregroundColor(.white)
             )
         

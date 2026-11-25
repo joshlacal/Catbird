@@ -1075,7 +1075,7 @@ struct ExternalEmbedView: View {
                     retryAttempt += 1
                 }
                 .appFont(AppTextRole.caption)
-                .foregroundStyle(.blue)
+                .foregroundStyle(Color.accentColor)
                 
                 Spacer()
                 
@@ -1085,7 +1085,7 @@ struct ExternalEmbedView: View {
                     }
                 }
                 .appFont(AppTextRole.caption)
-                .foregroundStyle(.blue)
+                .foregroundStyle(Color.accentColor)
             }
         }
         .padding(12)
@@ -1158,7 +1158,7 @@ struct ExternalEmbedView: View {
                     SettingsRoute(target: .init(screen: .externalMedia, control: control))))
             }
             .appFont(AppTextRole.caption)
-            .foregroundStyle(.blue)
+            .foregroundStyle(Color.accentColor)
             
             Spacer()
             

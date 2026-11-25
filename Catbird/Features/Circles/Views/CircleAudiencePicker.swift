@@ -113,10 +113,10 @@ struct CircleAudiencePicker: View {
 
           if !isReplyLocked && !isSubmitting {
             Image(systemName: "chevron.down")
-              .font(.system(size: 10, weight: .semibold))
+              .appFont(size: 10, weight: .semibold)
           }
         }
-        .font(.subheadline)
+        .appFont(AppTextRole.subheadline)
         .foregroundStyle(labelColor)
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
@@ -129,7 +129,7 @@ struct CircleAudiencePicker: View {
       .accessibilityHint(accessibilityHintText)
       if !appState.circlesEnabled, selectedDestination != .public {
         Text("Circles unavailable. Your post is still private.")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
       }
       Spacer()

@@ -380,20 +380,12 @@ struct ResultsView: View {
           Button {
             triggerLoadMoreIfNeeded()
           } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: Space.xs) {
               Image(systemName: "arrow.counterclockwise")
               Text("Retry")
             }
-            .appFont(AppTextRole.caption.weight(.medium))
-            .foregroundColor(.accentColor)
-            .padding(.vertical, 6)
-            .padding(.horizontal, 12)
-            .background(
-              Capsule()
-                .fill(Color.accentColor.opacity(0.12))
-            )
           }
-          .buttonStyle(.plain)
+          .buttonStyle(.catbird(.tonal, size: .sm))
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
@@ -470,32 +462,16 @@ struct ResultsView: View {
           clearFilters()
         } label: {
           Text("Clear Filters")
-            .appFont(AppTextRole.subheadline)
-            .foregroundColor(.white)
-            .padding(.vertical, 8)
-            .padding(.horizontal, 16)
-            .background(
-              Capsule()
-                .fill(Color.accentColor)
-            )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.catbird(.primary, size: .md))
         .padding(.top, 8)
       } else {
         Button {
           onReset()
         } label: {
           Text("Explore Trending Content")
-            .appFont(AppTextRole.subheadline)
-            .foregroundColor(.white)
-            .padding(.vertical, 8)
-            .padding(.horizontal, 16)
-            .background(
-              Capsule()
-                .fill(Color.accentColor)
-            )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.catbird(.primary, size: .md))
         .padding(.top, 8)
       }
     }

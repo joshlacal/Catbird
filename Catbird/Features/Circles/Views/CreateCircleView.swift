@@ -28,7 +28,7 @@ struct CreateCircleView: View {
             "\(name.trimmingCharacters(in: .whitespacesAndNewlines).count)/64 characters",
             comment: "Character count indicator for Circle name out of 64 maximum characters — %1$lld is the current character count."
           )
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .foregroundStyle(name.trimmingCharacters(in: .whitespacesAndNewlines).count > 64 ? .red : .secondary)
         }
 
@@ -39,10 +39,10 @@ struct CreateCircleView: View {
               AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 36)
               VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: profile.displayName ?? "@\(profile.handle)")
-                  .font(.subheadline.weight(.medium))
+                  .appFont(AppTextRole.subheadline).fontWeight(.medium)
                   .lineLimit(1)
                 Text(verbatim: "@\(profile.handle)")
-                  .font(.caption)
+                  .appFont(AppTextRole.caption)
                   .foregroundStyle(.secondary)
                   .lineLimit(1)
               }
@@ -82,20 +82,20 @@ struct CreateCircleView: View {
           if vm.encryptionAvailability == .checkFailed {
             Section {
               Label(CircleManagementCopy.encryptionCheckFailed, systemImage: "exclamationmark.triangle")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
             }
           } else if !vm.createEncrypted {
             Section {
               Text(CircleManagementCopy.encryptionUnavailableHint)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
             }
           } else if !vm.createIneligible.isEmpty {
             Section {
               ForEach(vm.createIneligible, id: \.did) { entry in
                 Label(vm.ineligibleMessage(for: entry.did), systemImage: "lock.slash")
-                  .font(.caption)
+                  .appFont(AppTextRole.caption)
                   .foregroundStyle(.secondary)
               }
             }
@@ -105,7 +105,7 @@ struct CreateCircleView: View {
         Section("Privacy & History Disclosure") {
           Label {
             Text(CircleManagementCopy.addMemberDisclosure)
-              .font(.subheadline)
+              .appFont(AppTextRole.subheadline)
               .foregroundStyle(.secondary)
           } icon: {
             Image(systemName: "clock.arrow.circlepath")
@@ -128,7 +128,7 @@ struct CreateCircleView: View {
                     Text("Creating Circle...", comment: "Progress message while creating a new Circle Space on the user's PDS.")
                   }
                 }
-                  .font(.subheadline)
+                  .appFont(AppTextRole.subheadline)
                   .foregroundStyle(.secondary)
               }
             }
@@ -136,21 +136,21 @@ struct CreateCircleView: View {
             Section {
               Label(message, systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
             }
           case .activationFailed(let message):
             Section {
               VStack(alignment: .leading, spacing: 8) {
                 Label("Circle created, but AppView activation failed", systemImage: "exclamationmark.triangle.fill")
                   .foregroundStyle(.orange)
-                  .font(.subheadline.weight(.semibold))
+                  .appFont(AppTextRole.subheadline).fontWeight(.semibold)
                 Text(message)
-                  .font(.caption)
+                  .appFont(AppTextRole.caption)
                   .foregroundStyle(.secondary)
                 Button("Retry Activation") {
                   retryActivation()
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.catbird(.tonal, size: .md))
                 .disabled(isSubmitting)
                 .accessibilityLabel("Retry Circle activation")
               }
@@ -159,7 +159,7 @@ struct CreateCircleView: View {
             Section {
               Label("Circle Created Successfully", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
-                .font(.subheadline.weight(.semibold))
+                .appFont(AppTextRole.subheadline).fontWeight(.semibold)
             }
           case .idle:
             if isSubmitting {
@@ -168,7 +168,7 @@ struct CreateCircleView: View {
                   ProgressView()
                     .padding(.trailing, 8)
                   Text("Authorizing...")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundStyle(.secondary)
                 }
               }
@@ -176,6 +176,8 @@ struct CreateCircleView: View {
           }
         }
       }
+      .scrollContentBackground(.hidden)
+      .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
       .navigationTitle("New Circle")
       #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)

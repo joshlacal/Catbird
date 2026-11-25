@@ -105,12 +105,12 @@ struct ConversationRow: View {
               did: directMember.did
              ) {
             VerificationBadgeView(kind: badgeKind)
-              .font(.caption)
+              .appFont(AppTextRole.caption)
           }
 
           if convo.muted {
             Image(systemName: "bell.slash.fill")
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundStyle(.secondary)
               .accessibilityHidden(true)
           }
@@ -126,7 +126,7 @@ struct ConversationRow: View {
                 Text(convo.unreadCount, format: .number)
               }
             }
-            .font(.caption2.weight(.bold))
+            .appFont(AppTextRole.caption2).fontWeight(.bold)
             .foregroundColor(.white)
             .padding(.horizontal, 6)
             .frame(minWidth: 22, minHeight: 22)

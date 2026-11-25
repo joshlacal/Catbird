@@ -432,21 +432,10 @@ struct ModerationAccountRow: View {
                     isPerformingAction = false
                 }
             } label: {
-                if isPerformingAction {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Text(isBlocked ? "Unblock" : "Unmute", comment: "Action button to unblock or unmute an account.")
-                        .appFont(AppTextRole.callout)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Color.systemGray5)
-                        .foregroundStyle(.primary)
-                        .cornerRadius(6)
-                }
+                Text(isBlocked ? "Unblock" : "Unmute", comment: "Action button to unblock or unmute an account.")
             }
             .disabled(isPerformingAction)
-            .buttonStyle(.plain)
+            .buttonStyle(.catbird(.tonal, size: .sm, isLoading: isPerformingAction))
         }
         .padding(.vertical, 4)
     }
@@ -770,13 +759,7 @@ struct LabelPreferenceStatusRow: View {
                     .appFont(AppTextRole.headline)
                 Spacer()
                 if let value {
-                    Text(value.settingsOptionTitle)
-                        .appFont(AppTextRole.caption)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                    CatbirdBadge(Text(value.settingsOptionTitle), tone: .neutral)
                 }
             }
             if !description.isEmpty {

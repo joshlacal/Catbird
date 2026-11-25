@@ -157,7 +157,7 @@ public struct TrendingVideosSection: View {
         .overlay(alignment: .bottomLeading) {
           if coverTitle == nil {
             Image(systemName: "play.fill")
-              .font(.caption.weight(.semibold))
+              .appFont(AppTextRole.caption.weight(.semibold))
               .foregroundStyle(.white)
               .frame(width: 28, height: 28)
               .background(.black.opacity(0.65), in: Circle())
@@ -224,7 +224,7 @@ public struct TrendingVideosSection: View {
       .overlay {
         VStack(spacing: DesignTokens.Spacing.xs) {
           Image(systemName: "eye.slash.fill")
-            .font(.title2)
+            .appFont(AppTextRole.title2)
             .foregroundStyle(.secondary)
           Text(title)
             .appFont(AppTextRole.caption)
@@ -263,7 +263,7 @@ public struct TrendingVideosSection: View {
       .fill(Color.secondary.opacity(0.12))
       .overlay {
         Image(systemName: "play.rectangle")
-          .font(.title2)
+          .appFont(AppTextRole.title2)
           .foregroundStyle(.secondary)
       }
   }

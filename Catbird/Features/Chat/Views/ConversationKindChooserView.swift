@@ -14,16 +14,16 @@ struct ConversationKindChooserView: View {
           AsyncProfileImage(url: model.recipient.avatarURL, size: 44)
           VStack(alignment: .leading, spacing: 2) {
             if let displayName = model.recipient.displayName, !displayName.isEmpty {
-              Text(verbatim: displayName).font(.headline).lineLimit(1)
+              Text(verbatim: displayName).appFont(AppTextRole.headline).lineLimit(1)
             }
             Text(verbatim: "@\(model.recipient.handle)")
-              .font(.subheadline)
+              .appFont(AppTextRole.subheadline)
               .foregroundStyle(.secondary)
               .lineLimit(1)
           }
           Spacer()
           Button("Change", action: onChangePerson)
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
             .buttonStyle(.borderless)
             .accessibilityIdentifier("newConversation.changePerson")
         }
@@ -56,16 +56,16 @@ struct ConversationKindChooserView: View {
     } label: {
       HStack(spacing: 14) {
         Image(systemName: kind.optionSystemImage)
-          .font(.title3)
+          .appFont(AppTextRole.title3)
           .foregroundStyle(kind.showsLock ? Color.green : Color.accentColor)
           .frame(width: 28)
           .accessibilityHidden(true)
         VStack(alignment: .leading, spacing: 3) {
           Text(kind.optionTitle)
-            .font(.body.weight(.semibold))
+            .appFont(AppTextRole.body).fontWeight(.semibold)
             .foregroundStyle(.primary)
           Text(kind.optionDetail)
-            .font(.footnote)
+            .appFont(AppTextRole.footnote)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -74,7 +74,7 @@ struct ConversationKindChooserView: View {
           ProgressView()
         } else {
           Image(systemName: "chevron.forward")
-            .font(.footnote.weight(.semibold))
+            .appFont(AppTextRole.footnote).fontWeight(.semibold)
             .foregroundStyle(.tertiary)
         }
       }
@@ -95,7 +95,7 @@ struct ConversationKindChooserView: View {
           Button("Try again") {
             Task { await model.retry() }
           }
-          .font(.footnote.weight(.semibold))
+          .appFont(AppTextRole.footnote).fontWeight(.semibold)
           .accessibilityIdentifier("newConversation.retry")
         }
       }

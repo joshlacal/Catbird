@@ -95,7 +95,7 @@ struct RepositoryUniversalSearchView: View {
                 // Search tips
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Search Tips")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                     
                     VStack(alignment: .leading, spacing: 8) {
                         SearchTipRow(icon: "text.quote", tip: "Search post content", example: "hello world")
@@ -110,7 +110,7 @@ struct RepositoryUniversalSearchView: View {
                 if !viewModel.searchHistory.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Recent Searches")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         
                         ForEach(viewModel.searchHistory, id: \.self) { query in
                             Button(action: {
@@ -124,12 +124,12 @@ struct RepositoryUniversalSearchView: View {
                                         .foregroundColor(.primary)
                                     Spacer()
                                     Image(systemName: "arrow.up.left")
-                                        .font(.caption)
+                                        .appFont(AppTextRole.caption)
                                         .foregroundColor(.secondary)
                                 }
                                 .padding()
                                 .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .clipShape(Radius.sm.shape)
                             }
                             .buttonStyle(PlainButtonStyle())
                         }
@@ -139,7 +139,7 @@ struct RepositoryUniversalSearchView: View {
                 // Quick stats
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Repository Stats")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                     
                     HStack(spacing: 16) {
                         QuickStatView(label: "Posts", value: repository.postCount.formatted(.number), icon: "text.bubble")
@@ -160,11 +160,11 @@ struct RepositoryUniversalSearchView: View {
                 .progressViewStyle(CircularProgressViewStyle())
             
             Text("Searching...")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .foregroundColor(.secondary)
             
             Text("Scanning \(repository.totalRecordCount) records", comment: "Progress subtitle while searching repository records. Placeholder is the total record count.")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundColor(.secondary)
         }
         .frame(maxHeight: .infinity)
@@ -175,11 +175,11 @@ struct RepositoryUniversalSearchView: View {
     private var emptySearchView: some View {
         VStack(spacing: 20) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 64))
+                .appFont(size: 64)
                 .foregroundColor(.secondary)
             
             Text("No Results")
-                .font(.title2)
+                .appFont(AppTextRole.title2)
                 .fontWeight(.semibold)
             
             Text("No results found for \"\(viewModel.searchQuery)\"\n\nTry adjusting your search terms or using the advanced search options.")
@@ -189,7 +189,7 @@ struct RepositoryUniversalSearchView: View {
             Button("Advanced Search") {
                 showingAdvancedSearch = true
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.catbird(.tonal))
         }
         .padding()
         .frame(maxHeight: .infinity)
@@ -713,7 +713,7 @@ private struct ExperimentalSearchHeader: View {
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("UNIVERSAL SEARCH")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .fontWeight(.semibold)
                         .foregroundColor(.orange)
                     
@@ -721,7 +721,7 @@ private struct ExperimentalSearchHeader: View {
                         "Search across all parsed data from \(repository.userHandle)'s repository. Results may be incomplete.",
                         comment: "Disclaimer header on universal repository search view. Placeholder is the repository owner's handle."
                     )
-                        .font(.caption2)
+                        .appFont(AppTextRole.caption2)
                         .foregroundColor(.secondary)
                 }
                 
@@ -740,16 +740,16 @@ private struct SearchTipRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .foregroundColor(.blue)
+                .foregroundColor(Color.accentColor)
                 .frame(width: 20)
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(tip)
-                    .font(.body)
+                    .appFont(AppTextRole.body)
                     .fontWeight(.medium)
                 
                 Text("e.g. \"\(example)\"", comment: "Example search query shown beneath a search tip. Placeholder is a literal query example.")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
             }
             
@@ -766,21 +766,21 @@ private struct QuickStatView: View {
     var body: some View {
         VStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.title2)
-                .foregroundColor(.blue)
+                .appFont(AppTextRole.title2)
+                .foregroundColor(Color.accentColor)
             
             Text(verbatim: value)
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .fontWeight(.bold)
             
             Text(label)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity)
         .padding()
         .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(Radius.sm.shape)
     }
 }
 
@@ -790,7 +790,7 @@ private struct SearchSummaryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Found \(viewModel.searchResults.count) results", comment: "Summary header showing total number of repository search results.")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .fontWeight(.semibold)
             
             HStack {
@@ -812,16 +812,16 @@ private struct SearchTypeTag: View {
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: type.systemImage)
-                .font(.caption2)
+                .appFont(AppTextRole.caption2)
             Text(count, format: .number)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .fontWeight(.medium)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(type.color.opacity(0.2))
         .foregroundColor(type.color)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(Radius.sm.shape)
     }
 }
 
@@ -856,13 +856,13 @@ private struct RepoSearchResultRow: View {
                     
                     VStack(alignment: .leading, spacing: 2) {
                         Text(verbatim: result.title)
-                            .font(.body)
+                            .appFont(AppTextRole.body)
                             .fontWeight(.medium)
                             .foregroundColor(.primary)
                             .lineLimit(2)
                         
                         Text(verbatim: result.subtitle)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                     }
                     
@@ -874,18 +874,18 @@ private struct RepoSearchResultRow: View {
                         if !result.parseSuccessful {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundColor(.orange)
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                         }
                     }
                 }
                 
                 Text(verbatim: result.content)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(3)
                 
                 Text(result.date, style: .relative)
-                    .font(.caption2)
+                    .appFont(AppTextRole.caption2)
                     .foregroundColor(.secondary)
             }
             .padding(.vertical, 4)
@@ -930,7 +930,7 @@ private struct AdvancedSearchView: View {
                             "Confidence Threshold: \(viewModel.confidenceThreshold.formatted(.percent.precision(.fractionLength(0))))",
                             comment: "Slider label for minimum parse confidence filter in advanced repository search. Placeholder is a formatted percentage."
                         )
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                         
                         Slider(value: Binding(
                             get: { viewModel.confidenceThreshold },
@@ -999,12 +999,12 @@ private struct SearchResultDetailView: View {
                                 .foregroundColor(result.type.color)
                             
                             Text(result.type.displayName)
-                                .font(.title2)
+                                .appFont(AppTextRole.title2)
                                 .fontWeight(.bold)
                         }
                         
                         Text(result.date, style: .relative)
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                             .foregroundColor(.secondary)
                     }
                     
@@ -1013,19 +1013,19 @@ private struct SearchResultDetailView: View {
                     // Content
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Content")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         
                         Text(result.content)
-                            .font(.body)
+                            .appFont(AppTextRole.body)
                             .padding()
                             .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .clipShape(Radius.sm.shape)
                     }
                     
                     // Metadata
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Metadata")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         
                         SearchResultMetadataGrid(result: result)
                     }
@@ -1189,26 +1189,19 @@ enum SearchSortOrder: String, CaseIterable {
 // Reuse components
 private struct ConfidenceBadge: View {
     let confidence: Double
-    
-    private var color: Color {
+
+    private var tone: CatbirdBadgeTone {
         if confidence >= 0.9 {
-            return .green
+            return .success
         } else if confidence >= 0.7 {
-            return .orange
+            return .warning
         } else {
-            return .red
+            return .danger
         }
     }
-    
+
     var body: some View {
-        Text(confidence, format: .percent.precision(.fractionLength(0)))
-            .font(.caption2)
-            .fontWeight(.medium)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.2))
-            .foregroundColor(color)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
+        CatbirdBadge(Text(confidence, format: .percent.precision(.fractionLength(0))), tone: tone)
     }
 }
 
@@ -1219,16 +1212,16 @@ private struct MetadataItem: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundColor(.secondary)
             Text(verbatim: value)
-                .font(.body)
+                .appFont(AppTextRole.body)
                 .fontWeight(.medium)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
         .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(Radius.sm.shape)
     }
 }
 

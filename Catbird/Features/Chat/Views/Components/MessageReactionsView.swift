@@ -43,10 +43,10 @@ struct MessageReactionsView: View {
             }) {
               HStack(spacing: 4) {
                 Text(verbatim: emoji)
-                  .font(.caption)
+                  .appFont(AppTextRole.caption)
                 if count > 1 {
                   Text(count, format: .number)
-                    .font(.caption2)
+                    .appFont(AppTextRole.caption2)
                     .fontWeight(.medium)
                 }
               }
@@ -71,7 +71,7 @@ struct MessageReactionsView: View {
             onRequestEmojiPicker?()
           }) {
             Image(systemName: "plus.circle")
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundColor(.secondary)
               .padding(.horizontal, 6)
               .padding(.vertical, 4)

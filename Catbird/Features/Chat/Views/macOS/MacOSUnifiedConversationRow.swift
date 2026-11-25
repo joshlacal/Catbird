@@ -52,14 +52,14 @@ struct MacOSUnifiedConversationRow: View {
       VStack(alignment: .leading, spacing: 2) {
         HStack {
           Text(displayName(for: otherMembers))
-            .font(.body)
+            .appFont(AppTextRole.body)
             .fontWeight(convo.unreadCount > 0 ? .semibold : .regular)
             .lineLimit(1)
             .truncationMode(.tail)
 
           if let badgeKind = verifiedBadgeKind(for: otherMembers) {
             VerificationBadgeView(kind: badgeKind)
-              .font(.caption)
+              .appFont(AppTextRole.caption)
           }
 
           Spacer()
@@ -67,7 +67,7 @@ struct MacOSUnifiedConversationRow: View {
           if let lastMessage = convo.lastMessage,
              case .chatBskyConvoDefsMessageView(let msg) = lastMessage {
             Text(msg.sentAt.date, style: .relative)
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundStyle(.secondary)
           }
         }
@@ -75,7 +75,7 @@ struct MacOSUnifiedConversationRow: View {
         HStack {
           if let lastMessage = convo.lastMessage {
             Text(lastMessageText(lastMessage))
-              .font(.subheadline)
+              .appFont(AppTextRole.subheadline)
               .foregroundStyle(.secondary)
               .lineLimit(1)
           }
@@ -84,12 +84,12 @@ struct MacOSUnifiedConversationRow: View {
 
           if convo.unreadCount > 0 {
             Text(convo.unreadCount, format: .number)
-              .font(.caption2)
+              .appFont(AppTextRole.caption2)
               .fontWeight(.semibold)
               .foregroundStyle(.white)
               .padding(.horizontal, 6)
               .padding(.vertical, 2)
-              .background(.blue, in: Capsule())
+              .background(Color.accentColor, in: Capsule())
           }
         }
       }
@@ -117,16 +117,16 @@ struct MacOSUnifiedConversationRow: View {
         HStack {
           HStack(spacing: 4) {
             Image(systemName: "lock.fill")
-              .font(.caption2)
+              .appFont(AppTextRole.caption2)
               .foregroundStyle(.green)
             Text(groupName(convo, participants: participants))
-              .font(.body)
+              .appFont(AppTextRole.body)
               .fontWeight(unreadCount > 0 ? .semibold : .regular)
               .lineLimit(1)
 
             if appState.mlsSyncIncompleteConversationIDs.contains(convo.conversationID) {
               Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
-                .font(.caption2)
+                .appFont(AppTextRole.caption2)
                 .foregroundStyle(.orange)
                 .help("Couldn't update. Catbird will try again.")
                 .accessibilityLabel("Couldn't update. Catbird will try again.")
@@ -137,24 +137,24 @@ struct MacOSUnifiedConversationRow: View {
           Spacer()
 
           Text(convo.updatedAt, style: .relative)
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundStyle(.secondary)
         }
 
         HStack {
           if let memberChange {
             Text(memberChange.text)
-              .font(.subheadline)
+              .appFont(AppTextRole.subheadline)
               .foregroundStyle(.orange)
               .lineLimit(1)
           } else if let lastMessage {
             Text(lastMessage.text)
-              .font(.subheadline)
+              .appFont(AppTextRole.subheadline)
               .foregroundStyle(.secondary)
               .lineLimit(1)
           } else {
             Text("\(participants.count) members", comment: "Fallback subtitle showing number of members in an encrypted conversation (%lld = member count)")
-              .font(.subheadline)
+              .appFont(AppTextRole.subheadline)
               .foregroundStyle(.secondary)
           }
 
@@ -162,12 +162,12 @@ struct MacOSUnifiedConversationRow: View {
 
           if unreadCount > 0 {
             Text(unreadCount, format: .number)
-              .font(.caption2)
+              .appFont(AppTextRole.caption2)
               .fontWeight(.semibold)
               .foregroundStyle(.white)
               .padding(.horizontal, 6)
               .padding(.vertical, 2)
-              .background(.blue, in: Capsule())
+              .background(Color.accentColor, in: Capsule())
           }
         }
       }
@@ -266,7 +266,7 @@ struct MacOSUnifiedConversationRow: View {
         .fill(Color.gray.opacity(0.3))
         .overlay {
           Text(verbatim: String((participant.displayName ?? participant.handle).prefix(1)).localizedUppercase)
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .foregroundStyle(.white)
         }
     }

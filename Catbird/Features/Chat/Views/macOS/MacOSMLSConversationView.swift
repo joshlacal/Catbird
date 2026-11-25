@@ -114,7 +114,7 @@ struct MacOSMLSOrdinaryConversationView: View {
                 "Couldn't update this conversation. Catbird will try again.",
                 systemImage: "exclamationmark.arrow.triangle.2.circlepath"
               )
-              .font(.footnote)
+              .appFont(AppTextRole.footnote)
               .padding(.horizontal, 12)
               .padding(.vertical, 8)
               .background(.regularMaterial, in: Capsule())
@@ -135,7 +135,7 @@ struct MacOSMLSOrdinaryConversationView: View {
             .font(.system(size: 10))
             .foregroundStyle(.green)
           Text(groupTitle)
-            .font(.headline)
+            .appFont(AppTextRole.headline)
             .lineLimit(1)
           Text("E2EE", comment: "Short badge indicating end-to-end encryption")
             .font(.system(size: 9, weight: .semibold))
@@ -167,7 +167,7 @@ struct MacOSMLSOrdinaryConversationView: View {
         if let spaceURI {
           Section("ATProto Space") {
             Text(verbatim: spaceURI)
-              .font(.caption.monospaced())
+              .appFont(AppTextRole.caption).monospaced()
               .textSelection(.enabled)
           }
         }

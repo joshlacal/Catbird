@@ -33,11 +33,11 @@ struct MLSOptInGateView: View {
           .foregroundStyle(.secondary)
 
         Text("Catbird Groups")
-          .font(.title3)
+          .appFont(AppTextRole.title3)
           .fontWeight(.semibold)
 
         Text("End-to-end encrypted post-quantum chat backed by ATProto Spaces.")
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
           .padding(.horizontal, 32)

@@ -164,7 +164,7 @@ struct MLSOrdinaryConversationDetailView: View {
                 "Couldn't update this conversation. Catbird will try again.",
                 systemImage: "exclamationmark.arrow.triangle.2.circlepath"
               )
-              .font(.footnote)
+              .appFont(AppTextRole.footnote)
               .padding(.horizontal, 12)
               .padding(.vertical, 8)
               .background(.regularMaterial, in: Capsule())
@@ -588,7 +588,7 @@ struct MLSOrdinaryConversationDetailView: View {
             VStack(alignment: .leading, spacing: 2) {
               Text(ChatConversationKind.encrypted.infoTitle)
               Text(ChatConversationKind.encrypted.infoDetail)
-                .font(.footnote)
+                .appFont(AppTextRole.footnote)
                 .foregroundStyle(.secondary)
             }
           } icon: {
@@ -643,7 +643,7 @@ struct MLSOrdinaryConversationDetailView: View {
         if let spaceURI {
           Section("ATProto Space") {
             Text(verbatim: spaceURI)
-              .font(.caption.monospaced())
+              .appFont(AppTextRole.caption).monospaced()
               .textSelection(.enabled)
           }
         }
@@ -678,7 +678,7 @@ struct MLSOrdinaryConversationDetailView: View {
         if let groupInfoError {
           Section {
             Text(groupInfoError)
-              .font(.footnote)
+              .appFont(AppTextRole.footnote)
               .foregroundStyle(.red)
           }
         }

@@ -18,9 +18,9 @@ struct MLSIntroSheet: View {
             .foregroundStyle(.tint)
             .accessibilityHidden(true)
           Text("Encrypted Chat")
-            .font(.title2.weight(.semibold))
+            .appFont(AppTextRole.title2).fontWeight(.semibold)
           Text("Catbird adds end-to-end encrypted conversations next to your Bluesky messages.")
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
         }
@@ -52,11 +52,10 @@ struct MLSIntroSheet: View {
         VStack(spacing: 12) {
           Button(action: onContinue) {
             Text("Continue")
-              .font(.headline)
+              .appFont(AppTextRole.headline)
               .frame(maxWidth: .infinity)
           }
-          .buttonStyle(.borderedProminent)
-          .controlSize(.large)
+          .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
           .accessibilityIdentifier("mlsIntro.continue")
 
           Button("Not now", action: onNotNow)
@@ -72,14 +71,14 @@ struct MLSIntroSheet: View {
   private func row(systemImage: String, title: LocalizedStringKey, detail: LocalizedStringKey) -> some View {
     HStack(alignment: .top, spacing: 14) {
       Image(systemName: systemImage)
-        .font(.title3)
+        .appFont(AppTextRole.title3)
         .foregroundStyle(.tint)
         .frame(width: 28)
         .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: 4) {
-        Text(title).font(.body.weight(.semibold))
+        Text(title).appFont(AppTextRole.body).fontWeight(.semibold)
         Text(detail)
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }

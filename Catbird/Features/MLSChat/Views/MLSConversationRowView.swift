@@ -87,7 +87,7 @@ struct MLSConversationRowView: View {
           } else if conversation.unacknowledgedMemberChanges > 0 {
             ZStack {
               Circle()
-                .fill(Color.blue)
+                .fill(Color.accentColor)
                 .frame(width: 20, height: 20)
               Text(conversation.unacknowledgedMemberChanges, format: .number)
                 .font(.system(size: 11, weight: .semibold))
@@ -217,7 +217,7 @@ struct MemberChangeInfo {
       return MemberChangeInfo(
         text: String(localized: "\(name) added device", comment: "Conversation row preview when a member adds a device. %@ is the member's name."),
         icon: "laptopcomputer.and.iphone",
-        color: .blue
+        color: Color.accentColor
       )
     case .deviceRemoved:
       return MemberChangeInfo(

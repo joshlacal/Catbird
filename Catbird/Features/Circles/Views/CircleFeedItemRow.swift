@@ -133,15 +133,15 @@ struct CircleEncryptedStatusRow: View {
   var body: some View {
     HStack(alignment: .top, spacing: 12) {
       Image(systemName: iconName)
-        .font(.title3)
+        .appFont(AppTextRole.title3)
         .foregroundStyle(.secondary)
         .frame(width: 40, height: 40)
         .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: 4) {
         Text(title)
-          .font(.subheadline.weight(.semibold))
+          .appFont(AppTextRole.subheadline).fontWeight(.semibold)
         Text(detail)
-          .font(.footnote)
+          .appFont(AppTextRole.footnote)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }

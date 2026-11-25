@@ -129,7 +129,7 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
         } icon: {
           Image(systemName: unsendStatus.systemImage)
         }
-        .font(.footnote)
+        .appFont(AppTextRole.footnote)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.regularMaterial, in: Capsule())
@@ -143,7 +143,7 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
           Image(systemName: "person.slash")
             .foregroundStyle(.secondary)
           Text("This account has been deleted")
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
             .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
@@ -286,7 +286,7 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
 
     case .dateSeparator(let date):
       Text(date, format: .dateTime.month().day().year())
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)

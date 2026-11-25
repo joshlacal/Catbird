@@ -193,10 +193,10 @@ struct CircleMemberPickerView: View {
       AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 40)
       VStack(alignment: .leading, spacing: 2) {
         Text(verbatim: profile.displayName ?? "@\(profile.handle)")
-          .font(.subheadline.weight(.medium))
+          .appFont(AppTextRole.subheadline).fontWeight(.medium)
           .lineLimit(1)
         Text(verbatim: "@\(profile.handle)")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)
       }

@@ -186,7 +186,7 @@ struct VerificationInfoSheet: View {
         Label("Learn More", systemImage: "arrow.up.right")
           .appFont(AppTextRole.subheadline)
       }
-      .buttonStyle(.bordered)
+      .buttonStyle(.catbird(.tonal, size: .md))
     }
     .padding(.top, 4)
   }

@@ -180,7 +180,7 @@ struct CircleMediaView: View {
       RoundedRectangle(cornerRadius: cornerRadius)
         .fill(Color.secondary.opacity(0.1))
       Image(systemName: "photo")
-        .font(.title2)
+        .appFont(AppTextRole.title2)
         .foregroundStyle(.secondary)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)

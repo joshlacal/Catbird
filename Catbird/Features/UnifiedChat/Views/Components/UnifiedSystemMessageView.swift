@@ -22,11 +22,11 @@ struct UnifiedSystemMessageView: View {
   private func singleEventView(_ event: UnifiedSystemEvent) -> some View {
     HStack(spacing: 6) {
       Image(systemName: event.iconName)
-        .font(.caption2)
+        .appFont(AppTextRole.caption2)
         .foregroundStyle(.secondary)
 
       eventText(event)
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
     }
@@ -107,16 +107,16 @@ struct UnifiedSystemMessageView: View {
     } label: {
       HStack(spacing: 6) {
         Image(systemName: "bubble.left.and.bubble.right")
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundStyle(.secondary)
 
         Text("\(message.systemGroupEvents?.count ?? 0) chat updates")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .fontWeight(.medium)
           .foregroundStyle(.secondary)
 
         Image(systemName: message.isExpanded ? "chevron.up" : "chevron.down")
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundStyle(.secondary)
       }
       .padding(.horizontal, 12)

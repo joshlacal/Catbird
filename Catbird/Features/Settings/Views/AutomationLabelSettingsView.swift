@@ -137,13 +137,7 @@ struct AutomationLabelSettingsView: View {
                         .lineLimit(1)
                     
                     if isBot {
-                        Text("BOT")
-                            .appFont(AppTextRole.caption2).fontWeight(.bold)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.secondary.opacity(0.2))
-                            .foregroundStyle(.secondary)
-                            .clipShape(Capsule())
+                        CatbirdBadge("BOT", tone: .neutral)
                     }
                 }
                 

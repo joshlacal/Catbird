@@ -66,7 +66,7 @@ struct PostListPaginationFooterView: View {
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
         Button("Try Again", action: onRetry)
-          .buttonStyle(.bordered)
+          .buttonStyle(.catbird(.tonal))
       }
       .frame(maxWidth: .infinity)
       .padding(.vertical, 16)

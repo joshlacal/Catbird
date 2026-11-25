@@ -107,7 +107,7 @@ struct DiscoveryFeedAvatar: View {
         .background(Color.accentColor.opacity(0.12))
     }
     .frame(width: size, height: size)
-    .clipShape(RoundedRectangle(cornerRadius: size * 0.22))
+    .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
     .accessibilityHidden(true)
   }
 }
@@ -122,8 +122,7 @@ struct FeedDiscoveryRetryView: View {
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
       Button("Try Again", action: retry)
-        .buttonStyle(.bordered)
-        .frame(minHeight: 44)
+        .buttonStyle(.catbird(.tonal))
     }
     .accessibilityElement(children: .contain)
   }

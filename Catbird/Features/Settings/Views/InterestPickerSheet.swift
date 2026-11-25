@@ -83,15 +83,6 @@ struct InterestTag: View {
   let onTap: () -> Void
 
   var body: some View {
-    Button(action: onTap) {
-      Text(interest)
-        .appFont(AppTextRole.subheadline)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(isSelected ? Color.accentColor : Color(platformColor: .platformSecondarySystemBackground))
-        .foregroundStyle(isSelected ? Color.white : Color.primary)
-        .clipShape(Capsule())
-    }
-    .accessibilityAddTraits(isSelected ? .isSelected : [])
+    CatbirdChip(title: Text(verbatim: interest), isSelected: isSelected, action: onTap)
   }
 }

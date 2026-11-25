@@ -139,11 +139,11 @@ struct ConversationView: View {
       ToolbarItem(placement: .principal) {
         HStack(spacing: 4) {
           Text(conversationTitle)
-            .font(.headline)
+            .appFont(AppTextRole.headline)
             .lineLimit(1)
           if currentConversation?.isGroupConversation == true {
             Image(systemName: "person.3.fill")
-              .font(.caption2)
+              .appFont(AppTextRole.caption2)
               .foregroundStyle(.secondary)
               .accessibilityHidden(true)
           }
@@ -371,7 +371,7 @@ struct ConversationView: View {
         Image(systemName: "person.slash")
           .foregroundStyle(.secondary)
         Text("This account has been deleted")
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
           .foregroundStyle(.secondary)
       }
       .frame(maxWidth: .infinity)
@@ -386,7 +386,7 @@ struct ConversationView: View {
         Image(systemName: "lock.fill")
           .foregroundStyle(.secondary)
         Text("This group chat is locked")
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
           .foregroundStyle(.secondary)
       }
       .frame(maxWidth: .infinity)
@@ -441,7 +441,7 @@ private struct ConversationInputBar: View {
       if let staged = dataSource.draft.value.replyTarget {
         HStack(alignment: .center, spacing: 8) {
           Image(systemName: "arrowshape.turn.up.left.fill")
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .foregroundStyle(Color.accentColor)
 
           VStack(alignment: .leading, spacing: 2) {
@@ -452,13 +452,13 @@ private struct ConversationInputBar: View {
                 Text("Replying to message", comment: "Reply banner header in chat composer when sender name is unavailable")
               }
             }
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .fontWeight(.semibold)
             .foregroundStyle(.primary)
             .lineLimit(1)
 
             Text(verbatim: staged.text)
-              .font(.caption2)
+              .appFont(AppTextRole.caption2)
               .foregroundStyle(.secondary)
               .lineLimit(2)
           }
@@ -469,7 +469,7 @@ private struct ConversationInputBar: View {
             dataSource.draft.value.replyTarget = nil
           } label: {
             Image(systemName: "xmark.circle.fill")
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundStyle(.secondary)
           }
           .buttonStyle(.plain)

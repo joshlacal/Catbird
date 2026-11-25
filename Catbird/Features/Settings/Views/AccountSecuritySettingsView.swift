@@ -1,3 +1,4 @@
+import CatbirdMLSCore
 import SwiftUI
 
 struct AccountSecuritySettingsView: View {
@@ -13,6 +14,9 @@ struct AccountSecuritySettingsView: View {
     @State private var pendingSignOutDID: String?
     @State private var signingOut = false
     @State private var accountDeletionTarget: AccountDeletionTarget?
+    @State private var signOutApproval: DeviceApprovalState?
+    @State private var approvingBeforeSignOut = false
+    @State private var showingDevicesBeforeSignOut = false
     init(initialFocus: SettingsControlID? = nil) { self.initialFocus = initialFocus }
 
     var body: some View {
@@ -35,22 +39,14 @@ struct AccountSecuritySettingsView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 6) {
                                 Text(AppState.localMLSDeviceDisplayName(shortDeviceId: localDeviceId))
-                                    .font(.subheadline.weight(.medium))
-                                Text("This Device")
-                                    .font(.caption2.weight(.semibold))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Color.blue.opacity(0.18))
-                                    .foregroundStyle(.blue)
-                                    .clipShape(Capsule())
+                                    .appFont(AppTextRole.subheadline).fontWeight(.medium)
+                                CatbirdBadge("This Device", tone: .accent)
                                 let isActive = appState.mlsCoordinator != nil
-                                Text(isActive ? "Active" : "Standby")
-                                    .font(.caption2.weight(.medium))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background((isActive ? Color.green : Color.secondary).opacity(0.16))
-                                    .foregroundStyle(isActive ? .green : .secondary)
-                                    .clipShape(Capsule())
+                                if signOutApproval?.isPending == true {
+                                    CatbirdBadge("Waiting for Approval", tone: .warning)
+                                } else {
+                                    CatbirdBadge(isActive ? "Active" : "Standby", tone: isActive ? .success : .neutral)
+                                }
                             }
                             Text(verbatim: "Device ID: \(localDeviceId.prefix(8))…")
                                 .font(.caption2.monospaced())
@@ -93,9 +89,15 @@ struct AccountSecuritySettingsView: View {
                 }
             }
             Section {
-                Button("Sign Out", role: .destructive) { signOutDID = appState.userDID; signOutRevision = AppStateManager.shared.settingsAccountContextRevision; confirmingSignOut = true }
-                    .disabled(signingOut)
+                Button("Sign Out", role: .destructive) {
+                    signOutDID = appState.userDID
+                    signOutRevision = AppStateManager.shared.settingsAccountContextRevision
+                    confirmingSignOut = true
+                    Task { @MainActor in signOutApproval = await appState.loadDeviceApprovalState() }
+                }
+                    .disabled(signingOut || approvingBeforeSignOut)
                     .settingsControl(.init(rawValue: "account.signOut"))
+                if approvingBeforeSignOut { ProgressView("Approving…") }
                 if signingOut { ProgressView("Signing out…") }
             }
         }
@@ -106,13 +108,31 @@ struct AccountSecuritySettingsView: View {
         .sheet(item: $accountDeletionTarget) { target in
             AccountDeletionSheet(target: target)
         }
+        .task(id: appState.userDID) {
+            signOutApproval = await appState.loadDeviceApprovalState()
+        }
         .confirmationDialog("Sign Out of This Account?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
-            Button("Sign Out", role: .destructive) {
-                guard let did = signOutDID, SettingsAccountBoundary.isCurrent(did, revision: signOutRevision) else { return }
-                if let pending = appState.appSettings.pendingChangesSummary { pendingSignOutDID = pending.accountDID; showingPendingSignOut = true }
-                else { signOut(expectedDID: did) }
+            if let approval = signOutApproval, approval.signOutStrandsWaitingDevices,
+               case .approved(let waiting, _) = approval
+            {
+                if waiting.count == 1, let device = waiting.first {
+                    Button("Approve \(device.displayName), Then Sign Out") { approveThenSignOut(device) }
+                } else {
+                    Button("Review Waiting Devices") { showingDevicesBeforeSignOut = true }
+                }
+                Button("Sign Out Without Approving", role: .destructive) { confirmSignOut() }
+            } else {
+                Button("Sign Out", role: .destructive) { confirmSignOut() }
             }
             Button("Stay", role: .cancel) { }
+        } message: {
+            Text(Self.signOutMessage(for: signOutApproval))
+        }
+        .sheet(isPresented: $showingDevicesBeforeSignOut, onDismiss: {
+            Task { @MainActor in signOutApproval = await appState.loadDeviceApprovalState() }
+        }) {
+            NavigationStack { DeviceManagementView() }
+                .environment(appState)
         }
         .confirmationDialog("Unsaved Settings", isPresented: $showingPendingSignOut, titleVisibility: .visible) {
             Button("Save & Sign Out") { resolveSignOut(save: true) }
@@ -123,6 +143,50 @@ struct AccountSecuritySettingsView: View {
             Button("OK", role: .cancel) { lockError = nil }
         } message: { Text(lockError ?? "") }
         .interactiveDismissDisabled(signingOut || changingAppLock)
+    }
+
+    /// What signing out does to encrypted chat on this account, from this device's approval.
+    nonisolated static func signOutMessage(for approval: DeviceApprovalState?) -> String {
+        guard let approval else {
+            return "Signing out removes this device from encrypted chat. You can sign back in later."
+        }
+        switch approval {
+        case .approved(let waiting, let otherApprovedCount) where otherApprovedCount == 0 && !waiting.isEmpty:
+            let names = ListFormatter.localizedString(byJoining: waiting.map(\.displayName))
+            let verb = waiting.count == 1 ? "is" : "are"
+            return "\(names) \(verb) waiting for approval, and this is your only approved device. If you sign out first, you’ll need your backup passkey or recovery code to get back into encrypted chat."
+        case .approved(_, let otherApprovedCount) where otherApprovedCount == 0:
+            return "This is your only approved device. When you sign back in, you’ll restore your backup with your passkey or recovery code to use encrypted chat again."
+        case .askApprover, .approversQuiet, .noApprover:
+            return "This device isn’t approved for encrypted chat yet. Signing out cancels its approval, and signing back in starts it over."
+        case .approved, .revoked:
+            return "Signing out removes this device from encrypted chat. You can sign back in later."
+        }
+    }
+
+    private func confirmSignOut() {
+        guard let did = signOutDID, SettingsAccountBoundary.isCurrent(did, revision: signOutRevision) else { return }
+        if let pending = appState.appSettings.pendingChangesSummary { pendingSignOutDID = pending.accountDID; showingPendingSignOut = true }
+        else { signOut(expectedDID: did) }
+    }
+
+    private func approveThenSignOut(_ device: DeviceApprovalPeer) {
+        guard !approvingBeforeSignOut else { return }
+        approvingBeforeSignOut = true
+        Task { @MainActor in
+            defer { approvingBeforeSignOut = false }
+            guard let coordinator = await appState.getOrOpenMLSCoordinator() else {
+                lockError = "Encrypted chat isn’t ready on this device, so \(device.displayName) wasn’t approved. You’re still signed in."
+                return
+            }
+            do {
+                try await coordinator.approveDevice(targetDeviceId: device.deviceId)
+            } catch {
+                lockError = "Couldn’t approve \(device.displayName), so you’re still signed in. \(error.localizedDescription)"
+                return
+            }
+            confirmSignOut()
+        }
     }
 
     private func changeAppLock(_ enabled: Bool) {

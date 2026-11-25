@@ -57,7 +57,7 @@ struct ChatProfileRowView: View {
                             did: profile.did
                         ) {
                             VerificationBadgeView(kind: badgeKind)
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                         }
                     }
 

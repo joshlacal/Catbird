@@ -8,6 +8,7 @@ excluded:
   - Pods
   - build
   - DerivedData
+  - _trash
 
 # Add basic rules configuration
 disabled_rules:
@@ -16,3 +17,47 @@ disabled_rules:
   
 reporter: "xcode"
 lenient: true
+
+# --- Design-system guard rails (UI cohesion) ---------------------------------
+# Existing violations are grandfathered via a baseline. SwiftLint 0.65 has no
+# yml key for it; pass the CLI flag:
+#   swiftlint lint --baseline .swiftlint-baseline.json
+# Regenerate only to deliberately accept new debt:
+#   swiftlint lint --write-baseline .swiftlint-baseline.json
+# Core/UI/Kit is exempt.
+custom_rules:
+  no_raw_corner_radius:
+    name: "No raw corner radius"
+    regex: 'RoundedRectangle\(cornerRadius:\s*[0-9]|cornerRadius:\s*[0-9]'
+    included: 'Catbird/(Features|Core)/'
+    excluded: 'Core/UI/Kit/|_trash/'
+    message: "Use Radius tokens (Radius.x.shape / .catbirdClip(.x) in Core/UI/Kit/CatbirdTokens.swift), not literal radii."
+    severity: warning
+  no_cornerradius_modifier:
+    name: "No .cornerRadius()"
+    regex: '\.cornerRadius\('
+    included: 'Catbird/(Features|Core)/'
+    excluded: 'Core/UI/Kit/|_trash/'
+    message: ".cornerRadius is non-continuous; use .catbirdClip(.x) or .catbirdCard(...)."
+    severity: warning
+  no_raw_system_font_size:
+    name: "No .font(.system(size:))"
+    regex: '\.font\(\.system\(size:'
+    included: 'Catbird/(Features|Core)/'
+    excluded: 'Core/UI/Kit/|_trash/'
+    message: "Use .appFont(AppTextRole.x) instead of fixed system font sizes."
+    severity: warning
+  no_raw_text_style_font:
+    name: "No raw text-style fonts"
+    regex: '\.font\(\.(largeTitle|title|title2|title3|headline|subheadline|body|callout|footnote|caption|caption2)\b'
+    included: 'Catbird/(Features|Core)/'
+    excluded: 'Core/UI/Kit/|_trash/'
+    message: "Use .appFont(AppTextRole.x) so the user's font settings apply."
+    severity: warning
+  no_hardcoded_blue:
+    name: "No hardcoded blue"
+    regex: 'Color\.blue|foreground(Style|Color)\(\.blue\)|\.tint\(\.blue\)'
+    included: 'Catbird/(Features|Core)/'
+    excluded: 'Core/UI/Kit/|_trash/'
+    message: "Use Color.accentColor (or CatbirdButtonStyle / CatbirdChip / CatbirdBadge tones) instead of hardcoded blue."
+    severity: warning

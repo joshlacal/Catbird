@@ -41,11 +41,7 @@ struct TileLiveView: View {
         idealHeight: CGFloat(tile.sizing?.height ?? 400)
       )
     }
-    .clipShape(RoundedRectangle(cornerRadius: 12))
-    .overlay(
-      RoundedRectangle(cornerRadius: 12)
-        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-    )
+    .catbirdCard(.embed)
     .task {
       await setupTile()
     }
@@ -56,11 +52,11 @@ struct TileLiveView: View {
   private var titleBar: some View {
     HStack(spacing: 8) {
       Image(systemName: "square.grid.2x2.fill")
-        .font(.caption2)
+        .appFont(AppTextRole.caption2)
         .foregroundStyle(.secondary)
 
       Text(tile.name)
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .fontWeight(.medium)
         .lineLimit(1)
 
@@ -71,7 +67,7 @@ struct TileLiveView: View {
           onDismiss()
         } label: {
           Image(systemName: "xmark.circle.fill")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain)
@@ -89,7 +85,7 @@ struct TileLiveView: View {
     VStack(spacing: 8) {
       ProgressView()
       Text("Loading tile…")
-        .font(.caption2)
+        .appFont(AppTextRole.caption2)
         .foregroundStyle(.secondary)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -100,13 +96,13 @@ struct TileLiveView: View {
   private func errorView(_ error: String) -> some View {
     VStack(spacing: 8) {
       Image(systemName: "exclamationmark.triangle")
-        .font(.title2)
+        .appFont(AppTextRole.title2)
         .foregroundStyle(.secondary)
       Text("Failed to load tile")
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .fontWeight(.medium)
       Text(error)
-        .font(.caption2)
+        .appFont(AppTextRole.caption2)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
     }
@@ -210,7 +206,7 @@ struct TileLiveView: View {
 
   var body: some View {
     Text("Live tiles require iOS 26 or later")
-      .font(.caption2)
+      .appFont(AppTextRole.caption2)
       .foregroundStyle(.secondary)
   }
 }

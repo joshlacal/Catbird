@@ -188,13 +188,13 @@ private struct ActivitySubscriptionRow: View {
           .appSubheadline()
           .foregroundStyle(.secondary)
         Image(systemName: "chevron.up.chevron.down")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
       }
       .padding(.horizontal, 8)
       .padding(.vertical, 6)
       .background(Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme))
-      .clipShape(RoundedRectangle(cornerRadius: 8))
+      .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
     .accessibilityLabel(
       Text(

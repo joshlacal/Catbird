@@ -36,12 +36,42 @@ final class CopilotTurnInput: Sendable {
 /// It is also injectable for deterministic lifecycle tests without inference.
 @available(iOS 26.0, macOS 26.0, *)
 struct CopilotTurnRuntime: Sendable {
+  /// The model's own context window.
   let contextSize: Int
-  let reservedTokenCount: Int
+  /// Ways to run the turn, richest first: tools with fewer lookups, then no tools.
+  let reserves: [CopilotReserve]
   let countsFullPrompt: Bool
   let imageUnavailableReason: String?
   let tokenCount: @Sendable (CopilotTurnInput) async throws -> Int
-  let stream: @Sendable (CopilotTurnInput) -> AsyncThrowingStream<String, Error>
+  /// Streams the accepted input with the reserve level the prompt was fitted to.
+  let stream: @Sendable (CopilotTurnInput, CopilotReserveLevel) -> AsyncThrowingStream<String, Error>
+
+  init(
+    contextSize: Int, reserves: [CopilotReserve], countsFullPrompt: Bool, imageUnavailableReason: String?,
+    tokenCount: @escaping @Sendable (CopilotTurnInput) async throws -> Int,
+    stream: @escaping @Sendable (CopilotTurnInput, CopilotReserveLevel) -> AsyncThrowingStream<String, Error>
+  ) {
+    self.contextSize = contextSize
+    self.reserves = reserves
+    self.countsFullPrompt = countsFullPrompt
+    self.imageUnavailableReason = imageUnavailableReason
+    self.tokenCount = tokenCount
+    self.stream = stream
+  }
+
+  /// A runtime with one fixed reserve, whose session does not change with the fit.
+  init(
+    contextSize: Int, reservedTokenCount: Int, countsFullPrompt: Bool, imageUnavailableReason: String?,
+    tokenCount: @escaping @Sendable (CopilotTurnInput) async throws -> Int,
+    stream: @escaping @Sendable (CopilotTurnInput) -> AsyncThrowingStream<String, Error>
+  ) {
+    self.init(
+      contextSize: contextSize,
+      reserves: [CopilotReserve(level: .tools(reads: .max), tokens: reservedTokenCount)],
+      countsFullPrompt: countsFullPrompt, imageUnavailableReason: imageUnavailableReason,
+      tokenCount: tokenCount, stream: { input, _ in stream(input) }
+    )
+  }
 
   static func stream(
     session: LanguageModelSession, input: CopilotTurnInput, options: GenerationOptions,

@@ -49,7 +49,7 @@ struct StarterPackFeedsStep: View {
             }
             .padding(10)
             .background(Color.systemGray6)
-            .cornerRadius(10)
+            .catbirdClip(.md)
             .padding(.horizontal)
             .padding(.vertical, 8)
             
@@ -105,7 +105,7 @@ struct StarterPackFeedsStep: View {
             } else if searchResults.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "rectangle.grid.1x2")
-                        .font(.system(size: 36))
+                        .appFont(size: 36)
                         .foregroundColor(.secondary)
                     Text("No feeds found")
                         .appFont(AppTextRole.subheadline)
@@ -153,7 +153,7 @@ struct StarterPackFeedsStep: View {
                                 draft.removeFeed(uri: feed.uri)
                             } label: {
                                 Image(systemName: "xmark")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .foregroundColor(.secondary)
                                     .padding(6)
                                     .background(Circle().fill(Color.systemGray5))
@@ -225,7 +225,7 @@ struct StarterPackFeedsStep: View {
                 } label: {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.green)
-                        .font(.title3)
+                        .appFont(AppTextRole.title3)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text("Remove \(feed.displayName)", comment: "Accessibility label on button to remove a selected feed from the starter pack. Placeholder is the feed name."))
@@ -235,7 +235,7 @@ struct StarterPackFeedsStep: View {
                 } label: {
                     Image(systemName: "plus.circle.fill")
                         .foregroundColor(canAdd ? Color.accentColor : Color.gray)
-                        .font(.title3)
+                        .appFont(AppTextRole.title3)
                 }
                 .buttonStyle(.plain)
                 .disabled(!canAdd)
@@ -256,14 +256,14 @@ struct StarterPackFeedsStep: View {
                     Color.gray.opacity(0.2)
                 }
                 .frame(width: 36, height: 36)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             } else {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Color.gray.opacity(0.2))
                     .frame(width: 36, height: 36)
                     .overlay(
                         Image(systemName: "rectangle.grid.1x2")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.gray)
                     )
             }

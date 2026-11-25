@@ -395,31 +395,18 @@ struct ListMemberManagementView: View {
   }
   
   private var errorView: some View {
-    VStack(spacing: 20) {
-      Image(systemName: "exclamationmark.triangle")
-        .font(.system(size: 48))
-        .foregroundStyle(.red)
-      
-      Text("Couldn’t Load Members")
-        .font(.title2)
-        .fontWeight(.semibold)
-      
-      if let errorMessage = errorMessage {
-        Text(errorMessage)
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-          .multilineTextAlignment(.center)
-      }
-      
-      Button("Try Again") {
+    ListsStateView(
+      title: String(localized: "Couldn’t Load Members"),
+      description: errorMessage,
+      systemImage: "exclamationmark.triangle",
+      iconTint: .red,
+      actionTitle: String(localized: "Try Again"),
+      action: {
         Task { @MainActor in
           await initializeView()
         }
       }
-      .buttonStyle(.borderedProminent)
-    }
-    .padding()
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    )
   }
   
   @MainActor
@@ -552,11 +539,11 @@ struct ListMemberManagementView: View {
   private var emptyStateView: some View {
     VStack(spacing: 16) {
       Image(systemName: "person.2")
-        .font(.system(size: 48))
+        .appFont(size: 48)
         .foregroundStyle(.secondary)
       
       Text("No Members Yet")
-        .font(.headline)
+        .appFont(AppTextRole.headline)
       
       Group {
         if viewModel?.canAddMembers == true {
@@ -565,7 +552,7 @@ struct ListMemberManagementView: View {
           Text("This list doesn’t have anyone on it yet.")
         }
       }
-        .font(.subheadline)
+        .appFont(AppTextRole.subheadline)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
     }
@@ -580,7 +567,7 @@ struct ListMemberManagementView: View {
         .scaleEffect(1.5)
       
       Text("Loading…")
-        .font(.headline)
+        .appFont(AppTextRole.headline)
         .foregroundStyle(.secondary)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -613,12 +600,12 @@ struct SearchResultRow: View {
       // Profile Info
       VStack(alignment: .leading, spacing: 2) {
         Text(user.displayName ?? user.handle.description)
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
           .fontWeight(.medium)
           .lineLimit(1)
         
         Text(verbatim: "@\(user.handle)")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)
       }
@@ -636,11 +623,10 @@ struct SearchResultRow: View {
           }
           Text("Add")
         }
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .fontWeight(.medium)
       }
-      .buttonStyle(.bordered)
-      .controlSize(.small)
+      .buttonStyle(.catbird(.tonal, size: .sm))
       .disabled(isAddingInProgress)
     }
   }
@@ -672,18 +658,18 @@ struct MemberRow: View {
       // Profile Info
       VStack(alignment: .leading, spacing: 2) {
         Text(member.displayName ?? member.handle.description)
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
           .fontWeight(.medium)
           .lineLimit(1)
         
         Text(verbatim: "@\(member.handle)")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)
         
         if let description = member.description, !description.isEmpty {
           Text(description)
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .foregroundStyle(.secondary)
             .lineLimit(2)
             .padding(.top, 1)

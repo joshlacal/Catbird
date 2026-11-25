@@ -12,7 +12,7 @@ struct VoiceRecordingOverlay: View {
       // Cancel button
       Button(action: onCancel) {
         Image(systemName: "xmark.circle.fill")
-          .font(.title2)
+          .appFont(AppTextRole.title2)
           .foregroundStyle(.secondary)
       }
       .accessibilityLabel("Cancel recording")
@@ -29,7 +29,7 @@ struct VoiceRecordingOverlay: View {
           )
 
         Text(formattedDuration)
-          .font(.body.monospacedDigit())
+          .appFont(AppTextRole.body).monospacedDigit()
           .foregroundStyle(.primary)
       }
 
@@ -38,7 +38,7 @@ struct VoiceRecordingOverlay: View {
       // Send button
       Button(action: onSend) {
         Image(systemName: "arrow.up.circle.fill")
-          .font(.title2)
+          .appFont(AppTextRole.title2)
           .foregroundStyle(Color.accentColor)
       }
       .accessibilityLabel("Send voice message")

@@ -633,13 +633,8 @@ struct EnhancedContentLanguagesView: View {
                                 ForEach(selectedLanguageObjects) { language in
                                     HStack(spacing: 4) {
                                         Text(verbatim: language.flag)
-                                        Text(language.localizedName(in: locale))
-                                            .appFont(AppTextRole.caption)
+                                        CatbirdBadge(Text(language.localizedName(in: locale)), tone: .accent)
                                     }
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(Color.accentColor.opacity(0.1))
-                                    .clipShape(Capsule())
                                 }
                             }
                         }
@@ -718,12 +713,7 @@ struct ContentLanguageRow: View {
                         Text(localizedName)
                             .foregroundStyle(.primary)
                         if isPrimary {
-                            Text("Primary", comment: "Badge indicating the user's primary reading language.")
-                                .appFont(AppTextRole.caption2)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.accentColor.opacity(0.2))
-                                .clipShape(Capsule())
+                            CatbirdBadge(Text("Primary", comment: "Badge indicating the user's primary reading language."), tone: .accent)
                         }
                     }
                     if localizedName != language.nativeName {

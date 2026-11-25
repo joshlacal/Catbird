@@ -192,11 +192,11 @@ public struct InviteFriendsView: View {
                     // Top Description
                     VStack(spacing: 6) {
                         Text("Invite Friends")
-                            .font(.title2)
+                            .appFont(AppTextRole.title2)
                             .fontWeight(.bold)
                         
                         Text("Share your personal QR code or invite link to connect on Bluesky.")
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 24)
@@ -224,12 +224,8 @@ public struct InviteFriendsView: View {
                                 Text("Share Invite Link")
                                     .fontWeight(.semibold)
                             }
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 50)
-                            .background(Color.accentColor)
-                            .foregroundColor(.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
                         }
+                        .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
                         
                         // Copy Link Button
                         Button {
@@ -240,12 +236,9 @@ public struct InviteFriendsView: View {
                                 Text(copiedToClipboard ? "Link Copied!" : "Copy Link")
                                     .fontWeight(.medium)
                             }
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 50)
-                            .background(Color(platformColor: .platformSecondarySystemGroupedBackground))
-                            .foregroundColor(copiedToClipboard ? .green : .primary)
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                            .foregroundStyle(copiedToClipboard ? Color.green : Color.accentColor)
                         }
+                        .buttonStyle(.catbird(.tonal, size: .lg, fullWidth: true))
                         
                         // Scan QR Code Button
                         Button {
@@ -254,7 +247,7 @@ public struct InviteFriendsView: View {
                             HStack(spacing: 8) {
                                 Image(systemName: "qrcode.viewfinder")
                                 Text("Scan a QR Code")
-                                    .font(.subheadline)
+                                    .appFont(AppTextRole.subheadline)
                                     .fontWeight(.medium)
                             }
                             .foregroundStyle(Color.accentColor)
@@ -321,7 +314,7 @@ public struct InviteFriendsView: View {
                         .frame(width: 48, height: 48)
                         .overlay {
                             Text(String(currentDisplayName.prefix(1)).uppercased())
-                                .font(.title3)
+                                .appFont(AppTextRole.title3)
                                 .fontWeight(.bold)
                                 .foregroundStyle(selectedTheme.foregroundColor)
                         }
@@ -329,13 +322,13 @@ public struct InviteFriendsView: View {
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(currentDisplayName)
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                         .fontWeight(.bold)
                         .foregroundStyle(selectedTheme.foregroundColor)
                         .lineLimit(1)
                     
                     Text(verbatim: "@\(currentHandle)")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundStyle(selectedTheme.secondaryForegroundColor)
                         .lineLimit(1)
                 }
@@ -343,7 +336,7 @@ public struct InviteFriendsView: View {
                 Spacer()
                 
                 Image(systemName: "butterfly.fill")
-                    .font(.title2)
+                    .appFont(AppTextRole.title2)
                     .foregroundStyle(selectedTheme.foregroundColor.opacity(0.8))
             }
             .padding(.horizontal, 4)
@@ -357,10 +350,10 @@ public struct InviteFriendsView: View {
                     .frame(width: 200, height: 200)
                     .padding(14)
                     .background(selectedTheme.qrBackgroundColor)
-                    .clipShape(RoundedRectangle(cornerRadius: 18))
+                    .clipShape(Radius.lg.shape)
                     .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 4)
             } else {
-                RoundedRectangle(cornerRadius: 18)
+                Radius.lg.shape
                     .fill(Color.white)
                     .frame(width: 200, height: 200)
                     .overlay {
@@ -370,7 +363,7 @@ public struct InviteFriendsView: View {
             
             // Footer URL label
             Text(inviteURL.absoluteString)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .fontWeight(.medium)
                 .foregroundStyle(selectedTheme.secondaryForegroundColor)
                 .lineLimit(1)
@@ -384,9 +377,9 @@ public struct InviteFriendsView: View {
                 endPoint: .bottomTrailing
             )
         )
-        .clipShape(RoundedRectangle(cornerRadius: 24))
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 24)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(selectedTheme.borderColor, lineWidth: 1.5)
         )
         .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 6)
@@ -397,7 +390,7 @@ public struct InviteFriendsView: View {
     private var themeSelector: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Card Theme", comment: "Section header for choosing a visual theme on the QR invite card.")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
             
@@ -426,7 +419,7 @@ public struct InviteFriendsView: View {
                                     )
                                 
                                 Text(theme.displayName)
-                                    .font(.subheadline)
+                                    .appFont(AppTextRole.subheadline)
                                     .fontWeight(selectedTheme == theme ? .semibold : .regular)
                                     .foregroundStyle(.primary)
                             }
@@ -439,7 +432,7 @@ public struct InviteFriendsView: View {
                             )
                             .clipShape(Capsule())
                             .overlay(
-                                Capsule()
+                                Capsule(style: .continuous)
                                     .stroke(
                                         selectedTheme == theme ? Color.accentColor : Color.clear,
                                         lineWidth: 1.5

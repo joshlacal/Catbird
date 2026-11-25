@@ -121,6 +121,7 @@ struct MLSDirectComposeDraft: Identifiable, Hashable, Codable, Sendable {
   let recipientDID: String
   var recipientHandle: String?
   var recipientDisplayName: String?
+  var recipientAvatarURL: URL?
   var text: String
   var submitted: Bool
   var noteAttempted: Bool?
@@ -132,6 +133,7 @@ struct MLSDirectComposeDraft: Identifiable, Hashable, Codable, Sendable {
     recipientDID: String,
     recipientHandle: String? = nil,
     recipientDisplayName: String? = nil,
+    recipientAvatarURL: URL? = nil,
     text: String = "",
     submitted: Bool = false,
     noteAttempted: Bool? = nil,
@@ -142,6 +144,7 @@ struct MLSDirectComposeDraft: Identifiable, Hashable, Codable, Sendable {
     self.recipientDID = recipientDID
     self.recipientHandle = recipientHandle
     self.recipientDisplayName = recipientDisplayName
+    self.recipientAvatarURL = recipientAvatarURL
     self.text = text
     self.submitted = submitted
     self.noteAttempted = noteAttempted
@@ -217,6 +220,7 @@ enum MLSDirectComposeDraftStore {
       recipientDID: draft.recipientDID,
       recipientHandle: draft.recipientHandle,
       recipientDisplayName: draft.recipientDisplayName,
+      recipientAvatarURL: draft.recipientAvatarURL,
       text: draft.text
     )
     draftsByKey[key(accountDID: draft.accountDID, recipientDID: draft.recipientDID)] = reopened
@@ -306,6 +310,9 @@ struct MLSDirectComposeView: View {
   /// and links, so it says plainly when the person cannot be messaged this way yet.
   @State private var recipientCapability: MLSChatCapability?
   @State private var capabilityCheckID = UUID()
+  /// Looked up when the draft arrives without a profile (Siri, shortcuts), so the screen
+  /// names the person instead of showing their DID.
+  @State private var loadedRecipientName: String?
 
   init(draft: MLSDirectComposeDraft, onCreated: @escaping (String) -> Void) {
     self.draft = draft
@@ -317,8 +324,9 @@ struct MLSDirectComposeView: View {
     NavigationStack {
       Form {
         Section("Recipient") {
-          Text(draft.recipientDisplayName ?? draft.recipientHandle.map { "@\($0)" } ?? draft.recipientDID)
-            .font(.headline)
+          Text(verbatim: recipientName)
+            .appFont(AppTextRole.headline)
+            .redacted(reason: hasRecipientName ? [] : .placeholder)
         }
         Section("Opening Encrypted Message") {
           TextEditor(text: $messageText)
@@ -327,7 +335,7 @@ struct MLSDirectComposeView: View {
         if let capability = recipientCapability, let notice = ChatFailureMessage.text(for: capability) {
           Section {
             Text(notice)
-              .font(.footnote)
+              .appFont(AppTextRole.footnote)
               .foregroundStyle(.secondary)
             if case .unknown = capability {
               Button("Try again") {
@@ -336,7 +344,7 @@ struct MLSDirectComposeView: View {
               .disabled(isSubmitting)
             } else {
               Text("You can send them a Bluesky DM from New Message.")
-                .font(.footnote)
+                .appFont(AppTextRole.footnote)
                 .foregroundStyle(.secondary)
             }
           }
@@ -345,7 +353,7 @@ struct MLSDirectComposeView: View {
           Section {
             Text(errorMessage)
               .foregroundStyle(.red)
-              .font(.footnote)
+              .appFont(AppTextRole.footnote)
           }
         }
       }
@@ -364,6 +372,34 @@ struct MLSDirectComposeView: View {
         }
       }
       .task { await checkRecipient(forceRefresh: false) }
+      .task { await loadRecipientName() }
+    }
+  }
+
+  private var hasRecipientName: Bool {
+    draft.recipientDisplayName != nil || draft.recipientHandle != nil || loadedRecipientName != nil
+  }
+
+  private var recipientName: String {
+    if let name = draft.recipientDisplayName, !name.isEmpty { return name }
+    if let handle = draft.recipientHandle { return "@\(handle)" }
+    return loadedRecipientName
+      ?? String(localized: "Loading name", comment: "Placeholder while the recipient profile loads")
+  }
+
+  @MainActor
+  private func loadRecipientName() async {
+    guard draft.recipientDisplayName == nil, draft.recipientHandle == nil,
+          let client = appState.atProtoClient,
+          let actor = try? ATIdentifier(string: draft.recipientDID) else { return }
+    let response = try? await client.app.bsky.actor.getProfile(
+      input: AppBskyActorGetProfile.Parameters(actor: actor))
+    guard !Task.isCancelled, let profile = response?.1 else { return }
+    let handle = profile.handle.description
+    if let displayName = profile.displayName, !displayName.isEmpty {
+      loadedRecipientName = displayName
+    } else {
+      loadedRecipientName = "@\(handle)"
     }
   }
 
@@ -452,7 +488,7 @@ struct MLSGroupInvitationNotesView: View {
       Section("Recipients (\(batch.recipients.count))") {
         ForEach(batch.recipients, id: \.self) { recipient in
           Text(verbatim: recipient)
-            .font(.footnote.monospaced())
+            .appFont(AppTextRole.footnote).monospaced()
         }
       }
       Section {
@@ -514,7 +550,7 @@ struct MLSRequestConversationGate<Content: View>: View {
         .font(.system(size: 44))
         .foregroundStyle(.secondary)
       Text("Encrypted Chat Request")
-        .font(.title3.bold())
+        .appFont(AppTextRole.title3).bold()
       if let previewText = request.previewText {
         Text(verbatim: previewText)
           .multilineTextAlignment(.center)
@@ -526,7 +562,7 @@ struct MLSRequestConversationGate<Content: View>: View {
       }
       if let errorMessage {
         Text(errorMessage)
-          .font(.footnote)
+          .appFont(AppTextRole.footnote)
           .foregroundStyle(.red)
       }
       Spacer()
@@ -537,7 +573,7 @@ struct MLSRequestConversationGate<Content: View>: View {
           Text("Decline")
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.catbird(.destructive, fullWidth: true))
         .disabled(isMutating)
 
         Button {
@@ -546,7 +582,7 @@ struct MLSRequestConversationGate<Content: View>: View {
           Text("Accept")
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.catbird(.primary, fullWidth: true))
         .disabled(isMutating)
       }
       .padding()
@@ -632,7 +668,7 @@ struct BlockChatSenderSheet: View {
           Section {
             Text(errorMessage)
               .foregroundStyle(.red)
-              .font(.footnote)
+              .appFont(AppTextRole.footnote)
           }
         }
       }
@@ -1403,10 +1439,10 @@ struct MLSPendingGroupCreationBanner: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       Label("Pending Encrypted Group Creation", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
-        .font(.subheadline.weight(.semibold))
+        .appFont(AppTextRole.subheadline).fontWeight(.semibold)
         .foregroundStyle(.orange)
       Text(statusMessage)
-        .font(.footnote)
+        .appFont(AppTextRole.footnote)
         .foregroundStyle(.secondary)
       HStack(spacing: 12) {
         Button {
@@ -1414,8 +1450,7 @@ struct MLSPendingGroupCreationBanner: View {
         } label: {
           Label("Retry Setup", systemImage: "arrow.clockwise")
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.small)
+        .buttonStyle(.catbird(.primary, size: .sm))
         .disabled(isBusy)
         .accessibilityIdentifier("mls-pending-group-retry")
 
@@ -1424,15 +1459,14 @@ struct MLSPendingGroupCreationBanner: View {
         } label: {
           Text("Cancel Group")
         }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
+        .buttonStyle(.catbird(.destructive, size: .sm))
         .disabled(isBusy)
         .accessibilityIdentifier("mls-pending-group-cancel")
       }
     }
     .padding(12)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     .accessibilityIdentifier("mls-pending-group-banner")
   }
 }

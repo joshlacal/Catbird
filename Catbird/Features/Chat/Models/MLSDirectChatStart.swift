@@ -90,6 +90,12 @@ enum MLSDirectChatStart {
     recipientDID: String,
     text: String
   ) async throws -> Outcome {
+    // A device still waiting for another of the account's devices to approve it is refused
+    // by the delivery service before any request exists. That refusal comes back as a
+    // generic conflict, so ask the engine first and say what is actually wrong.
+    if await isAwaitingApproval(coordinator) {
+      throw MlsError.PendingDeviceAccess(message: "DevicePendingApproval")
+    }
     let created = try await coordinator.createGroup(
       conversationId: UUID().uuidString.lowercased(),
       sequencerDid: sequencerDID,
@@ -128,5 +134,12 @@ enum MLSDirectChatStart {
       return Outcome(
         conversationID: conversationID, delivery: .theirRequestWaiting, messageID: nil, sentAtMs: nil)
     }
+  }
+
+  /// Whether this device is enrolled but not yet approved by another of the account's
+  /// devices. An engine that cannot answer is treated as approved, so the attempt goes ahead
+  /// and the service decides.
+  static func isAwaitingApproval(_ coordinator: MLSClientCoordinator) async -> Bool {
+    (try? await coordinator.isDevicePendingApproval()) ?? false
   }
 }

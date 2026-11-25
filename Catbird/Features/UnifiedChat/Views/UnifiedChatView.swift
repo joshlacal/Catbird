@@ -57,11 +57,11 @@ struct UnifiedChatView<DataSource: UnifiedChatDataSource>: View {
           ToolbarItem(placement: .principal) {
             HStack(spacing: 4) {
               Image(systemName: "lock.fill")
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.green)
                 .accessibilityHidden(true)
               Text(title)
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .lineLimit(1)
             }
             .accessibilityElement(children: .combine)
@@ -82,7 +82,7 @@ struct UnifiedChatView<DataSource: UnifiedChatDataSource>: View {
           } icon: {
             Image(systemName: unsendStatus.systemImage)
           }
-          .font(.footnote)
+          .appFont(AppTextRole.footnote)
           .padding(.horizontal, 12)
           .padding(.vertical, 8)
           .background(.regularMaterial, in: Capsule())

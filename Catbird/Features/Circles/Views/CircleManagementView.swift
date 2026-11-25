@@ -42,6 +42,8 @@ struct CircleManagementView: View {
           operationStateSection(vm: vm)
         }
       }
+      .scrollContentBackground(.hidden)
+      .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
       .navigationTitle("Circle Settings")
       #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)
@@ -143,9 +145,9 @@ struct CircleManagementView: View {
     Section("Circle") {
       VStack(alignment: .leading, spacing: 4) {
         Text(circle.name)
-          .font(.headline)
+          .appFont(AppTextRole.headline)
         Text("Owner: \(circle.owner.didString())", comment: "Circle owner metadata label — %1$@ is the owner's DID.")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
       }
 
@@ -159,7 +161,7 @@ struct CircleManagementView: View {
           VStack(alignment: .leading, spacing: 2) {
             Text("Mute Circle")
             Text("Hides posts from unified feed and silences notifications. You can still open this Circle directly.")
-              .font(.caption2)
+              .appFont(AppTextRole.caption2)
               .foregroundStyle(.secondary)
           }
         }
@@ -174,7 +176,7 @@ struct CircleManagementView: View {
     Section {
       if vm.members.isEmpty {
         Text("No additional members yet.")
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
           .foregroundStyle(.secondary)
       } else {
         ForEach(vm.members, id: \.self) { did in
@@ -184,10 +186,10 @@ struct CircleManagementView: View {
               AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 36)
               VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: profile.displayName ?? "@\(profile.handle)")
-                  .font(.subheadline.weight(.medium))
+                  .appFont(AppTextRole.subheadline).fontWeight(.medium)
                   .lineLimit(1)
                 Text(verbatim: "@\(profile.handle)")
-                  .font(.caption)
+                  .appFont(AppTextRole.caption)
                   .foregroundStyle(.secondary)
                   .lineLimit(1)
               }
@@ -195,14 +197,14 @@ struct CircleManagementView: View {
               Image(systemName: "person.circle")
                 .foregroundStyle(.secondary)
               Text(verbatim: did.didString())
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .lineLimit(1)
                 .truncationMode(.middle)
             }
             Spacer()
             if let badge = vm.pendingBadge(for: did) {
               Text(badge)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.orange)
                 .accessibilityLabel(badge)
             }
@@ -217,7 +219,7 @@ struct CircleManagementView: View {
                   Text("No access", comment: "Member permission badge indicating no access in a Circle.")
                 }
               }
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
             }
             Button(role: .destructive) {
@@ -249,7 +251,7 @@ struct CircleManagementView: View {
 
       ForEach(ineligibleAddMessages, id: \.self) { message in
         Label(message, systemImage: "lock.slash")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
       }
 
@@ -283,7 +285,7 @@ struct CircleManagementView: View {
           VStack(alignment: .leading, spacing: 2) {
             Text(CircleManagementCopy.historyToggleLabel)
             Text(addMemberDisclosure(vm: vm))
-              .font(.caption2)
+              .appFont(AppTextRole.caption2)
               .foregroundStyle(.secondary)
           }
         }
@@ -299,7 +301,7 @@ struct CircleManagementView: View {
     } else if vm.encryptionAvailability != nil && !vm.encryptionAvailable {
       Section {
         Text(CircleManagementCopy.encryptionUnavailableHint)
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
       }
     } else if vm.hasIncompleteUpgrade {
@@ -333,12 +335,12 @@ struct CircleManagementView: View {
       List {
         if let blocked = vm.upgradeBlockedReason {
           Label(blocked, systemImage: "exclamationmark.triangle.fill")
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
             .foregroundStyle(.orange)
         }
         ForEach(vm.upgradeIneligible, id: \.did) { entry in
           Label(vm.ineligibleMessage(for: entry.did), systemImage: "lock.slash")
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
         }
       }
       .navigationTitle(CircleManagementCopy.upgradeToEncrypted)
@@ -376,7 +378,7 @@ struct CircleManagementView: View {
       VStack(alignment: .leading, spacing: 8) {
         Label {
           Text(addMemberDisclosure(vm: vm))
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
         } icon: {
           Image(systemName: "clock.arrow.circlepath")
@@ -385,7 +387,7 @@ struct CircleManagementView: View {
 
         Label {
           Text(CircleManagementCopy.removeMemberDisclosure)
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
         } icon: {
           Image(systemName: "exclamationmark.shield")
@@ -424,7 +426,7 @@ struct CircleManagementView: View {
           ProgressView()
             .padding(.trailing, 8)
           Text("Updating Circle...")
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
             .foregroundStyle(.secondary)
         }
       }
@@ -432,7 +434,7 @@ struct CircleManagementView: View {
       Section {
         Label(message, systemImage: "exclamationmark.triangle.fill")
           .foregroundStyle(.red)
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
       }
     case .upgradeIncomplete(let message):
       Section {
@@ -441,7 +443,7 @@ struct CircleManagementView: View {
         } label: {
           Label(message, systemImage: "exclamationmark.triangle.fill")
             .foregroundStyle(.orange)
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
         }
         .disabled(isAuthorizingActivation)
       }
@@ -457,7 +459,7 @@ struct CircleManagementView: View {
             Image(systemName: "exclamationmark.triangle.fill")
           }
             .foregroundStyle(.orange)
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
           Button("Retry Activation") {
             guard !isAuthorizingActivation else { return }
             isAuthorizingActivation = true
@@ -484,7 +486,7 @@ struct CircleManagementView: View {
               }
             }
           }
-          .buttonStyle(.bordered)
+          .buttonStyle(.catbird(.tonal, size: .md))
           .disabled(isAuthorizingActivation)
           .accessibilityLabel("Retry Circle activation")
         }

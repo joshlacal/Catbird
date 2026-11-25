@@ -50,8 +50,7 @@ struct CircleNotificationsSection: View {
                 .enhancedAppCaption()
                 .fontWeight(.semibold)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .buttonStyle(.catbird(.tonal, size: .sm))
           }
           .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
           .listRowSeparator(.visible)
@@ -170,7 +169,7 @@ struct CircleNotificationRow: View {
               .overlay {
                 Image(systemName: "person.fill")
                   .foregroundColor(.secondary)
-                  .font(.caption)
+                  .appFont(AppTextRole.caption)
               }
           }
         }
@@ -185,23 +184,12 @@ struct CircleNotificationRow: View {
               .foregroundColor(.secondary)
             Spacer()
             Text(formattedTimestamp(notification.indexedAt.date))
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .foregroundColor(.secondary)
           }
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
 
-          HStack(spacing: 4) {
-            Image(systemName: "person.2.circle")
-              .font(.caption2)
-            Text(notification.circle.name)
-              .font(.caption)
-              .fontWeight(.medium)
-          }
-          .padding(.horizontal, 8)
-          .padding(.vertical, 2)
-          .background(Color.secondary.opacity(0.12))
-          .cornerRadius(12)
-          .foregroundColor(.secondary)
+          CatbirdBadge(Text(notification.circle.name), systemImage: "person.2.circle")
         }
       }
       .contentShape(Rectangle())
@@ -216,16 +204,16 @@ struct CircleNotificationRow: View {
     switch notification.reason {
     case .value_reply:
       Image(systemName: "arrowshape.turn.up.left.fill")
-        .foregroundColor(.blue)
-        .font(.subheadline)
+        .foregroundColor(Color.accentColor)
+        .appFont(AppTextRole.subheadline)
     case .value_like:
       Image(systemName: "heart.fill")
         .foregroundColor(.pink)
-        .font(.subheadline)
+        .appFont(AppTextRole.subheadline)
     case .value_invite:
       Image(systemName: "person.badge.plus.fill")
         .foregroundColor(.green)
-        .font(.subheadline)
+        .appFont(AppTextRole.subheadline)
     }
   }
 

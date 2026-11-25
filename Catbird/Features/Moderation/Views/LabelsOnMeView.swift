@@ -40,13 +40,13 @@ struct LabelsOnMeView: View {
       List {
         Section {
           VStack(alignment: .leading, spacing: 4) {
-            Text("Labels Applied To").font(.caption).foregroundStyle(.secondary)
-            Text(targetDescription).font(.headline)
+            Text("Labels Applied To").appFont(AppTextRole.caption).foregroundStyle(.secondary)
+            Text(targetDescription).appFont(AppTextRole.headline)
           }
         }
         if let metadataError {
           Section {
-            Text(metadataError).font(.caption).foregroundStyle(.secondary)
+            Text(metadataError).appFont(AppTextRole.caption).foregroundStyle(.secondary)
             Button("Retry Label Details") { Task { await loadMetadata() } }
           }
         }
@@ -62,6 +62,8 @@ struct LabelsOnMeView: View {
           }
         }
       }
+      .scrollContentBackground(.hidden)
+      .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
       .navigationTitle("Applied Labels")
       .toolbar {
         ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
@@ -87,25 +89,25 @@ struct LabelsOnMeView: View {
     let info = presentation(for: label)
     return VStack(alignment: .leading, spacing: 8) {
       Label(info.name, systemImage: info.severity == .warning ? "exclamationmark.triangle" : "info.circle")
-        .font(.headline)
+        .appFont(AppTextRole.headline)
         .foregroundStyle(info.severity == .warning ? Color.orange : Color.primary)
       if let description = info.description, !description.isEmpty {
-        Text(description).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+        Text(description).appFont(AppTextRole.subheadline).fixedSize(horizontal: false, vertical: true)
       }
-      Text(info.attribution).font(.caption).foregroundStyle(.secondary)
+      Text(info.attribution).appFont(AppTextRole.caption).foregroundStyle(.secondary)
         .textSelection(.enabled)
       if info.severity == .information {
-        Text("Informational label").font(.caption).foregroundStyle(.secondary)
+        Text("Informational label").appFont(AppTextRole.caption).foregroundStyle(.secondary)
       }
-      Text(label.subjectSummary).font(.caption).foregroundStyle(.secondary)
-      Text("Applied \(label.cts.date, style: .date)").font(.caption).foregroundStyle(.secondary)
+      Text(label.subjectSummary).appFont(AppTextRole.caption).foregroundStyle(.secondary)
+      Text("Applied \(label.cts.date, style: .date)").appFont(AppTextRole.caption).foregroundStyle(.secondary)
       if let expiration = label.exp?.date {
-        Text("Expires \(expiration, style: .date)").font(.caption).foregroundStyle(.secondary)
+        Text("Expires \(expiration, style: .date)").appFont(AppTextRole.caption).foregroundStyle(.secondary)
       }
       if label.src.didString() == ReportingService.subjectOwnerDID(label) {
-        Text("Self-applied").font(.caption).foregroundStyle(.secondary)
+        Text("Self-applied").appFont(AppTextRole.caption).foregroundStyle(.secondary)
       } else if ReportingService.canAppeal(label, viewerDID: viewerDID), isCurrentViewer {
-        Button("Appeal Label") { beginAppeal(label) }.buttonStyle(.bordered)
+        Button("Appeal Label") { beginAppeal(label) }.buttonStyle(.catbird(.tonal, size: .md))
       }
     }
     .padding(.vertical, 6)
@@ -189,16 +191,16 @@ private struct AppealLabelSheet: View {
       ScrollViewReader { scroll in
         Form {
           Section("Label Details") {
-            Text(info.name).font(.headline)
-            Text("Issued by \(info.issuer)", comment: "Labeler attribution — variable is the issuing service name or handle.").font(.subheadline)
-            Text("Applies to: \(label.subjectSummary)", comment: "Target of a moderation label — variable is localized subject type (Profile, Whole account, Post, or Content).").font(.caption)
+            Text(info.name).appFont(AppTextRole.headline)
+            Text("Issued by \(info.issuer)", comment: "Labeler attribution — variable is the issuing service name or handle.").appFont(AppTextRole.subheadline)
+            Text("Applies to: \(label.subjectSummary)", comment: "Target of a moderation label — variable is localized subject type (Profile, Whole account, Post, or Content).").appFont(AppTextRole.caption)
           }
           Section {
             TextField("Explain why this label was applied in error", text: $appealDetails, axis: .vertical)
               .lineLimit(4...8)
               .focused($isAppealReasonFocused)
               .accessibilityIdentifier("appealReason")
-            Text("\(appealDetails.count)/300 characters", comment: "Character count indicator for moderation appeal reason — variable is typed character count.").font(.caption).foregroundStyle(.secondary)
+            Text("\(appealDetails.count)/300 characters", comment: "Character count indicator for moderation appeal reason — variable is typed character count.").appFont(AppTextRole.caption).foregroundStyle(.secondary)
           } header: { Text("Reason for Appeal") } footer: {
             Text("Your appeal will be sent to the service that issued this label.")
           }

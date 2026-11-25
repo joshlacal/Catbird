@@ -30,7 +30,7 @@ struct SettingsCategoryIcon: View {
     var body: some View {
         Image(systemName: systemImage)
             .symbolVariant(.fill)
-            .font(.system(size: side * 0.56, weight: .semibold))
+            .appFont(size: side * 0.56, weight: .semibold)
             .foregroundStyle(.white)
             .frame(width: side, height: side)
             .background(family.tint, in: RoundedRectangle(cornerRadius: side * 0.24, style: .continuous))

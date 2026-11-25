@@ -156,7 +156,7 @@ struct AccentColorPicker: View {
               .overlay {
                 if selection == option.rawValue {
                   Image(systemName: "checkmark")
-                    .font(.system(size: 14, weight: .bold))
+                    .appFont(size: 14, weight: .bold)
                     .foregroundStyle(.white)
                 }
               }

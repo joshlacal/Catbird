@@ -241,7 +241,7 @@ struct ChatPostEmbedView: View {
     }
     .frame(maxWidth: .infinity)
     .frame(height: 200)
-    .clipShape(RoundedRectangle(cornerRadius: 8))
+    .catbirdClip(.sm)
   }
 
   @ViewBuilder
@@ -427,18 +427,16 @@ struct ChatPostEmbedView: View {
 // MARK: - Chat Embed Card Style
 
 private extension View {
+  @ViewBuilder
   func chatEmbedCardStyle(colorScheme: ColorScheme, isError: Bool = false) -> some View {
-    self
-      .padding(DesignTokens.Spacing.sm)
+    let padded = self
+      .padding(Space.sm)
       .frame(maxWidth: .infinity, alignment: .leading)
-      .background(
-        RoundedRectangle(cornerRadius: DesignTokens.Size.radiusSM)
-          .fill(isError ? Color.red.opacity(0.1) : Color.gray.opacity(0.1))
-      )
-      .overlay(
-        RoundedRectangle(cornerRadius: DesignTokens.Size.radiusSM)
-          .stroke(isError ? Color.red.opacity(0.3) : Color.gray.opacity(0.3), lineWidth: 1)
-      )
+    if isError {
+      padded.catbirdCard(.notice(.error))
+    } else {
+      padded.catbirdCard(.embed)
+    }
   }
 }
 

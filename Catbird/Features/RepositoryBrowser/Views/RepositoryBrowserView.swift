@@ -298,11 +298,11 @@ struct RepositoryBrowserView: View {
     private var emptyStateView: some View {
         VStack(spacing: 20) {
             Image(systemName: "archivebox")
-                .font(.system(size: 64))
+                .appFont(size: 64)
                 .foregroundColor(.secondary)
 
             Text("No Repository Data")
-                .font(.title2)
+                .appFont(AppTextRole.title2)
                 .fontWeight(.semibold)
 
             Text("No repository data found. Create backup CAR files from your account in Settings, or parse existing backup files to explore your data.")
@@ -312,7 +312,7 @@ struct RepositoryBrowserView: View {
             Button("Learn More") {
                 // Open help or documentation
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.catbird(.tonal))
         }
         .padding()
     }
@@ -330,11 +330,11 @@ private struct RepositoryRowView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(verbatim: repository.userHandle)
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                             .foregroundColor(.primary)
 
                         Text(verbatim: repository.userDID)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
                     }
@@ -345,7 +345,7 @@ private struct RepositoryRowView: View {
                         StatusBadge(status: repository.parsingStatus)
 
                         Text(repository.parsingAgeDescription)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                     }
                 }
@@ -360,10 +360,10 @@ private struct RepositoryRowView: View {
 
                     if repository.hasMediaReferences {
                         Image(systemName: "photo")
-                            .foregroundColor(.blue)
+                            .foregroundColor(Color.accentColor)
                     }
                 }
-                .font(.caption)
+                .appFont(AppTextRole.caption)
             }
             .padding(.vertical, 4)
         }
@@ -383,11 +383,11 @@ private struct BackupRowView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(verbatim: backup.userHandle)
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                             .foregroundColor(.primary)
 
                         Text(verbatim: backup.userDID)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
                     }
@@ -398,7 +398,7 @@ private struct BackupRowView: View {
                         StatusBadge(status: .notStarted)
 
                         Text(formatBackupAge(backup.createdDate))
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                     }
                 }
@@ -413,7 +413,7 @@ private struct BackupRowView: View {
                     Image(systemName: "archivebox")
                         .foregroundColor(.orange)
                 }
-                .font(.caption)
+                .appFont(AppTextRole.caption)
             }
             .padding(.vertical, 4)
         }
@@ -433,18 +433,7 @@ private struct StatusBadge: View {
     let status: RepositoryParsingStatus
 
     var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: status.systemImage)
-                .font(.caption2)
-            Text(status.displayName)
-                .font(.caption2)
-                .fontWeight(.medium)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color(status.color).opacity(0.2))
-        .foregroundColor(Color(status.color))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        CatbirdBadge(Text(status.displayName), systemImage: status.systemImage, tone: status.badgeTone)
     }
 }
 
@@ -455,10 +444,10 @@ private struct StatisticView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(verbatim: value)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .fontWeight(.semibold)
             Text(label)
-                .font(.caption2)
+                .appFont(AppTextRole.caption2)
                 .foregroundColor(.secondary)
         }
     }
@@ -560,7 +549,7 @@ private struct ExportSheetView: View {
         Section("Repository") {
             VStack(alignment: .leading, spacing: 4) {
                 Text(verbatim: repository.userHandle)
-                    .font(.headline)
+                    .appFont(AppTextRole.headline)
                 repositoryStatsText
             }
         }
@@ -571,7 +560,7 @@ private struct ExportSheetView: View {
             "\(repository.postCount) posts, \(repository.connectionCount) connections",
             comment: "Summary of repository contents in export sheet. First placeholder is post count, second is connection count."
         )
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundColor(.secondary)
     }
 
@@ -591,7 +580,7 @@ private struct ExportSheetView: View {
                 Text(verbatim: format.rawValue)
                     .fontWeight(.medium)
                 Text(format.description)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
             }
 
@@ -599,7 +588,7 @@ private struct ExportSheetView: View {
 
             if selectedFormat == format {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(.blue)
+                    .foregroundColor(Color.accentColor)
             }
         }
         .contentShape(Rectangle())
@@ -615,7 +604,7 @@ private struct ExportSheetView: View {
                 VStack(spacing: 8) {
                     ProgressView(value: viewModel.exportProgress)
                     Text("Exporting data...")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                 }
             }

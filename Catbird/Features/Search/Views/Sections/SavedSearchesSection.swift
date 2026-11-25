@@ -362,20 +362,7 @@ struct AllSavedSearchesView: View {
     
     @ViewBuilder
     private func filterChip(icon: String, text: String) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .appFont(AppTextRole.caption2)
-            
-            Text(text)
-                .appFont(AppTextRole.caption)
-        }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 8)
-        .background(
-            Capsule()
-                .fill(Color.accentColor.opacity(0.15))
-        )
-        .foregroundColor(.accentColor)
+        CatbirdChip(title: Text(text), systemImage: icon, size: .sm)
     }
     
     private func hasActiveFilters(_ filters: SearchFilterState) -> Bool {

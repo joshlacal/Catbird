@@ -88,6 +88,9 @@ struct ChatTabView: View {
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
   @State private var selectedConvoId: String?
+  /// A first message's new conversation, held while a destination (such as the person's
+  /// profile) is pushed over its draft screen, so finishing the send doesn't pop it.
+  @State private var pendingDraftHandoff: (selection: String, conversation: String)?
   @State private var searchText = ""
   @State private var isShowingErrorAlert = false
   @State private var lastErrorMessage: String?
@@ -104,6 +107,7 @@ struct ChatTabView: View {
   @State private var isTabVisible = false
   fileprivate let logger = Logger(subsystem: "blue.catbird", category: "ChatUI")
   @State private var mlsConversationPrompt: MLSConversationPrompt?
+  @State private var deviceApproval = DeviceApprovalModel()
 
   /// Maximum convos to fetch in a single eager-refresh batch.
   /// Bounds battery + network cost; remaining convos catch up via per-convo WS on open
@@ -321,6 +325,14 @@ struct ChatTabView: View {
           }
         }
 
+        if mlsChatEnabledForCurrentAccount, deviceApproval.copy != nil {
+          Section {
+            DeviceApprovalCard(model: deviceApproval)
+              .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+              .listRowSeparator(.hidden)
+          }
+        }
+
         Section {
           ForEach(coordinator.conversations) { item in
             unifiedRow(for: item)
@@ -345,6 +357,7 @@ struct ChatTabView: View {
     // items in section" crash when an update lands mid-transition).
     .id(appState.userDID)
     .listStyle(.plain)
+    .modifier(DeviceApprovalTracking(model: deviceApproval))
     .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search")
     .onChange(of: searchText) { _, newValue in
@@ -473,7 +486,7 @@ struct ChatTabView: View {
             Label("Mute", systemImage: "bell.slash")
           }
         }
-        .tint(convo.isMuted ? .blue : .orange)
+        .tint(convo.isMuted ? Color.accentColor : .orange)
       }
     }
   }
@@ -488,7 +501,21 @@ struct ChatTabView: View {
         // sidebar row arrives; list membership must not replace its lifecycle.
         // Before the row arrives, route by id shape so MLS deep links don't open
         // the Bluesky detail view.
-        if isMLSConversation(convoId) {
+        if let recipientDID = MLSDirectDraftRoute.recipientDID(fromSelectionID: convoId) {
+          // No chat with this person yet: the chat screen for them, whose first message
+          // creates the conversation and then selects it.
+          MLSDirectDraftConversationView(recipientDID: recipientDID) { conversationID in
+            // The send can finish after they have moved on; only replace this screen, and
+            // wait until anything pushed over it has been popped.
+            guard selectedConvoId == convoId else { return }
+            if chatNavigationPath.wrappedValue.isEmpty {
+              showConversation(conversationID)
+            } else {
+              pendingDraftHandoff = (convoId, conversationID)
+            }
+          }
+          .id("\(convoId):\(appState.userDID)")
+        } else if isMLSConversation(convoId) {
           MLSRequestConversationGate(conversationID: convoId) {
             MLSConversationDetailView(conversationId: convoId)
           }
@@ -511,8 +538,14 @@ struct ChatTabView: View {
     }
     // A destination pushed over the conversation takes the screen until it is popped. Observed
     // on the detail stack rather than added to the body's chain (see the note at its alert).
-    .onChange(of: chatNavigationPath.wrappedValue.isEmpty) { _, _ in
+    .onChange(of: chatNavigationPath.wrappedValue.isEmpty) { _, isEmpty in
       publishOpenConversation()
+      if isEmpty, let handoff = pendingDraftHandoff {
+        pendingDraftHandoff = nil
+        if selectedConvoId == handoff.selection {
+          showConversation(handoff.conversation)
+        }
+      }
     }
   }
 
@@ -760,6 +793,7 @@ struct ChatTabView: View {
   /// Routes by the coordinator's merged list once the row is present, and by id
   /// shape for deep links that arrive before the lists load.
   private func isMLSConversation(_ convoId: String) -> Bool {
+    if MLSDirectDraftRoute.recipientDID(fromSelectionID: convoId) != nil { return true }
     if let item = coordinator.conversations.first(where: { $0.id == convoId }) {
       return item.isMLS
     }
@@ -1212,7 +1246,7 @@ private struct ConditionalSwipeActions: ViewModifier {
               Label("Mute", systemImage: "bell.slash")
             }
           }
-          .tint(conversation.muted ? .blue : .orange)
+          .tint(conversation.muted ? Color.accentColor : .orange)
         }
         .alert("Leave Conversation?", isPresented: $showingLeaveAlert) {
           Button("Cancel", role: .cancel) { }

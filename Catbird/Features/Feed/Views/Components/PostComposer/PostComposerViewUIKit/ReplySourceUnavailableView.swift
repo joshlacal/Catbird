@@ -11,11 +11,19 @@ struct ReplySourceUnavailableView: View {
         Label("The post you’re replying to is unavailable.", systemImage: "exclamationmark.bubble")
           .appFont(AppTextRole.subheadline)
           .foregroundStyle(Color.secondary)
-        HStack(spacing: 12) {
-          Button("Try Again") { vm.retryParentRestore() }
-            .buttonStyle(.bordered)
-          Button("Post as New Post") { vm.detachUnavailableParent() }
-            .buttonStyle(.bordered)
+        ViewThatFits(in: .horizontal) {
+          HStack(spacing: 12) {
+            Button("Try Again") { vm.retryParentRestore() }
+              .buttonStyle(.catbird(.tonal))
+            Button("Post as New Post") { vm.detachUnavailableParent() }
+              .buttonStyle(.catbird(.tonal))
+          }
+          VStack(alignment: .leading, spacing: 8) {
+            Button("Try Again") { vm.retryParentRestore() }
+              .buttonStyle(.catbird(.tonal))
+            Button("Post as New Post") { vm.detachUnavailableParent() }
+              .buttonStyle(.catbird(.tonal))
+          }
         }
         .appFont(AppTextRole.subheadline)
       } else {
@@ -46,7 +54,7 @@ struct UnresolvedCircleReplyPrompt: View {
         .appFont(AppTextRole.subheadline)
         .foregroundStyle(Color.secondary)
       Button("Post as New Post") { vm.detachUnavailableParent() }
-        .buttonStyle(.bordered)
+        .buttonStyle(.catbird(.tonal))
         .appFont(AppTextRole.subheadline)
     }
     .frame(maxWidth: .infinity, alignment: .leading)

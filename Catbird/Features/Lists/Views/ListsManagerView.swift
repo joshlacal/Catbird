@@ -294,7 +294,7 @@ private struct ListsManagerContent: View {
       Button("Create List") {
         viewModel.showingCreateList = true
       }
-      .buttonStyle(.borderedProminent)
+      .buttonStyle(.catbird(.primary, size: .md))
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }

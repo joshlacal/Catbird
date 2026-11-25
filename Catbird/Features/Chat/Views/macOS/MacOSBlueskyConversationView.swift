@@ -47,11 +47,11 @@ struct MacOSBlueskyConversationView: View {
       ToolbarItem(placement: .principal) {
         HStack(spacing: 4) {
           Text(conversationTitle)
-            .font(.headline)
+            .appFont(AppTextRole.headline)
             .lineLimit(1)
           if let badgeKind = conversationBadgeKind {
             VerificationBadgeView(kind: badgeKind)
-              .font(.caption)
+              .appFont(AppTextRole.caption)
           }
           Image(systemName: "bubble.left.and.bubble.right")
             .font(.system(size: 10))

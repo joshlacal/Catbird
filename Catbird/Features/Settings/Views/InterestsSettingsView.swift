@@ -53,8 +53,7 @@ struct InterestsSettingsView: View {
                                 await loadInterests()
                             }
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        .buttonStyle(.catbird(.tonal, size: .sm))
                     }
                     .padding(.vertical, 4)
                 } else if interests.isEmpty {
@@ -71,13 +70,7 @@ struct InterestsSettingsView: View {
                 } else {
                     FlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
                         ForEach(interests, id: \.self) { interest in
-                            Text(BlueskyInterest.displayName(for: interest))
-                                .appFont(AppTextRole.subheadline)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 6)
-                                .background(Color.accentColor.opacity(0.15))
-                                .foregroundStyle(Color.accentColor)
-                                .clipShape(Capsule())
+                            CatbirdBadge(Text(verbatim: BlueskyInterest.displayName(for: interest)), tone: .accent)
                         }
                     }
                     .padding(.vertical, 8)

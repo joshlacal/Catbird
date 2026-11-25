@@ -91,12 +91,12 @@ struct MLSChatDiagnosticsView: View {
         if !records.isEmpty {
           HStack {
             Text("\(records.count) events recorded", comment: "Count of diagnostic events recorded for MLS encrypted chat.")
-              .font(.caption2)
+              .appFont(AppTextRole.caption2)
               .foregroundStyle(.tertiary)
             Spacer()
             ShareLink(item: exportText) {
               Label("Export", systemImage: "square.and.arrow.up")
-                .font(.caption2)
+                .appFont(AppTextRole.caption2)
             }
           }
           .padding(.top, 2)
@@ -110,7 +110,7 @@ struct MLSChatDiagnosticsView: View {
     Section {
       VStack(spacing: 12) {
         Image(systemName: "checkmark.shield.fill")
-          .font(.system(size: 36))
+          .appFont(size: 36)
           .foregroundStyle(.green)
           .padding(.top, 16)
 
@@ -142,7 +142,7 @@ struct MLSChatDiagnosticsView: View {
 
   private var toastView: some View {
     Text("Copied to clipboard")
-      .font(.subheadline.bold())
+      .appFont(AppTextRole.subheadline).fontWeight(.bold)
       .foregroundStyle(.white)
       .padding(.horizontal, 16)
       .padding(.vertical, 10)
@@ -199,23 +199,23 @@ private struct DiagnosticRecordRow: View {
       // Top line: Status Icon + Event Name + Time
       HStack(alignment: .center, spacing: 6) {
         eventIcon
-          .font(.caption)
+          .appFont(AppTextRole.caption)
 
         Text(eventTitle)
-          .font(.subheadline.weight(.semibold))
+          .appFont(AppTextRole.subheadline).fontWeight(.semibold)
           .foregroundStyle(eventColor)
 
         Spacer()
 
         Text(record.occurredAt, style: .time)
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundStyle(.secondary)
       }
 
       // Code / Reason
       HStack(alignment: .top, spacing: 4) {
         Text("Code:")
-          .font(.caption2.weight(.medium))
+          .appFont(AppTextRole.caption2).fontWeight(.medium)
           .foregroundStyle(.secondary)
         Text(friendlyCode)
           .font(.system(.caption2, design: .monospaced))
@@ -230,7 +230,7 @@ private struct DiagnosticRecordRow: View {
           ForEach(tags, id: \.label) { tag in
             HStack(spacing: 3) {
               Text(tag.label)
-                .font(.system(size: 10, weight: .medium))
+                .appFont(size: 10, weight: .medium)
                 .foregroundStyle(.secondary)
               Text(tag.value)
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
@@ -238,7 +238,7 @@ private struct DiagnosticRecordRow: View {
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+            .background(Color.secondary.opacity(0.12), in: Radius.xs.shape)
           }
         }
       }

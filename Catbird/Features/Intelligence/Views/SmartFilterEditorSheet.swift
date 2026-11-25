@@ -35,7 +35,11 @@ struct SmartFilterEditorSheet: View {
                 }
 
                 if let errorMessage {
-                    Section { Text(errorMessage).foregroundStyle(.red) }
+                    Section {
+                        CatbirdNotice(tone: .error, message: Text(verbatim: errorMessage))
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                    }
                 }
             }
             .navigationTitle("Smart Filter")

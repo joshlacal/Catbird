@@ -52,19 +52,19 @@ struct TileCardView: View {
               }
             }
             .frame(width: 32, height: 32)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
           }
 
           VStack(alignment: .leading, spacing: 2) {
             Text(tile.name)
-              .font(.caption)
+              .appFont(AppTextRole.caption)
               .fontWeight(.semibold)
               .foregroundStyle(.primary)
               .lineLimit(1)
 
             if let description = tile.tileDescription {
               Text(description)
-                .font(.caption2)
+                .appFont(AppTextRole.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
@@ -75,21 +75,13 @@ struct TileCardView: View {
 
           // Tile indicator
           Image(systemName: "square.grid.2x2")
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .foregroundStyle(.secondary)
         }
-        .padding(10)
+        .padding(Space.md)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
-      .background(
-        RoundedRectangle(cornerRadius: 12)
-          .fill(colorScheme == .dark ? Color.black.opacity(0.3) : Color.white.opacity(0.8))
-      )
-      .overlay(
-        RoundedRectangle(cornerRadius: 12)
-          .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-      )
-      .clipShape(RoundedRectangle(cornerRadius: 12))
+      .catbirdCard(.embed)
     }
     .buttonStyle(.plain)
     .disabled(onActivate == nil)
@@ -104,10 +96,10 @@ struct TileCardView: View {
 
       VStack(spacing: 6) {
         Image(systemName: "square.grid.2x2")
-          .font(.title2)
+          .appFont(AppTextRole.title2)
           .foregroundStyle(.secondary)
         Text("Web Tile")
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundStyle(.secondary)
       }
     }
@@ -116,11 +108,11 @@ struct TileCardView: View {
   }
 
   private var tileIconPlaceholder: some View {
-    RoundedRectangle(cornerRadius: 6)
+    RoundedRectangle(cornerRadius: 6, style: .continuous)
       .fill(Color.gray.opacity(0.15))
       .overlay(
         Image(systemName: "square.grid.2x2")
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundStyle(.secondary)
       )
   }

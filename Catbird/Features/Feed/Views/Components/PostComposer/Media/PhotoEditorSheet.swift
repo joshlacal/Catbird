@@ -77,14 +77,8 @@ struct PhotoEditorSheet: View {
               Image(systemName: "checkmark")
               Text("Done")
             }
-            .appFont(AppTextRole.body)
-            .fontWeight(.semibold)
-            .foregroundStyle(.white)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 12)
           }
-          .background(.blue.gradient)
-          .clipShape(Capsule())
+          .buttonStyle(.catbird(.primary, size: .lg))
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 40)
@@ -196,7 +190,7 @@ struct PhotoEditorSheet: View {
       Button("Close") {
         dismiss()
       }
-      .buttonStyle(.borderedProminent)
+      .buttonStyle(.catbird(.primary))
     }
     .padding()
     .frame(width: 400, height: 300)

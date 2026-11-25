@@ -31,14 +31,14 @@ struct NotificationsActivityListView: View {
           Button("Retry") {
             Task { await loadPosts() }
           }
-          .buttonStyle(.bordered)
+          .buttonStyle(.catbird(.tonal, size: .md))
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else if posts.isEmpty {
         VStack(spacing: 8) {
           Image(systemName: "bell.slash")
-            .font(.largeTitle)
+            .appFont(AppTextRole.largeTitle)
             .foregroundStyle(.secondary)
           Text("No posts here")
             .appFont(AppTextRole.headline)

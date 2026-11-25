@@ -8,6 +8,27 @@ import Foundation
 import Petrel
 import PetrelCatbird
 @testable import Catbird
+#if canImport(UIKit)
+import UIKit
+#endif
+
+/// An age checker for a region with no age requirement, so tests that post,
+/// like or reply are not stopped by the platform age gate.
+struct NoAgeRequirement: AgeRegulatoryChecking {
+  func preflight() async -> PlatformAgeSignal { .none }
+  #if canImport(UIKit)
+  func requestAgeBand(from viewController: UIViewController) async throws -> AgeBand? { nil }
+  #endif
+}
+
+/// An `AppState` whose age gate has already confirmed there is no age
+/// requirement, so ordinary writes are allowed.
+@MainActor
+func writableTestAppState(userDID: String = "did:plc:testuser", client: ATProtoClient) async -> AppState {
+  let appState = AppState(userDID: userDID, client: client, regulatoryChecker: NoAgeRequirement())
+  await appState.ageAccess.refreshRequirements()
+  return appState
+}
 
 /// What a scripted `openCircleKey` returns: the key for the record's own
 /// `keyVersion` (if openable) with the record's `circleId`/`keyVersion` as the

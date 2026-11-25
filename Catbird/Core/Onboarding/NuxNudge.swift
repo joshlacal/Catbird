@@ -15,7 +15,7 @@ struct NuxNudge: View {
         Circle()
             .fill(
                 LinearGradient(
-                    colors: [Color.accentColor, Color.purple],
+                    colors: [Color.accentColor, Color.accentColor.opacity(0.65)],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )

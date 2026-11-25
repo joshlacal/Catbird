@@ -2101,6 +2101,9 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   ) async -> Bool {
     #if os(iOS)
     guard let appState, appState.isMLSRuntimeAllowed, let client, let token = deviceToken else { return false }
+    // Before the first unlock the device id can't be read; registering then would file the
+    // push key under a stand-in id.
+    guard AppState.isProtectedDataAvailable else { return false }
     let account = appState.userDID
     guard expectedAccount == nil || expectedAccount == account else { return false }
     let desired = override ?? (notificationsEnabled && isMasterPushEnabled() && mlsChatNotificationsEnabled)

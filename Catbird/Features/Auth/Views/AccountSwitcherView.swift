@@ -4,6 +4,44 @@ import Petrel
 import SwiftUI
 import NukeUI
 
+// MARK: - Sheet Frame
+
+/// macOS sheets size to their content's ideal size, and a `List` or
+/// `ContentUnavailableView` has no intrinsic height, so the sheet collapsed to its
+/// title and toolbar. Size both the list inside the navigation stack, so the stack
+/// itself reports a usable ideal size, and the stack, so the sheet window gets a
+/// minimum. The embedded signed-out screen (no dismiss button) fills its window
+/// instead, and iOS uses its own detents.
+private struct AccountSwitcherSheetFrame: ViewModifier {
+  enum Layer {
+    /// The account list inside the navigation stack.
+    case content
+    /// The navigation stack that is the sheet's root.
+    case sheet
+  }
+
+  let isSheet: Bool
+  let layer: Layer
+
+  @ViewBuilder
+  func body(content: Content) -> some View {
+    #if os(macOS)
+    if isSheet {
+      switch layer {
+      case .content:
+        content.frame(minWidth: 420, idealWidth: 480, minHeight: 320, idealHeight: 440)
+      case .sheet:
+        content.frame(minWidth: 420, idealWidth: 480, minHeight: 380, idealHeight: 520)
+      }
+    } else {
+      content
+    }
+    #else
+    content
+    #endif
+  }
+}
+
 struct AccountSwitcherView: View {
   // MARK: - Environment
   @Environment(AppStateManager.self) private var appStateManager
@@ -80,6 +118,7 @@ struct AccountSwitcherView: View {
   var body: some View {
     NavigationStack {
       contentView
+        .modifier(AccountSwitcherSheetFrame(isSheet: showsDismissButton, layer: .content))
         .navigationTitle("Accounts")
         .modifier(ToolbarTitleModifier())
         .toolbar { toolbarContent }
@@ -101,6 +140,7 @@ struct AccountSwitcherView: View {
         .onChange(of: appStateManager.isTransitioning) { _, _ in finishReauthenticationIfReady() }
         .task { await loadAccounts() }
     }
+    .modifier(AccountSwitcherSheetFrame(isSheet: showsDismissButton, layer: .sheet))
     .interactiveDismissDisabled(isSwitchingAccount)
   }
 
@@ -285,8 +325,7 @@ struct AccountSwitcherView: View {
                 Button("Dismiss") {
                   error = nil
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .buttonStyle(.catbird(.primary, size: .sm))
               }
               .padding(.vertical, 8)
             }
@@ -350,7 +389,7 @@ struct AccountSwitcherView: View {
           .padding(6)
           .background(.tint.opacity(0.1))
           .foregroundStyle(.tint)
-          .clipShape(RoundedRectangle(cornerRadius: 8))
+          .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
       }
     }
     .padding(.vertical, 4)
@@ -424,17 +463,14 @@ struct AccountSwitcherView: View {
             .frame(maxWidth: .infinity)
             .padding()
             .background(Color(.quaternarySystemFill))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
           } else {
             Button {
               addNewAccount()
             } label: {
               Text("Add Account")
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
+            .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
             .disabled(newAccountHandle.isEmpty)
           }
         }

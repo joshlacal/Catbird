@@ -104,16 +104,7 @@ struct LabelerView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(labels, id: \.self) { label in
-                    Text(label.val)
-                        .appFont(AppTextRole.caption)
-                        .fontWeight(.medium)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule()
-                                .fill(labelColor(for: label.val).opacity(0.15))
-                        )
-                        .foregroundStyle(labelColor(for: label.val))
+                    CatbirdBadge(Text(verbatim: label.val), tone: labelTone(for: label.val))
                 }
             }
         }
@@ -138,6 +129,15 @@ struct LabelerView: View {
         .buttonStyle(.plain)
     }
     
+    private func labelTone(for value: String) -> CatbirdBadgeTone {
+        switch value.lowercased() {
+        case "spam": return .danger
+        case "misleading": return .warning
+        case "sexual", "nudity", "legal": return .accent
+        default: return .success
+        }
+    }
+
     private func labelColor(for value: String) -> Color {
         // You might want to map specific label values to colors
         switch value.lowercased() {
@@ -246,20 +246,20 @@ struct LabelerDetailedView: View {
         LabelerDateFormatter.string(for: labeler.indexedAt.date)
     }
     
+    private func labelTone(for value: String) -> CatbirdBadgeTone {
+        switch value.lowercased() {
+        case "spam": return .danger
+        case "misleading": return .warning
+        case "sexual", "nudity", "legal": return .accent
+        default: return .success
+        }
+    }
+
     private func policiesView(policies: AppBskyLabelerDefs.LabelerPolicies) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(policies.labelValues, id: \.self) { value in
-                    Text(value.rawValue)
-                        .appFont(AppTextRole.caption)
-                        .fontWeight(.medium)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule()
-                                .fill(Color.blue.opacity(0.15))
-                        )
-                        .foregroundStyle(Color.blue)
+                    CatbirdBadge(Text(verbatim: value.rawValue), tone: .accent)
                 }
             }
         }
@@ -269,16 +269,7 @@ struct LabelerDetailedView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(labels, id: \.self) { label in
-                    Text(label.val)
-                        .appFont(AppTextRole.caption)
-                        .fontWeight(.medium)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule()
-                                .fill(labelColor(for: label.val).opacity(0.15))
-                        )
-                        .foregroundStyle(labelColor(for: label.val))
+                    CatbirdBadge(Text(verbatim: label.val), tone: labelTone(for: label.val))
                 }
             }
         }
@@ -288,16 +279,7 @@ struct LabelerDetailedView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(reasonTypes, id: \.self) { reason in
-                    Text(String(describing: reason))
-                        .appFont(AppTextRole.caption)
-                        .fontWeight(.medium)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule()
-                                .fill(Color.purple.opacity(0.15))
-                        )
-                        .foregroundStyle(Color.purple)
+                    CatbirdBadge(Text(verbatim: String(describing: reason)), tone: .accent)
                 }
             }
         }

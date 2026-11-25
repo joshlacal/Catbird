@@ -1,3 +1,4 @@
+import CatbirdBrand
 import SwiftUI
 #if os(iOS)
 import UIKit
@@ -11,6 +12,13 @@ import OSLog
 /// Centralized navigation font configuration to ensure consistency across the app
 enum NavigationFontConfig {
     #if os(iOS)
+
+    // MARK: - Brand display role
+    /// Weight, width and tracking come from `Brand.type.display`; the base size is 32pt
+    /// (Brand minSize is 34) so long settings titles ("Privacy & Security") still fit a
+    /// 402pt iPhone, since UIKit large titles do not shrink. Provisional, see DECISIONS.
+    private static let displayRole = Brand.type.display
+    private static let largeTitleBaseSize: CGFloat = 32
 
     // MARK: - Font Cache
     private static let signposter = OSSignposter(subsystem: "blue.catbird.performance", category: "NavigationFont")
@@ -99,7 +107,7 @@ enum NavigationFontConfig {
             return cached
         }
 
-        let baseLargeTitleSize: CGFloat = 28
+        let baseLargeTitleSize = largeTitleBaseSize
         let scaledSize = fontManager.scaledSize(baseLargeTitleSize)
 
         // Define the OpenType variation axes as hex integers (4-char codes)
@@ -108,12 +116,12 @@ enum NavigationFontConfig {
         let opszAxisID: Int = 0x6F70_737A  // 'opsz' in hex
 
         // Convert FontManager's font design to numeric weight
-        let baseWeight: CGFloat = 700.0 // Bold for large titles
+        let baseWeight = CGFloat(displayRole.weight)  // Brand.type.display weight
         let adjustedWeight = adjustWeightForFontStyle(baseWeight, fontManager: fontManager)
 
         // Create variations dictionary for large title
         let largeTitleVariations: [Int: Any] = [
-            wdthAxisID: 120,  // Width: 120% (expanded)
+            wdthAxisID: displayRole.widthPercent,  // Brand.type.display widthPercent
             wghtAxisID: adjustedWeight,  // Weight: Adjusted based on FontManager
             opszAxisID: Double(scaledSize)  // Optical size matching scaled point size
         ]
@@ -278,6 +286,7 @@ enum NavigationFontConfig {
         // Update large title attributes while preserving other attributes
         var largeTitleAttrs = appearance.largeTitleTextAttributes
         largeTitleAttrs[.font] = largeTitleFont
+        largeTitleAttrs[.kern] = CGFloat(displayRole.trackingEm) * largeTitleFont.pointSize  // Brand.type.display trackingEm
         appearance.largeTitleTextAttributes = largeTitleAttrs
     }
     
@@ -420,7 +429,7 @@ enum NavigationFontConfig {
     #else
     // macOS stubs - navigation bar customization not available
     static func createLargeTitleFont(fontManager: FontManager) -> NSFont {
-        return NSFont.systemFont(ofSize: 28, weight: NSFont.Weight.bold)
+        return NSFont.systemFont(ofSize: 32, weight: NSFont.Weight.heavy)
     }
 
     static func createTitleFont(fontManager: FontManager) -> NSFont {

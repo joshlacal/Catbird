@@ -16,6 +16,7 @@ struct MacOSChatSidebar: View {
   @Binding var searchText: String
 
   var onNewConversation: () -> Void = {}
+  @State private var deviceApproval = DeviceApprovalModel()
 
   private let logger = Logger(subsystem: "blue.catbird", category: "MacOSChatSidebar")
 
@@ -24,10 +25,16 @@ struct MacOSChatSidebar: View {
       if !searchText.isEmpty {
         searchResultsContent
       } else {
+        if appState.isMLSRuntimeAllowed, deviceApproval.copy != nil {
+          Section {
+            DeviceApprovalCard(model: deviceApproval)
+          }
+        }
         conversationListContent
       }
     }
     .listStyle(.sidebar)
+    .modifier(DeviceApprovalTracking(model: deviceApproval))
     .searchable(text: $searchText, placement: .sidebar, prompt: "Search")
     .onChange(of: searchText) { _, newValue in
       appState.chatManager.searchLocal(searchTerm: newValue, currentUserDID: appState.userDID)
@@ -97,7 +104,7 @@ struct MacOSChatSidebar: View {
               VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                   Text(verbatim: profile.displayName ?? profile.handle.description)
-                    .font(.body)
+                    .appFont(AppTextRole.body)
                     .lineLimit(1)
                     .truncationMode(.tail)
                   if let badgeKind = VerificationBadge.kind(
@@ -105,11 +112,11 @@ struct MacOSChatSidebar: View {
                     did: profile.did
                   ) {
                     VerificationBadgeView(kind: badgeKind)
-                      .font(.caption)
+                      .appFont(AppTextRole.caption)
                   }
                 }
                 Text(verbatim: "@\(profile.handle.description)")
-                  .font(.caption)
+                  .appFont(AppTextRole.caption)
                   .foregroundStyle(.secondary)
                   .lineLimit(1)
               }

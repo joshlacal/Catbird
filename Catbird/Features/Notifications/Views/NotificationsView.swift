@@ -326,7 +326,7 @@ struct NotificationsView: View {
           await viewModel.refreshNotifications()
         }
       }
-      .buttonStyle(.borderedProminent)
+      .buttonStyle(.catbird(.primary, size: .md))
       .padding(.top, 8)
     }
     .padding(.horizontal)
@@ -343,7 +343,7 @@ struct NotificationsView: View {
         Text("Load More")
       }
     }
-    .buttonStyle(.bordered)
+    .buttonStyle(.catbird(.tonal, size: .md))
     .disabled(viewModel.isLoadingMore)
     .accessibilityIdentifier("notifications.loadMoreFiltered")
   }
@@ -437,7 +437,7 @@ struct NotificationsView: View {
               Button("Retry") {
                 Task { await viewModel.loadMoreNotifications() }
               }
-              .buttonStyle(.bordered)
+              .buttonStyle(.catbird(.tonal, size: .md))
             }
             .frame(maxWidth: .infinity)
             .padding()
@@ -620,7 +620,7 @@ struct NotificationCard: View, Equatable {
                   hideBadges: appState.preferencesManager.hideVerificationBadges
                 ) {
                   VerificationBadgeView(kind: badgeKind)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                 }
               }
 
@@ -649,7 +649,7 @@ struct NotificationCard: View, Equatable {
       }
     }
     .padding(.leading, 50)
-    .clipShape(RoundedRectangle(cornerRadius: 8))
+    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     .padding(.bottom, 8)
   }
 
@@ -1214,7 +1214,7 @@ struct NotificationCard: View, Equatable {
               HStack(spacing: 8) {
                 Image(systemName: "link")
                   .foregroundStyle(.secondary)
-                  .font(.caption)
+                  .appFont(AppTextRole.caption)
                 
                 Text(external.external.title ?? external.external.uri.uriString())
                   .appBody()
@@ -1510,7 +1510,7 @@ struct NotificationMediaThumbnail: View {
           thumbnail.mediaType == .video ? 
           Image(systemName: "play.fill")
             .foregroundStyle(.white)
-            .font(.system(size: 12, weight: .bold))
+            .appFont(size: 12, weight: .bold)
             .shadow(radius: 2)
           : nil
         )
