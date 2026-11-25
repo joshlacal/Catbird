@@ -9,6 +9,9 @@ import SwiftUI
 
 // MARK: - Design Tokens
 
+// Legacy 3pt-grid tokens. Values are unchanged for existing call sites.
+// New code should use Core/UI/Kit/CatbirdTokens.swift (Space, Radius, Motion, ...).
+
 /// Shared values for custom components. Native Form/List metrics remain system-owned.
 /// Named typography helpers use FontManager so app preferences and Dynamic Type apply.
 struct DesignTokens {
