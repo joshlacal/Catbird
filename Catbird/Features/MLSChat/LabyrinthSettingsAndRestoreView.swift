@@ -144,9 +144,14 @@ struct LabyrinthSettingsAndRestoreView: View {
             .id(LabyrinthResultAnchor.error)
       }
 
+      if needsRestoreFirst {
+        restoreFirstSection
+      }
       backupStatusSection
-      recoveryWarningsSection
-      passkeyPrfSection
+      if !needsRestoreFirst {
+        recoveryWarningsSection
+        passkeyPrfSection
+      }
       otcPairingSection
       recoveryCodeSection
       deviceListSection
@@ -231,6 +236,7 @@ struct LabyrinthSettingsAndRestoreView: View {
       "attention: \(status.recoveryNeedsAttention), generation set: \(status.recoveryGeneration > 0)",
       "code receipt: \(recoveryCodeReceipt != nil), revocation receipt: \(revocationReceipt != nil), unversioned: \(hasUnversionedReceipt)",
       "pending approval: \(isPendingDeviceApproval), devices: \(status.activeDeviceIds.count)",
+      "mailbox space: \(status.mailboxSpaceUri)",
       "directory pending: \(status.pendingDirectoryEpoch.map { String($0) } ?? "none"), stalled: \(status.directoryPublicationStalled), retries: \(status.directoryPublicationRetryCount)",
       "directory error: \(status.directoryPublicationError ?? "none")",
     ].joined(separator: "\n")
@@ -282,7 +288,15 @@ struct LabyrinthSettingsAndRestoreView: View {
         }
         .accessibilityIdentifier("labyrinth-account")
       }
-      if let status {
+      if let status, needsRestoreFirst {
+        DisclosureGroup("Details for Support") {
+          Text(verbatim: supportDetails(status))
+            .font(.caption2.monospaced())
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+            .accessibilityIdentifier("labyrinth-support-details")
+        }
+      } else if let status {
         LabeledContent("Status") {
           Text(Self.backupStatusLabel(enabled: status.backupEnabled, established: status.archiveEstablished))
             .foregroundStyle(status.backupEnabled && status.archiveEstablished ? .green : .secondary)
@@ -293,12 +307,6 @@ struct LabyrinthSettingsAndRestoreView: View {
             .font(.footnote)
             .foregroundStyle(.secondary)
         }
-        LabeledContent("Mailbox Space") {
-          Text(verbatim: status.mailboxSpaceUri)
-            .font(.caption2.monospaced())
-            .lineLimit(1)
-            .truncationMode(.middle)
-        }
         if status.archiveEstablished {
           LabeledContent("Labyrinth Epoch") {
             Text(status.epochSeq, format: .number)
@@ -307,7 +315,7 @@ struct LabyrinthSettingsAndRestoreView: View {
         }
         LabeledContent("Recovery Code Saved") {
           if hasUnacknowledgedRecoveryAttention {
-            Text("Not Ready (Replacement Required)").foregroundStyle(.red)
+            Text("Needs a New Code").foregroundStyle(.orange)
           } else if status.hasRecoveryCode {
             Text("Yes").foregroundStyle(.green)
           } else {
@@ -316,7 +324,7 @@ struct LabyrinthSettingsAndRestoreView: View {
         }
         LabeledContent("Passkey PRF Linked") {
           if hasUnacknowledgedRecoveryAttention {
-            Text("Not Ready (Replacement Required)").foregroundStyle(.red)
+            Text("Set Up Again After a New Code").foregroundStyle(.orange)
           } else if status.hasPasskeyPrf {
             Text("Yes").foregroundStyle(.green)
           } else {
@@ -433,16 +441,18 @@ struct LabyrinthSettingsAndRestoreView: View {
 
   private var recoveryCodeSection: some View {
     Section {
-      Button {
-        self.generateRecoveryCode()
-      } label: {
-        Label("Generate 40-Character Recovery Code", systemImage: "key.fill")
+      if !needsRestoreFirst {
+        Button {
+          self.generateRecoveryCode()
+        } label: {
+          Label("Generate 40-Character Recovery Code", systemImage: "key.fill")
+        }
+        .disabled(
+          coordinator == nil || status == nil || isLoading
+            || hasPersistedDeviceRevocationReceipt || hasPersistedRecoveryCodeReceipt
+        )
+        .accessibilityIdentifier("labyrinth-generate-recovery-code")
       }
-      .disabled(
-        coordinator == nil || status == nil || isLoading
-          || hasPersistedDeviceRevocationReceipt || hasPersistedRecoveryCodeReceipt
-      )
-      .accessibilityIdentifier("labyrinth-generate-recovery-code")
 
       if let generatedRecoveryCode {
         VStack(alignment: .leading, spacing: 6) {
@@ -495,9 +505,33 @@ struct LabyrinthSettingsAndRestoreView: View {
       .disabled(coordinator == nil || isLoading || restoreCodeInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
       .accessibilityIdentifier("labyrinth-restore-from-code")
     } header: {
-      Text("Recovery Code (Optional)")
+      Text(needsRestoreFirst ? "Restore with a Recovery Code" : "Recovery Code (Optional)")
     } footer: {
-      Text("Labyrinth backs up encrypted history to your personal ATProto Space by default. Adding a recovery code lets you restore after losing all devices.")
+      if !needsRestoreFirst {
+        Text("Labyrinth backs up encrypted history to your personal ATProto Space by default. Adding a recovery code lets you restore after losing all devices.")
+      }
+    }
+  }
+
+  /// This device waits for approval and holds no copy of the backup yet. Its own backup
+  /// flags describe an empty local copy, so the screen leads with the restore instead.
+  private var needsRestoreFirst: Bool {
+    isPendingDeviceApproval && status?.archiveEstablished != true
+  }
+
+  private var restoreFirstSection: some View {
+    Section {
+      Button {
+        self.restoreFromPasskeyPrf()
+      } label: {
+        Label("Restore with Passkey", systemImage: "person.badge.key.fill")
+      }
+      .disabled(coordinator == nil || isLoading)
+      .accessibilityIdentifier("labyrinth-restore-passkey-prf")
+    } header: {
+      Text("Restore Your Backup")
+    } footer: {
+      Text("Use the passkey you saved your backup with. If you saved a recovery code instead, enter it below.")
     }
   }
 

@@ -50,11 +50,16 @@ struct DeviceApprovalCopy: Equatable, Sendable {
       guard let first = waiting.first else { return nil }
       let onlyApprover = otherApprovedCount == 0
       if waiting.count == 1 {
+        let title = first.name.map { "\($0) is waiting for approval" }
+          ?? "A new device is waiting for approval"
+        let added = first.name == nil
+          ? first.addedAt.map { "It was added \(day($0, locale: locale, timeZone: timeZone)). " } ?? ""
+          : ""
         let message = onlyApprover
-          ? "Approve it if it’s yours. This is your only approved device, so approve it before you sign out here."
-          : "Approve it if it’s yours, or remove it in Devices if you don’t recognize it."
+          ? "\(added)Approve it if it’s yours. This is your only approved device, so approve it before you sign out here."
+          : "\(added)Approve it if it’s yours, or remove it in Devices if you don’t recognize it."
         return DeviceApprovalCopy(
-          title: "\(first.displayName) is waiting for approval",
+          title: title,
           message: message,
           tone: .attention,
           primary: .approve(first),
@@ -72,36 +77,26 @@ struct DeviceApprovalCopy: Equatable, Sendable {
         secondary: nil
       )
 
-    case .askApprover(let approvers, let selfApprovesAt):
-      let approver = approvers.first?.displayName ?? "your other device"
-      let fallback = restoreQueued
-        ? "Your backup is restored, so if \(approver) isn’t used before \(when(selfApprovesAt)), this device approves itself then."
-        : "If you no longer have \(approver), restore your backup with your passkey and this device approves itself \(when(selfApprovesAt)), as long as \(approver) isn’t used."
-      return DeviceApprovalCopy(
-        title: "Approve this device from \(approver)",
-        message: "Open Catbird on \(approver) and approve this device in Settings > Devices. \(fallback)",
-        tone: .blocking,
-        primary: restoreQueued ? Action.checkAgain : Action.restoreBackup,
-        secondary: restoreQueued ? nil : Action.checkAgain
-      )
-
-    case .approversQuiet(let approvers, let selfApprovesAt):
-      let approver = approvers.first?.displayName ?? "your other device"
+    case .askApprover(let approvers, let selfApprovesAt),
+      .approversQuiet(let approvers, let selfApprovesAt):
+      let approver = approvers.first?.name
       if restoreQueued {
-        if selfApprovesAt <= now {
-          return finishing
-        }
+        if selfApprovesAt <= now { return finishing }
+        let sooner = approver.map { "\($0) can approve this device sooner in Settings > Devices." }
+          ?? "Another device you’re signed in on can approve it sooner in Settings > Devices."
         return DeviceApprovalCopy(
-          title: "This device approves itself \(when(selfApprovesAt))",
-          message: "Your backup is restored. Keep Catbird installed here, and \(approver) can still approve this device sooner from Settings > Devices.",
+          title: "Encrypted chat unlocks \(when(selfApprovesAt))",
+          message: "Your backup is restored. \(sooner)",
           tone: .blocking,
           primary: .checkAgain,
           secondary: nil
         )
       }
+      let orApprove = approver.map { "You can also approve this device from \($0) in Settings > Devices." }
+        ?? "You can also approve it from another device you’re signed in on, in Settings > Devices."
       return DeviceApprovalCopy(
-        title: "Restore your backup to approve this device",
-        message: "\(approver) hasn’t been used lately, so it can’t approve this device right now. Restore your backup with your passkey, and this device approves itself \(when(selfApprovesAt)). \(approver) can still approve it sooner.",
+        title: "Restore your backup to use encrypted chat",
+        message: "Use your passkey or recovery code. \(orApprove)",
         tone: .blocking,
         primary: .restoreBackup,
         secondary: .checkAgain
@@ -109,20 +104,18 @@ struct DeviceApprovalCopy: Equatable, Sendable {
 
     case .noApprover(let holdEndsAt):
       if restoreQueued {
-        if holdEndsAt <= now {
-          return finishing
-        }
+        if holdEndsAt <= now { return finishing }
         return DeviceApprovalCopy(
-          title: "This device approves itself \(when(holdEndsAt))",
-          message: "Your backup is restored. No approved device is left on your account, so this device finishes approving itself then.",
+          title: "Encrypted chat unlocks \(when(holdEndsAt))",
+          message: "Your backup is restored, and this device finishes approving itself then.",
           tone: .blocking,
           primary: .checkAgain,
           secondary: nil
         )
       }
       return DeviceApprovalCopy(
-        title: "Restore your backup to unlock encrypted chat",
-        message: "No approved device is left on your account. Restore your backup with your passkey or recovery code to approve this device.",
+        title: "Restore your backup to use encrypted chat",
+        message: "Use your passkey or recovery code. No other device on your account can approve this one, so your backup is how it gets in.",
         tone: .blocking,
         primary: .restoreBackup,
         secondary: .checkAgain
@@ -131,7 +124,7 @@ struct DeviceApprovalCopy: Equatable, Sendable {
     case .revoked:
       return DeviceApprovalCopy(
         title: "This device was removed from encrypted chat",
-        message: "Sign out and sign back in to add it again. Another approved device, or your backup, then approves it.",
+        message: "Sign out and sign back in to add it again, then restore your backup or approve it from another device.",
         tone: .blocking,
         primary: .reviewDevices,
         secondary: nil
@@ -141,11 +134,19 @@ struct DeviceApprovalCopy: Equatable, Sendable {
 
   private static let finishing = DeviceApprovalCopy(
     title: "Finishing approval",
-    message: "Your backup is restored and the wait is over, so this device is approving itself now.",
+    message: "Your backup is restored, so this device is approving itself now.",
     tone: .blocking,
     primary: .checkAgain,
     secondary: nil
   )
+
+  /// "Nov 20".
+  static func day(_ date: Date, locale: Locale, timeZone: TimeZone) -> String {
+    var style = Date.FormatStyle().month(.abbreviated).day()
+    style.locale = locale
+    style.timeZone = timeZone
+    return date.formatted(style)
+  }
 
   /// "today at 7:15 PM", "tomorrow at 9:00 AM", or "on Thursday, Nov 27 at 7:15 PM".
   static func formatted(
