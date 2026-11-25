@@ -88,6 +88,9 @@ struct ChatTabView: View {
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
   @State private var selectedConvoId: String?
+  /// A first message's new conversation, held while a destination (such as the person's
+  /// profile) is pushed over its draft screen, so finishing the send doesn't pop it.
+  @State private var pendingDraftHandoff: (selection: String, conversation: String)?
   @State private var searchText = ""
   @State private var isShowingErrorAlert = false
   @State private var lastErrorMessage: String?
@@ -492,9 +495,14 @@ struct ChatTabView: View {
           // No chat with this person yet: the chat screen for them, whose first message
           // creates the conversation and then selects it.
           MLSDirectDraftConversationView(recipientDID: recipientDID) { conversationID in
-            // The send can finish after they have moved on; only replace this screen.
+            // The send can finish after they have moved on; only replace this screen, and
+            // wait until anything pushed over it has been popped.
             guard selectedConvoId == convoId else { return }
-            showConversation(conversationID)
+            if chatNavigationPath.wrappedValue.isEmpty {
+              showConversation(conversationID)
+            } else {
+              pendingDraftHandoff = (convoId, conversationID)
+            }
           }
           .id("\(convoId):\(appState.userDID)")
         } else if isMLSConversation(convoId) {
@@ -520,8 +528,14 @@ struct ChatTabView: View {
     }
     // A destination pushed over the conversation takes the screen until it is popped. Observed
     // on the detail stack rather than added to the body's chain (see the note at its alert).
-    .onChange(of: chatNavigationPath.wrappedValue.isEmpty) { _, _ in
+    .onChange(of: chatNavigationPath.wrappedValue.isEmpty) { _, isEmpty in
       publishOpenConversation()
+      if isEmpty, let handoff = pendingDraftHandoff {
+        pendingDraftHandoff = nil
+        if selectedConvoId == handoff.selection {
+          showConversation(handoff.conversation)
+        }
+      }
     }
   }
 
