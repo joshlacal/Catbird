@@ -50,6 +50,9 @@ struct LabyrinthSettingsAndRestoreView: View {
   @State private var confirmedRevokedDeviceSecured = false
   @State private var hasUnversionedReceipt = false
   @State private var lastFlushOutcome: MLSBackupFlushOutcome?
+  /// Whether the backup on the server lists a usable passkey. `nil` until it has been read.
+  @State private var serverHasPasskey: Bool?
+  @State private var isConfirmingAdditionalPasskey = false
 
   private let logger = Logger(subsystem: "blue.catbird", category: "LabyrinthUI")
 
@@ -326,7 +329,7 @@ struct LabyrinthSettingsAndRestoreView: View {
         LabeledContent("Passkey PRF Linked") {
           if hasUnacknowledgedRecoveryAttention {
             Text("Set Up Again After a New Code").foregroundStyle(.orange)
-          } else if status.hasPasskeyPrf {
+          } else if status.hasPasskeyPrf || serverHasPasskey == true {
             Text("Yes").foregroundStyle(.green)
           } else {
             Text("Not Configured").foregroundStyle(.secondary)
@@ -559,6 +562,16 @@ struct LabyrinthSettingsAndRestoreView: View {
       }
       .disabled(coordinator == nil || isLoading || hasUnacknowledgedRecoveryAttention)
       .accessibilityIdentifier("labyrinth-register-passkey-prf")
+      .confirmationDialog(
+        "A passkey is already linked to this backup",
+        isPresented: $isConfirmingAdditionalPasskey,
+        titleVisibility: .visible
+      ) {
+        Button("Add Another Passkey") { self.enrollPasskeyPrf(allowingAdditional: true) }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text("Adding another creates a second passkey. It does not replace the one you already have.")
+      }
 
       Button {
         self.restoreFromPasskeyPrf()
@@ -935,6 +948,8 @@ struct LabyrinthSettingsAndRestoreView: View {
       self.errorMessage = error.localizedDescription
     }
     await self.refreshDeviceMetadata()
+    // Best effort: the row falls back to this device's own record when the server is unreachable.
+    _ = try? await self.passkeyLinkedOnServer(coordinator)
   }
 
   private func generateRecoveryCode() {
@@ -1080,7 +1095,19 @@ struct LabyrinthSettingsAndRestoreView: View {
     }
   }
 
-  private func enrollPasskeyPrf() {
+  /// Reads the backup's recovery methods from the server. Throws when the server cannot be
+  /// read, so a passkey is never created for a backup that cannot record it.
+  private func passkeyLinkedOnServer(_ coordinator: MLSClientCoordinator) async throws -> Bool {
+    // Before the archive exists there is nothing to read; registering creates it.
+    guard status?.archiveEstablished == true else { return false }
+    let linked = LabyrinthPasskeyPolicy.hasUsablePasskey(
+      try await coordinator.listRecoveryMethods().map { ($0.mechanism, $0.revoked) }
+    )
+    self.serverHasPasskey = linked
+    return linked
+  }
+
+  private func enrollPasskeyPrf(allowingAdditional: Bool = false) {
     guard let coordinator else { return }
     guard !hasUnacknowledgedRecoveryAttention else {
       self.errorMessage = String(
@@ -1099,6 +1126,19 @@ struct LabyrinthSettingsAndRestoreView: View {
         guard let anchor = labyrinthPasskeyPresentationAnchor() else {
           throw LabyrinthPasskeyRegistrationError.missingPresentationAnchor
         }
+        // Creating the passkey cannot be undone from here, so check the server first.
+        let alreadyLinked: Bool
+        do {
+          alreadyLinked = try await self.passkeyLinkedOnServer(coordinator)
+        } catch {
+          self.logger.error("Passkey registration stopped before creating a passkey: \(error.localizedDescription)")
+          self.errorMessage = LabyrinthPasskeyPolicy.unreachableBackupMessage(error.localizedDescription)
+          return
+        }
+        if alreadyLinked && !allowingAdditional {
+          self.isConfirmingAdditionalPasskey = true
+          return
+        }
         let registrar = LabyrinthPasskeyRegistrar(anchor: anchor)
         let passkey = try await registrar.register(accountDid: coordinator.accountDid)
         let latest = try await coordinator.registerPasskeyPrf(
@@ -1106,6 +1146,7 @@ struct LabyrinthSettingsAndRestoreView: View {
           prfOutput32: passkey.prfOutput
         )
         self.applyRecoveryStatus(latest)
+        self.serverHasPasskey = true
         self.statusBanner = String(
           localized: "Passkey PRF recovery secret registered.",
           comment: "Success banner after registering a passkey PRF recovery key"
@@ -1335,6 +1376,18 @@ enum LabyrinthPasskeyPolicy {
 
   static func newUserHandle() -> Data {
     SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+  }
+
+  /// Whether the backup's recovery methods include a passkey that has not been revoked.
+  static func hasUsablePasskey(_ methods: [(mechanism: String, revoked: Bool)]) -> Bool {
+    methods.contains { $0.mechanism == "passkey" && !$0.revoked }
+  }
+
+  static func unreachableBackupMessage(_ reason: String) -> String {
+    String(
+      localized: "No passkey was created, because Catbird could not reach your backup to link it. \(reason)",
+      comment: "Error when passkey registration is stopped before a passkey is created; the placeholder is the underlying reason"
+    )
   }
 
   static func isBackupEligible(authenticatorData: Data, registration: Bool) -> Bool {
