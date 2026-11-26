@@ -330,6 +330,42 @@ actor CircleKeyManager {
     }
   }
 
+  /// Spaces alpha Circles. Every key wrapped during the alpha bound the old
+  /// `at://{did}/space/...` form in its AAD, so no device opens those records
+  /// under `at:space/...`. For a Circle this account owns, writes one fresh
+  /// version (reason `manualRotation`) wrapped to the roster, once, so members
+  /// can open new posts again. Devices that already hold the alpha versions
+  /// keep reading older posts; nobody else can.
+  ///
+  /// Owed only where `CircleKeyStore` moved an alpha item (no network call
+  /// otherwise). Skipped when a version newer than the alpha ones already
+  /// opens here (another owner device rekeyed). A member's device, or a
+  /// plaintext Circle, just clears the marker. A failure keeps the marker, so
+  /// the rekey is retried on a later call. Returns whether a version was written.
+  @discardableResult
+  func rekeyAlphaCircleIfNeeded(circle: CircleSummary) async throws -> Bool {
+    try await serialized {
+      let space = circle.uri.uriString()
+      guard let alphaLatest = try await self.store.alphaRekeyAfterVersion(spaceURI: space) else { return false }
+      guard circle.isEncrypted, (try? Self.trustedOwner(circle)) == self.ownerDID else {
+        try await self.store.clearAlphaRekey(spaceURI: space)
+        return false
+      }
+      let remoteLatest = try await self.syncRemote(circle: circle, full: false)
+      if let held = try await self.store.latestVersion(spaceURI: space), held > alphaLatest {
+        try await self.store.clearAlphaRekey(spaceURI: space)
+        return false
+      }
+      let roster = try await self.currentRoster(circle)
+      _ = try await self.rotateUnlocked(
+        circle: circle, memberDIDs: roster, reason: "manualRotation", remoteLatest: remoteLatest
+      )
+      try await self.store.clearAlphaRekey(spaceURI: space)
+      self.logger.notice("Circles: rekeyed an alpha Circle under the at:space/ form")
+      return true
+    }
+  }
+
   // MARK: - Serialization
 
   private func serialized<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) async throws -> T {

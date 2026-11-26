@@ -241,6 +241,22 @@ actor CircleKeyStore {
     try mutate(spaceURI) { $0.migration = nil }
   }
 
+  // MARK: Alpha rekey
+
+  /// The newest key version an item saved during the Spaces alpha held, set
+  /// when that item was moved to the current account form. Those versions
+  /// were wrapped under the old `at://{did}/space/...` form, so no device
+  /// opens their records under `at:space/...`; the owner writes one fresh
+  /// version past this one (`CircleKeyManager.rekeyAlphaCircleIfNeeded`).
+  /// Nil when nothing is owed.
+  func alphaRekeyAfterVersion(spaceURI: String) async throws -> UInt64? {
+    try load(spaceURI).alphaRekeyAfterVersion
+  }
+
+  func clearAlphaRekey(spaceURI: String) async throws {
+    try mutate(spaceURI) { $0.alphaRekeyAfterVersion = nil }
+  }
+
   // MARK: Wipe
 
   /// Returns `true` when at least one Circle key record is stored for `accountDID`.
@@ -287,6 +303,8 @@ actor CircleKeyStore {
     var lastRewrapAt: String?
     var members: [String: UInt64] = [:]
     var migration: Migration?
+    /// See `alphaRekeyAfterVersion(spaceURI:)`.
+    var alphaRekeyAfterVersion: UInt64?
 
     init() {}
 
@@ -297,6 +315,16 @@ actor CircleKeyStore {
       lastRewrapAt = try container.decodeIfPresent(String.self, forKey: .lastRewrapAt)
       members = try container.decodeIfPresent([String: UInt64].self, forKey: .members) ?? [:]
       migration = try container.decodeIfPresent(Migration.self, forKey: .migration)
+      alphaRekeyAfterVersion = try container.decodeIfPresent(UInt64.self, forKey: .alphaRekeyAfterVersion)
+    }
+
+    /// This alpha item, marked as owing a rekey past its newest version.
+    func markedForAlphaRekey() -> Blob {
+      var marked = self
+      if let newest = versions.keys.compactMap(UInt64.init).max() {
+        marked.alphaRekeyAfterVersion = max(alphaRekeyAfterVersion ?? 0, newest)
+      }
+      return marked
     }
 
     /// This item with what only `legacy` holds (alpha-account move): every
@@ -309,6 +337,8 @@ actor CircleKeyStore {
       merged.members.merge(legacy.members) { max($0, $1) }
       merged.lastRewrapAt = lastRewrapAt ?? legacy.lastRewrapAt
       merged.migration = migration ?? legacy.migration
+      let owed = [alphaRekeyAfterVersion, legacy.alphaRekeyAfterVersion].compactMap { $0 }
+      merged.alphaRekeyAfterVersion = owed.max()
       return merged
     }
   }
@@ -339,11 +369,11 @@ actor CircleKeyStore {
         continue
       }
       if let legacyData = try keychain.read(service: Self.keychainService, account: legacyAccount) {
-        var data = legacyData
+        let decoder = JSONDecoder()
+        let legacyBlob = (try? decoder.decode(Blob.self, from: legacyData))?.markedForAlphaRekey()
+        var data = try legacyBlob.map { try JSONEncoder().encode($0) } ?? legacyData
         if let currentData = try keychain.read(service: Self.keychainService, account: account(current)) {
-          let decoder = JSONDecoder()
-          guard let currentBlob = try? decoder.decode(Blob.self, from: currentData),
-                let legacyBlob = try? decoder.decode(Blob.self, from: legacyData)
+          guard let currentBlob = try? decoder.decode(Blob.self, from: currentData), let legacyBlob
           else { continue }
           data = try JSONEncoder().encode(currentBlob.merging(legacy: legacyBlob))
         }
@@ -360,7 +390,7 @@ actor CircleKeyStore {
     var blob = try load(spaceURI)
     change(&blob)
     if blob.versions.isEmpty && blob.pending.isEmpty && blob.members.isEmpty && blob.lastRewrapAt == nil
-      && blob.migration == nil {
+      && blob.migration == nil && blob.alphaRekeyAfterVersion == nil {
       try keychain.delete(service: Self.keychainService, account: account(spaceURI))
       return
     }

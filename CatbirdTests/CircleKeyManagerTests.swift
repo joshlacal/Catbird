@@ -836,6 +836,96 @@ struct CircleKeyManagerTests {
     #expect(try await h.store.pendingRewraps(spaceURI: KeyFixtures.space).isEmpty)
     #expect(await h.transport.puts.map(\.rkey).suffix(3) == ["000003", "000002", "000001"])
   }
+
+  // MARK: Spaces alpha rekey
+
+  private static let alphaSpace = "at://did:plc:alice/space/blue.catbird.circle.encrypted/3enc"
+
+  /// Writes versions 1...n under the alpha account form, as a Spaces alpha
+  /// build left them. `h.store` moves them on its first read.
+  private func seedAlpha(_ h: Harness, versions: ClosedRange<UInt64>, space: String = alphaSpace) async throws {
+    let alpha = CircleKeyStore(accountDID: KeyFixtures.owner.didString(), keychain: h.keychain)
+    for version in versions {
+      try await alpha.store(
+        spaceURI: space, keyVersion: version, circleKey: Data(repeating: UInt8(version), count: 32),
+        createdAt: Date(), reason: version == 1 ? "created" : "manualRotation"
+      )
+    }
+  }
+
+  @Test func alphaCircleOwnerRekeysOnceToTheRoster() async throws {
+    let h = Harness()
+    try await seedAlpha(h, versions: 1...2)
+    await h.transport.setRoster([KeyFixtures.bob, KeyFixtures.carol])
+
+    #expect(try await h.manager.rekeyAlphaCircleIfNeeded(circle: KeyFixtures.circle))
+
+    #expect(await h.transport.puts.map(\.rkey) == ["000003"])
+    #expect(await h.transport.putReasons() == ["manualRotation"])
+    #expect(Set(await h.crypto.wraps.first?.memberDIDs ?? []) == [KeyFixtures.bob.didString(), KeyFixtures.carol.didString()])
+    #expect(try await h.store.latestVersion(spaceURI: KeyFixtures.space) == 3)
+    // The alpha versions stay readable on this device.
+    #expect(try await h.store.key(spaceURI: KeyFixtures.space, keyVersion: 2) == Data(repeating: 2, count: 32))
+    #expect(try await h.store.alphaRekeyAfterVersion(spaceURI: KeyFixtures.space) == nil)
+
+    #expect(try await !h.manager.rekeyAlphaCircleIfNeeded(circle: KeyFixtures.circle))
+    #expect(await h.transport.puts.count == 1)
+  }
+
+  @Test func circleWithoutAlphaItemIsNotRekeyed() async throws {
+    let h = Harness()
+    try await h.seed(versions: 1...2)
+
+    #expect(try await !h.manager.rekeyAlphaCircleIfNeeded(circle: KeyFixtures.circle))
+
+    #expect(await h.transport.getKeysSince.isEmpty)
+    #expect(await h.transport.puts.isEmpty)
+  }
+
+  @Test func alphaCircleAlreadyRekeyedByAnotherOwnerDeviceIsLeftAlone() async throws {
+    let h = Harness()
+    try await seedAlpha(h, versions: 1...2)
+    await h.transport.setKeyEntries([try makeKeyEntry(version: 3, reason: "manualRotation")])
+    await h.crypto.setOpenable([3: Data(repeating: 0x33, count: 32)])
+
+    #expect(try await !h.manager.rekeyAlphaCircleIfNeeded(circle: KeyFixtures.circle))
+
+    #expect(await h.transport.puts.isEmpty)
+    #expect(try await h.store.latestVersion(spaceURI: KeyFixtures.space) == 3)
+    #expect(try await h.store.alphaRekeyAfterVersion(spaceURI: KeyFixtures.space) == nil)
+  }
+
+  @Test func memberDeviceNeverRekeysAnAlphaCircle() async throws {
+    let h = Harness()
+    let bobsSpace = try SpaceRef(uriString: "at:space/did:plc:bob/blue.catbird.circle.encrypted/3enc")
+    let bobsCircle = BlueCatbirdCircleDefs.CircleSummary(
+      uri: bobsSpace, circleId: try TID(tidString: "3l7familycirc"), name: "Bob's",
+      owner: KeyFixtures.bob, memberCount: 2, muted: nil
+    )
+    try await seedAlpha(h, versions: 1...1, space: "at://did:plc:bob/space/blue.catbird.circle.encrypted/3enc")
+
+    #expect(try await !h.manager.rekeyAlphaCircleIfNeeded(circle: bobsCircle))
+
+    #expect(await h.transport.puts.isEmpty)
+    #expect(try await h.store.alphaRekeyAfterVersion(spaceURI: bobsSpace.uriString()) == nil)
+    #expect(try await h.store.key(spaceURI: bobsSpace.uriString(), keyVersion: 1) == Data(repeating: 1, count: 32))
+  }
+
+  @Test func failedAlphaRekeyIsRetried() async throws {
+    let h = Harness()
+    try await seedAlpha(h, versions: 1...1)
+    await h.transport.setRoster([KeyFixtures.bob])
+    await h.crypto.setFailingVersions([2])
+
+    await #expect(throws: (any Error).self) {
+      try await h.manager.rekeyAlphaCircleIfNeeded(circle: KeyFixtures.circle)
+    }
+    #expect(try await h.store.alphaRekeyAfterVersion(spaceURI: KeyFixtures.space) == 1)
+
+    await h.crypto.setFailingVersions([])
+    #expect(try await h.manager.rekeyAlphaCircleIfNeeded(circle: KeyFixtures.circle))
+    #expect(await h.transport.puts.map(\.rkey) == ["000002"])
+  }
 }
 
 // MARK: - CircleKeyStore
@@ -972,6 +1062,29 @@ struct CircleKeyStoreTests {
     #expect(try await store.pendingRewraps(spaceURI: space).map(\.did) == ["__acl__:did:plc:erin", "did:plc:bob"])
     #expect(try await store.joinedAtVersions(spaceURI: space) == ["did:plc:carol": 3, "did:plc:dave": 4])
     #expect(try keychain.accounts(service: CircleKeyStore.keychainService) == ["did:plc:alice|\(space)"])
+  }
+
+  @Test func movedAlphaItemOwesOneRekeyPastItsNewestVersion() async throws {
+    let keychain = InMemoryCircleKeychain()
+    let legacySpace = "at://did:plc:alice/space/blue.catbird.circle.encrypted/3enc"
+    let alpha = CircleKeyStore(accountDID: "did:plc:alice", keychain: keychain)
+    for version in UInt64(1)...3 {
+      try await alpha.store(
+        spaceURI: legacySpace, keyVersion: version, circleKey: Data(repeating: UInt8(version), count: 32),
+        createdAt: Date(), reason: "created"
+      )
+    }
+
+    let store = CircleKeyStore(accountDID: "did:plc:alice", keychain: keychain)
+    #expect(try await store.alphaRekeyAfterVersion(spaceURI: space) == 3)
+    try await store.clearAlphaRekey(spaceURI: space)
+    #expect(try await store.alphaRekeyAfterVersion(spaceURI: space) == nil)
+    #expect(try await store.allVersions(spaceURI: space) == [1, 2, 3])
+
+    // An item first written in the current form owes nothing.
+    let fresh = "at:space/did:plc:alice/blue.catbird.circle.encrypted/3new"
+    try await store.store(spaceURI: fresh, keyVersion: 1, circleKey: Data(repeating: 9, count: 32), createdAt: Date(), reason: "created")
+    #expect(try await store.alphaRekeyAfterVersion(spaceURI: fresh) == nil)
   }
 
   @Test func legacySpaceURIConversion() {
