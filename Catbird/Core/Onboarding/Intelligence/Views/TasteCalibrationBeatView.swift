@@ -27,12 +27,7 @@ struct TasteCalibrationBeatView: View {
   private var heroHeader: some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack {
-        Label("Tune Your Signal", systemImage: "slider.horizontal.below.sun.max")
-          .font(.caption.weight(.semibold))
-          .foregroundStyle(Color.accentColor)
-          .padding(.horizontal, 10)
-          .padding(.vertical, 5)
-          .background(Color.accentColor.opacity(0.12), in: Capsule())
+        CatbirdBadge(Text("Tune Your Signal"), systemImage: "slider.horizontal.below.sun.max", tone: .accent)
 
         Spacer()
 
@@ -43,7 +38,8 @@ struct TasteCalibrationBeatView: View {
             Text("Skip to Preview", comment: "Button to skip taste duels and jump to timeline preview.")
             Image(systemName: "arrow.forward")
           }
-          .font(.caption.weight(.semibold))
+          .appFont(AppTextRole.caption)
+          .fontWeight(.semibold)
           .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain)
@@ -51,10 +47,11 @@ struct TasteCalibrationBeatView: View {
       }
 
       Text("Shape Your Daily Rhythm")
-        .font(.title2.weight(.bold))
+        .appFont(AppTextRole.title2)
+        .fontWeight(.bold)
 
       Text("Set your preferred posting pace and compare adjacent sub-scenes so we pick the right balance of makers, anchors, and conversationalists.")
-        .font(.subheadline)
+        .appFont(AppTextRole.subheadline)
         .foregroundStyle(.secondary)
     }
   }
@@ -63,7 +60,8 @@ struct TasteCalibrationBeatView: View {
     VStack(alignment: .leading, spacing: 14) {
       VStack(alignment: .leading, spacing: 8) {
         Label("Daily Feed Pace", systemImage: "metronome.fill")
-          .font(.subheadline.weight(.semibold))
+          .appFont(AppTextRole.subheadline)
+          .fontWeight(.semibold)
 
         HStack(spacing: 8) {
           PaceOptionChip(
@@ -96,7 +94,7 @@ struct TasteCalibrationBeatView: View {
 
         if let paceFootnote = viewModel.paceFootnote {
           Text(paceFootnote)
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("intel.pace.footnote")
@@ -116,13 +114,15 @@ struct TasteCalibrationBeatView: View {
         VStack(alignment: .leading, spacing: 3) {
           HStack(spacing: 6) {
             Image(systemName: "arrow.2.squarepath")
-              .font(.caption.weight(.bold))
+              .appFont(AppTextRole.caption)
+              .fontWeight(.bold)
               .foregroundStyle(Color.accentColor)
             Text("Smart Repost Tamer")
-              .font(.subheadline.weight(.semibold))
+              .appFont(AppTextRole.subheadline)
+              .fontWeight(.semibold)
           }
           Text("Follow prolific curators in Originals-Only mode so one loud reposter never floods your timeline.")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
         }
       }
@@ -141,7 +141,7 @@ struct TasteCalibrationBeatView: View {
       VStack(spacing: 12) {
         ProgressView()
         Text("Preparing quick taste comparisons…")
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
           .foregroundStyle(.secondary)
       }
       .frame(maxWidth: .infinity)
@@ -157,21 +157,22 @@ struct TasteCalibrationBeatView: View {
           } icon: {
             Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right.fill")
           }
-          .font(.caption.weight(.bold))
+          .appFont(AppTextRole.caption)
+          .fontWeight(.bold)
           .foregroundStyle(Color.accentColor)
 
           Spacer()
 
           Text("Tap the vibe you want more of")
-            .font(.caption2)
+            .appFont(AppTextRole.caption2)
             .foregroundStyle(.secondary)
         }
 
         Text(duel.prompt)
-          .font(.headline)
+          .appFont(AppTextRole.headline)
 
         Text(Self.duelKindSubtitle(for: duel.kind))
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .foregroundStyle(.secondary)
 
         if horizontalSizeClass == .regular {
@@ -217,12 +218,12 @@ struct TasteCalibrationBeatView: View {
     } else {
       VStack(spacing: 12) {
         Image(systemName: "checkmark.seal.fill")
-          .font(.system(size: 36))
+          .appFont(size: 36, weight: .regular, relativeTo: .body)
           .foregroundStyle(Color.accentColor)
         Text("Your Scene Mix Is Crisp")
-          .font(.headline)
+          .appFont(AppTextRole.headline)
         Text("No extra disambiguation needed — jump straight into a live preview of your future feed.")
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
       }
@@ -280,16 +281,10 @@ struct TasteCalibrationBeatView: View {
         } label: {
           HStack(spacing: 8) {
             Text("Preview My Future Feed", comment: "Button to advance from taste calibration to timeline preview.")
-              .font(.headline)
             Image(systemName: "arrow.forward.circle.fill")
-              .font(.headline)
           }
-          .foregroundStyle(.white)
-          .frame(maxWidth: .infinity)
-          .frame(height: 50)
-          .background(Color.accentColor, in: Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
         .accessibilityIdentifier("intel.calibration.previewButton")
       }
     }
@@ -337,12 +332,14 @@ private struct PaceOptionChip: View {
       VStack(spacing: 4) {
         HStack(spacing: 4) {
           Image(systemName: symbol)
-            .font(.caption.weight(.semibold))
+            .appFont(AppTextRole.caption)
+            .fontWeight(.semibold)
           Text(title)
-            .font(.subheadline.weight(.semibold))
+            .appFont(AppTextRole.subheadline)
+            .fontWeight(.semibold)
         }
         Text(subtitle)
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .opacity(0.85)
       }
       .foregroundStyle(isSelected ? .white : .primary)
@@ -350,7 +347,7 @@ private struct PaceOptionChip: View {
       .padding(.vertical, 10)
       .padding(.horizontal, 6)
       .background(
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
+        Radius.md.shape
           .fill(isSelected ? Color.accentColor : Color.secondary.opacity(0.1))
       )
     }
@@ -364,23 +361,24 @@ private struct DuelOptionCardView: View {
   let posts: [HydratedSamplePost]
   let onPickThis: () -> Void
 
-  @Environment(\.displayScale) private var displayScale
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       HStack(alignment: .top, spacing: 8) {
         Text(verbatim: badge)
-          .font(.subheadline.weight(.heavy))
+          .appFont(AppTextRole.subheadline)
+          .fontWeight(.heavy)
           .foregroundStyle(.white)
           .frame(width: 26, height: 26)
           .background(Color.accentColor, in: Circle())
 
         VStack(alignment: .leading, spacing: 2) {
           Text(side.title)
-            .font(.subheadline.weight(.bold))
+            .appFont(AppTextRole.subheadline)
+            .fontWeight(.bold)
             .foregroundStyle(.primary)
           Text(side.subtitle)
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
             .lineLimit(3)
         }
@@ -390,46 +388,20 @@ private struct DuelOptionCardView: View {
 
       if !side.sceneTitle.isEmpty {
         HStack(spacing: 6) {
-          Text(side.sceneTitle)
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(Color.accentColor)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Color.accentColor.opacity(0.1), in: Capsule())
+          CatbirdBadge(Text(verbatim: side.sceneTitle), tone: .accent)
         }
       }
 
       if !posts.isEmpty {
         VStack(alignment: .leading, spacing: 8) {
           ForEach(posts) { post in
-            VStack(alignment: .leading, spacing: 6) {
-              HStack(spacing: 8) {
-                AvatarThumbView(
-                  url: post.authorAvatarURL,
-                  fallbackText: post.authorDisplayName,
-                  size: 22,
-                  scale: displayScale
-                )
-                Text(post.authorDisplayName)
-                  .font(.caption.weight(.semibold))
-                  .lineLimit(1)
-                Text(verbatim: "@\(post.authorHandle)")
-                  .font(.caption2)
-                  .foregroundStyle(.secondary)
-                  .lineLimit(1)
-              }
-              if !post.text.isEmpty {
-                Text(post.text)
-                  .font(.caption)
-                  .foregroundStyle(.primary)
-                  .lineLimit(3)
-              }
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-              RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.primary.opacity(0.04))
+            CompactPostCard(
+              avatarURL: post.authorAvatarURL,
+              displayName: post.authorDisplayName,
+              handle: post.authorHandle,
+              text: post.text,
+              did: post.authorDID,
+              lineLimit: 3
             )
           }
         }
@@ -438,27 +410,14 @@ private struct DuelOptionCardView: View {
       Button(action: onPickThis) {
         HStack(spacing: 6) {
           Text("Choose Option \(badge)", comment: "Button to select option A or B in a taste duel — variable is letter badge A or B.")
-            .font(.caption.weight(.semibold))
           Image(systemName: "hand.thumbsup.fill")
-            .font(.caption2)
         }
-        .foregroundStyle(Color.accentColor)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-        .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.catbird(.tonal, size: .md, fullWidth: true))
     }
     .padding(14)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(
-      RoundedRectangle(cornerRadius: 18, style: .continuous)
-        .fill(Color.secondary.opacity(0.07))
-    )
-    .overlay(
-      RoundedRectangle(cornerRadius: 18, style: .continuous)
-        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-    )
+    .catbirdCard(.panel, radius: .lg)
   }
 }
 
@@ -472,18 +431,9 @@ private struct DuelChoiceButton: View {
     Button(action: action) {
       HStack(spacing: 6) {
         Image(systemName: symbol)
-          .font(.subheadline.weight(.semibold))
         Text(title)
-          .font(.subheadline.weight(.semibold))
       }
-      .foregroundStyle(prominent ? .white : .primary)
-      .frame(maxWidth: .infinity)
-      .frame(height: prominent ? 44 : 38)
-      .background(
-        Capsule()
-          .fill(prominent ? Color.accentColor : Color.secondary.opacity(0.14))
-      )
     }
-    .buttonStyle(.plain)
+    .buttonStyle(.catbird(prominent ? .primary : .tonal, size: .md, fullWidth: true))
   }
 }

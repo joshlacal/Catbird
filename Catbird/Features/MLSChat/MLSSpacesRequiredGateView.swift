@@ -101,12 +101,12 @@ struct MLSSpacesRequiredGateView: View {
 
       VStack(spacing: 8) {
         Text(headlineText)
-          .font(.title3)
+          .appFont(AppTextRole.title3)
           .bold()
           .multilineTextAlignment(.center)
 
         Text(bodyText)
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
           .padding(.horizontal, 24)
@@ -114,7 +114,7 @@ struct MLSSpacesRequiredGateView: View {
 
       if eligibility.blueskyDmsAvailable {
         Text("Your Bluesky messages still work as usual.")
-          .font(.footnote)
+          .appFont(AppTextRole.footnote)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
           .padding(.horizontal, 24)
@@ -132,7 +132,7 @@ struct MLSSpacesRequiredGateView: View {
               Text("Allow Access")
             }
           }
-          .buttonStyle(.borderedProminent)
+          .buttonStyle(.catbird(.primary, fullWidth: true))
           .disabled(isRequestingPermissions || isRefreshing)
           .accessibilityIdentifier("mls-spaces-allow-access")
         }
@@ -148,7 +148,7 @@ struct MLSSpacesRequiredGateView: View {
               Text("Check Again")
             }
           }
-          .buttonStyle(.bordered)
+          .buttonStyle(.catbird(.tonal, fullWidth: true))
           .disabled(isRefreshing || isRequestingPermissions)
           .accessibilityIdentifier("mls-spaces-check-again")
         }
@@ -156,7 +156,7 @@ struct MLSSpacesRequiredGateView: View {
 
       if let permissionFailure {
         Text(permissionFailure.message)
-          .font(.footnote)
+          .appFont(AppTextRole.footnote)
           .foregroundStyle(.red)
           .multilineTextAlignment(.center)
           .padding(.horizontal, 24)

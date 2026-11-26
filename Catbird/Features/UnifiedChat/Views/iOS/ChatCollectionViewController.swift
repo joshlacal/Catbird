@@ -399,7 +399,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       cell.contentConfiguration = UIHostingConfiguration {
         ChatTranscriptContent(cell: cell) {
           Text(date, format: .dateTime.month().day().year())
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)

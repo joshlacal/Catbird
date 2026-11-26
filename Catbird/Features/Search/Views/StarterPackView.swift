@@ -297,11 +297,8 @@ struct StarterPackView: View {
                 }
             } label: {
                 Text("Try Again")
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(Capsule().fill(Color.accentColor))
-                    .foregroundColor(.white)
             }
+            .buttonStyle(.catbird(.primary, size: .md))
             .padding(.top, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -330,11 +327,8 @@ struct StarterPackView: View {
                 }
             } label: {
                 Text("Go Back")
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(Capsule().fill(Color.accentColor))
-                    .foregroundColor(.white)
             }
+            .buttonStyle(.catbird(.primary, size: .md))
             .padding(.top, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -556,15 +550,8 @@ struct StarterPackView: View {
                         }
                     }
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(
-                    Capsule()
-                        .fill(allFollowed ? Color.gray.opacity(0.3) : Color.accentColor)
-                )
-                .foregroundColor(allFollowed ? .secondary : .white)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.catbird(allFollowed ? .tonal : .primary, size: .md, fullWidth: true, isLoading: isFollowingAll))
             .disabled(isFollowingAll || allFollowed)
             .padding(.horizontal)
         }
@@ -726,27 +713,11 @@ struct StarterPackView: View {
                 Spacer()
                 
                 if !isSelf {
-                    Button {
+                    FollowButton(state: isFollowing ? .following : .notFollowing, size: .compact) {
                         Task {
                             await toggleMemberFollow(did: didString, isFollowing: isFollowing)
                         }
-                    } label: {
-                        Text(
-                            isFollowing
-                                ? LocalizedStringResource("Following", comment: "Button label indicating the user is currently following this starter pack member")
-                                : LocalizedStringResource("Follow", comment: "Button action to follow a starter pack member")
-                        )
-                            .appFont(AppTextRole.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(isFollowing ? .secondary : .white)
-                            .padding(.vertical, 5)
-                            .padding(.horizontal, 12)
-                            .background(
-                                Capsule()
-                                    .fill(isFollowing ? Color.gray.opacity(0.2) : Color.accentColor)
-                            )
                     }
-                    .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal)

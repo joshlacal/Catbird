@@ -163,7 +163,7 @@ struct SettingsView: View {
                     if let profileError { Text(profileError).appFont(AppTextRole.caption).foregroundStyle(Color.secondary) }
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "chevron.forward").font(.footnote.weight(.semibold)).foregroundStyle(Color(platformColor: PlatformColor.platformTertiaryLabel)).accessibilityHidden(true)
+                Image(systemName: "chevron.forward").appFont(AppTextRole.footnote).fontWeight(.semibold).foregroundStyle(Color(platformColor: PlatformColor.platformTertiaryLabel)).accessibilityHidden(true)
             }
         }
         .accessibilityIdentifier("settings.accountSwitcher")

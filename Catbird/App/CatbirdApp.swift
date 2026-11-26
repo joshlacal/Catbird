@@ -1126,7 +1126,9 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
       ) { scene in
         Group {
           #if DEBUG
-          if ConversationKindUIFixture.isRequested {
+          if UserDefaults.standard.bool(forKey: "CatbirdKitGallery") {
+            CatbirdKitGallery()
+          } else if ConversationKindUIFixture.isRequested {
             ConversationKindUIFixture()
           } else if isEncryptedRequestUIFixture {
             MLSEncryptedRequestUIFixture()

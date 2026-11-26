@@ -48,7 +48,7 @@ struct StarterPackProfilesStep: View {
             }
             .padding(10)
             .background(Color.systemGray6)
-            .cornerRadius(10)
+            .catbirdClip(.md)
             .padding(.horizontal)
             .padding(.vertical, 8)
             
@@ -101,7 +101,7 @@ struct StarterPackProfilesStep: View {
             } else if searchResults.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "person.crop.circle.badge.questionmark")
-                        .font(.system(size: 36))
+                        .appFont(size: 36)
                         .foregroundColor(.secondary)
                     Text("No profiles found")
                         .appFont(AppTextRole.subheadline)
@@ -155,7 +155,7 @@ struct StarterPackProfilesStep: View {
                 } label: {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.green)
-                        .font(.title3)
+                        .appFont(AppTextRole.title3)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text("Remove \(profile.displayName ?? profile.handle.description)", comment: "Accessibility label on button to remove a profile from the starter pack. Placeholder is the person's name or handle."))
@@ -165,7 +165,7 @@ struct StarterPackProfilesStep: View {
                 } label: {
                     Image(systemName: "plus.circle.fill")
                         .foregroundColor(canAdd ? Color.accentColor : Color.gray)
-                        .font(.title3)
+                        .appFont(AppTextRole.title3)
                 }
                 .buttonStyle(.plain)
                 .disabled(!canAdd)
@@ -182,7 +182,7 @@ struct StarterPackProfilesStep: View {
             if draft.profiles.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "person.3")
-                        .font(.system(size: 40))
+                        .appFont(size: 40)
                         .foregroundColor(.secondary)
                     Text("No People Added Yet")
                         .appFont(AppTextRole.headline)
@@ -220,7 +220,7 @@ struct StarterPackProfilesStep: View {
                                 draft.removeProfile(did: profile.did)
                             } label: {
                                 Image(systemName: "xmark")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .foregroundColor(.secondary)
                                     .padding(6)
                                     .background(Circle().fill(Color.systemGray5))

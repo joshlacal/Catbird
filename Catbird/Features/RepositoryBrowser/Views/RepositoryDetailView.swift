@@ -137,7 +137,7 @@ struct RepositoryDetailView: View {
                 .progressViewStyle(CircularProgressViewStyle())
 
             Text("Loading Repository...")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
                 .foregroundColor(.secondary)
         }
         .frame(maxHeight: .infinity)
@@ -148,11 +148,11 @@ struct RepositoryDetailView: View {
     private var errorView: some View {
         VStack(spacing: 20) {
             Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 64))
+                .appFont(size: 64)
                 .foregroundColor(.orange)
 
             Text("Repository Not Found")
-                .font(.title2)
+                .appFont(AppTextRole.title2)
                 .fontWeight(.semibold)
 
             Text("The requested repository could not be loaded. It may have been deleted or corrupted.")
@@ -162,7 +162,7 @@ struct RepositoryDetailView: View {
             Button("Retry") {
                 loadRepository()
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.catbird(.tonal))
         }
         .padding()
         .frame(maxHeight: .infinity)
@@ -216,11 +216,11 @@ private struct RepositoryOverviewView: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(verbatim: repository.userHandle)
-                                .font(.title)
+                                .appFont(AppTextRole.title1)
                                 .fontWeight(.bold)
 
                             Text(verbatim: repository.userDID)
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
                         }
@@ -231,7 +231,7 @@ private struct RepositoryOverviewView: View {
                     }
 
                     Text("Parsed \(repository.parsingAgeDescription)", comment: "Relative time label showing when the repository backup was parsed, e.g. 'Parsed 2 hr. ago'.")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundColor(.secondary)
                 }
 
@@ -272,7 +272,7 @@ private struct RepositoryOverviewView: View {
                 // Parsing information
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Parsing Information")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
 
                     LazyVGrid(columns: [
                         GridItem(.flexible()),
@@ -291,7 +291,7 @@ private struct RepositoryOverviewView: View {
                 if let stats = detailStats {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Content Breakdown")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
 
                         ContentBreakdownChart(stats: stats)
                     }
@@ -300,7 +300,7 @@ private struct RepositoryOverviewView: View {
                         ProgressView()
                             .scaleEffect(0.8)
                         Text("Loading detailed statistics...")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                     }
                     .padding()
@@ -310,7 +310,7 @@ private struct RepositoryOverviewView: View {
                 if let commit = repository.repositoryCommit {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Repository Information")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
 
                         VStack(alignment: .leading, spacing: 4) {
                             Text(verbatim: "Commit: \(commit)")
@@ -318,13 +318,13 @@ private struct RepositoryOverviewView: View {
 
                             if let lastModified = repository.repositoryLastModified {
                                 Text("Last Modified: \(lastModified.formatted(date: .abbreviated, time: .omitted))", comment: "Label showing the last modified date of the repository.")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .foregroundColor(.secondary)
                             }
                         }
                         .padding()
                         .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .clipShape(Radius.sm.shape)
                     }
                 }
 
@@ -332,7 +332,7 @@ private struct RepositoryOverviewView: View {
                 if !repository.parsingLogs.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Parsing Logs")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
 
                         ScrollView(.horizontal) {
                             Text(verbatim: repository.parsingLogs)
@@ -341,7 +341,7 @@ private struct RepositoryOverviewView: View {
                         }
                         .frame(maxHeight: 100)
                         .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .clipShape(Radius.sm.shape)
                     }
                 }
             }
@@ -399,12 +399,12 @@ private struct RepositoryDetailHeader: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("REPOSITORY BROWSER")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .fontWeight(.semibold)
                     .foregroundColor(.orange)
 
                 Text("Browsing parsing results. Data accuracy not guaranteed.")
-                    .font(.caption2)
+                    .appFont(AppTextRole.caption2)
                     .foregroundColor(.secondary)
             }
 
@@ -426,14 +426,14 @@ private struct StatCard: View {
                 Image(systemName: icon)
                     .foregroundColor(color)
                 Text(title)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                 Spacer()
             }
 
             HStack {
                 Text(verbatim: value)
-                    .font(.title2)
+                    .appFont(AppTextRole.title2)
                     .fontWeight(.bold)
                     .foregroundColor(color)
                 Spacer()
@@ -441,7 +441,7 @@ private struct StatCard: View {
         }
         .padding()
         .background(color.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(Radius.sm.shape)
     }
 }
 
@@ -452,16 +452,16 @@ private struct InfoItem: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundColor(.secondary)
             Text(verbatim: value)
-                .font(.body)
+                .appFont(AppTextRole.body)
                 .fontWeight(.medium)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
         .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(Radius.sm.shape)
     }
 }
 
@@ -469,18 +469,7 @@ private struct StatusBadge: View {
     let status: RepositoryParsingStatus
 
     var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: status.systemImage)
-                .font(.caption2)
-            Text(status.displayName)
-                .font(.caption2)
-                .fontWeight(.medium)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color(status.color).opacity(0.2))
-        .foregroundColor(Color(status.color))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        CatbirdBadge(Text(status.displayName), systemImage: status.systemImage, tone: status.badgeTone)
     }
 }
 
@@ -525,7 +514,7 @@ private struct ContentBreakdownBar: View {
                     .frame(width: calculateWidth(for: segment.1))
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .clipShape(Radius.xs.shape)
     }
 
     private func calculateWidth(for value: Int) -> CGFloat {
@@ -550,7 +539,7 @@ private struct LegendItem: View {
                 .fill(color)
                 .frame(width: 8, height: 8)
             Text(label)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
         }
     }
 }

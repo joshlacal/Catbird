@@ -49,7 +49,7 @@ struct ListLoadFailureView: View {
       Text(LoadFailureCopy.suggestion(for: error))
     } actions: {
       Button("Try Again", action: onRetry)
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.catbird(.primary))
     }
   }
 }
@@ -65,8 +65,7 @@ struct ListPageFailureRow: View {
         .foregroundStyle(Color.secondary)
         .multilineTextAlignment(.center)
       Button("Try Again", action: onRetry)
-        .buttonStyle(.bordered)
-        .controlSize(.small)
+        .buttonStyle(.catbird(.tonal, size: .sm))
     }
     .frame(maxWidth: .infinity)
     .padding(.vertical, 8)

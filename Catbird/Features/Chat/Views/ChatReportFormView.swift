@@ -59,7 +59,7 @@ struct ChatReportFormView: View {
       if let subtitle {
         Section {
           Text(subtitle)
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
             .foregroundStyle(.secondary)
         }
       }
@@ -72,10 +72,10 @@ struct ChatReportFormView: View {
             HStack {
               VStack(alignment: .leading, spacing: 2) {
                 Text(reason.title)
-                  .font(.body)
+                  .appFont(AppTextRole.body)
                   .foregroundStyle(.primary)
                 Text(reason.description)
-                  .font(.caption)
+                  .appFont(AppTextRole.caption)
                   .foregroundStyle(.secondary)
               }
               Spacer()
@@ -98,7 +98,7 @@ struct ChatReportFormView: View {
       if let errorMessage {
         Section {
           Text(errorMessage)
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.red)
         }
       }

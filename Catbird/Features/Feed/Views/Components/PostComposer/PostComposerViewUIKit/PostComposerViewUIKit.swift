@@ -162,7 +162,7 @@ struct PostComposerViewUIKit: View {
           Text(initializationError)
         } actions: {
           Button("Close") { dismiss() }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.catbird(.primary))
         }
       } else {
           ProgressView().progressViewStyle(.circular)

@@ -40,7 +40,7 @@ public struct StarterPackLandingView: View {
             ZStack {
                 if isLoading {
                     ProgressView("Loading starter pack…")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundStyle(.secondary)
                 } else if let error = errorMessage {
                     unavailableView(message: error)
@@ -102,12 +102,12 @@ public struct StarterPackLandingView: View {
                         
                         if let displayName = pack.creator.displayName, !displayName.isEmpty {
                             Text("Curated by \(displayName)", comment: "Attribution showing who created the starter pack. Placeholder is the creator's display name.")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         } else {
                             Text("Curated by @\(pack.creator.handle.description)", comment: "Attribution showing who created the starter pack when only their handle is available. Placeholder is the creator's handle.")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
@@ -128,14 +128,14 @@ public struct StarterPackLandingView: View {
                             Text("Starter Pack", comment: "Fallback title when a starter pack has no custom name.")
                         }
                     }
-                        .font(.title)
+                        .appFont(AppTextRole.title1)
                         .fontWeight(.bold)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
                     
                     if let description = packDesc, !description.isEmpty {
                         Text(description)
-                            .font(.body)
+                            .appFont(AppTextRole.body)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 24)
@@ -146,9 +146,10 @@ public struct StarterPackLandingView: View {
                 HStack(spacing: 32) {
                     VStack(spacing: 4) {
                         Text(totalMemberCount, format: .number)
-                            .font(.title2.bold())
+                            .appFont(AppTextRole.title2)
+                            .fontWeight(.bold)
                         Text("People", comment: "Stat label below the member count in a starter pack.")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }
                     
@@ -156,9 +157,10 @@ public struct StarterPackLandingView: View {
                         Divider().frame(height: 32)
                         VStack(spacing: 4) {
                             Text(feeds.count, format: .number)
-                                .font(.title2.bold())
+                                .appFont(AppTextRole.title2)
+                                .fontWeight(.bold)
                             Text("Feeds", comment: "Stat label below the custom feed count in a starter pack.")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -167,9 +169,10 @@ public struct StarterPackLandingView: View {
                         Divider().frame(height: 32)
                         VStack(spacing: 4) {
                             Text(joinedCount, format: .number)
-                                .font(.title2.bold())
+                                .appFont(AppTextRole.title2)
+                                .fontWeight(.bold)
                             Text("Joined", comment: "Stat label below the count of users who joined via this starter pack.")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -177,13 +180,13 @@ public struct StarterPackLandingView: View {
                 .padding(.vertical, 12)
                 .padding(.horizontal, 24)
                 .background(Color.secondary.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 
                 // Sampled Members Section
                 if !sampledMembers.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Included Accounts")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                             .padding(.horizontal, 24)
                         
                         LazyVStack(spacing: 8) {
@@ -199,7 +202,7 @@ public struct StarterPackLandingView: View {
                 if let feeds = pack.feeds, !feeds.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Included Feeds")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                             .padding(.horizontal, 24)
                         
                         ForEach(feeds, id: \.uri) { feed in
@@ -213,24 +216,20 @@ public struct StarterPackLandingView: View {
                 VStack(spacing: 12) {
                     Button(action: joinStarterPackAction) {
                         Text("Join This Starter Pack")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 52)
-                            .background(Color.accentColor)
-                            .foregroundColor(.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                            .appFont(AppTextRole.headline)
                     }
+                    .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
                     
                     Button(action: signinWithPackAction) {
                         Text("Already have an account? Sign in")
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                             .foregroundColor(.primary)
                     }
                     .padding(.top, 2)
                     
                     Button(action: signupWithoutPackAction) {
                         Text("Create an account without this starter pack")
-                            .font(.footnote)
+                            .appFont(AppTextRole.footnote)
                             .foregroundColor(.secondary)
                     }
                     .padding(.top, 2)
@@ -262,16 +261,18 @@ public struct StarterPackLandingView: View {
                     .frame(width: 40, height: 40)
                     .overlay(
                         Text(member.displayName?.prefix(1) ?? member.handle.description.prefix(1))
-                            .font(.caption.bold())
+                            .appFont(AppTextRole.caption)
+                            .fontWeight(.bold)
                     )
             }
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(member.displayName ?? member.handle.description)
-                    .font(.subheadline.bold())
+                    .appFont(AppTextRole.subheadline)
+                    .fontWeight(.bold)
                     .lineLimit(1)
                 Text(verbatim: "@\(member.handle.description)")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -288,13 +289,13 @@ public struct StarterPackLandingView: View {
                     if let image = state.image {
                         image.resizable().scaledToFill()
                     } else {
-                        RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.2))
+                        RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.secondary.opacity(0.2))
                     }
                 }
                 .frame(width: 40, height: 40)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             } else {
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Color.accentColor.opacity(0.2))
                     .frame(width: 40, height: 40)
                     .overlay(Image(systemName: "number").foregroundStyle(.accent))
@@ -302,11 +303,12 @@ public struct StarterPackLandingView: View {
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(feed.displayName)
-                    .font(.subheadline.bold())
+                    .appFont(AppTextRole.subheadline)
+                    .fontWeight(.bold)
                     .lineLimit(1)
                 if let creator = feed.creator.displayName {
                     Text("by \(creator)", comment: "Feed creator attribution in starter pack preview. Placeholder is the creator's display name.")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -322,14 +324,15 @@ public struct StarterPackLandingView: View {
         VStack(spacing: 20) {
             Spacer()
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 48))
+                .appFont(size: 48, weight: .regular, relativeTo: .body)
                 .foregroundStyle(.secondary)
             
             Text("Starter Pack Unavailable")
-                .font(.title2.bold())
+                .appFont(AppTextRole.title2)
+                .fontWeight(.bold)
             
             Text(message)
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
@@ -337,18 +340,14 @@ public struct StarterPackLandingView: View {
             VStack(spacing: 12) {
                 Button(action: signupWithoutPackAction) {
                     Text("Create an account without this starter pack")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .background(Color.accentColor)
-                        .foregroundColor(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .appFont(AppTextRole.headline)
                 }
+                .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
                 
                 Button("Back") {
                     handleDismiss()
                 }
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 32)

@@ -57,7 +57,8 @@ struct FeedContinuityBanner: View {
       
       VStack(alignment: .leading, spacing: 2) {
         Text(bannerTitle)
-          .font(.system(size: 14, weight: .semibold))
+          .appFont(AppTextRole.subheadline)
+          .fontWeight(.semibold)
           .foregroundColor(bannerTextColor)
         
         if let subtitle = bannerSubtitle {
@@ -142,7 +143,7 @@ struct FeedContinuityBanner: View {
   private var bannerBackground: some View {
     switch type {
     case .newContentAvailable:
-      Color.blue
+      Color.accentColor
     case .loadingGap:
       Color.orange.opacity(0.9)
     case .connectionRestored:
@@ -219,7 +220,7 @@ struct FeedGapIndicator: View {
             loadGap()
           }
           .font(.system(size: 14, weight: .semibold))
-          .foregroundColor(.blue)
+          .foregroundColor(Color.accentColor)
         }
       }
       .padding(.horizontal, 16)

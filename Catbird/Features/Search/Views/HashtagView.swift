@@ -85,17 +85,9 @@ struct HashtagView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(relatedTags, id: \.self) { relatedTag in
-                            Button {
+                            CatbirdChip(title: Text(verbatim: "#\(relatedTag)")) {
                                 path.append(NavigationDestination.hashtag(relatedTag))
-                            } label: {
-                                Text(verbatim: "#\(relatedTag)")
-                                    .appFont(AppTextRole.subheadline)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .background(Color.accentColor.opacity(0.12), in: Capsule())
-                                    .foregroundStyle(Color.accentColor)
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }

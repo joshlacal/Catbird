@@ -42,6 +42,7 @@ struct CircleDetailView: View {
         ProgressView("Loading \(circle.name)...")
       }
     }
+    .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     .navigationTitle(circle.name)
     #if os(iOS)
     .navigationBarTitleDisplayMode(.inline)
@@ -138,15 +139,15 @@ struct CircleDetailView: View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 12) {
         Image(systemName: "person.2.circle.fill")
-          .font(.system(size: 36))
+          .appFont(size: 36)
           .foregroundStyle(Color.accentColor)
 
         VStack(alignment: .leading, spacing: 2) {
           Text(circle.name)
-            .font(.title3.weight(.bold))
+            .appFont(AppTextRole.title3).fontWeight(.bold)
 
           Text("Owner: @\(circle.owner.didString())", comment: "Circle owner metadata label — %1$@ is the owner's DID, shown after an @.")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
         }
 
@@ -177,7 +178,7 @@ struct CircleDetailView: View {
           try? await model.load()
         }
       }
-      .buttonStyle(.borderedProminent)
+      .buttonStyle(.catbird(.primary, size: .md))
     }
   }
 
@@ -211,7 +212,7 @@ struct CircleDetailView: View {
           }
         }
       }
-      .buttonStyle(.borderedProminent)
+      .buttonStyle(.catbird(.primary, size: .md))
       .disabled(authCoordinator.state == .authorizing)
       .accessibilityIdentifier("circles.authorizeAppView")
     }
@@ -227,23 +228,16 @@ struct CircleDetailView: View {
 
   @ViewBuilder
   private func errorBanner(error: CircleError, model: CircleFeedModel) -> some View {
-    HStack {
-      Image(systemName: "exclamationmark.circle.fill")
-        .foregroundStyle(.orange)
-      Text(error.localizedDescription)
-        .font(.caption)
-        .lineLimit(2)
-      Spacer()
-      Button("Retry") {
+    CatbirdNotice(
+      tone: .warning,
+      message: Text(error.localizedDescription),
+      actionTitle: Text("Retry"),
+      action: {
         Task {
           try? await model.load()
         }
       }
-      .buttonStyle(.bordered)
-      .controlSize(.small)
-    }
-    .padding(10)
-    .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+    )
     .padding(.horizontal)
     .padding(.top, 8)
   }

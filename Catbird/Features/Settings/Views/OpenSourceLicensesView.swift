@@ -40,12 +40,7 @@ private struct LicenseRow: View {
 
         Spacer()
 
-        Text(package.license)
-          .appCaption()
-          .padding(.horizontal, 8)
-          .padding(.vertical, 2)
-          .background(.secondary.opacity(0.1))
-          .clipShape(Capsule())
+        CatbirdBadge(Text(verbatim: package.license), tone: .neutral)
       }
 
       HStack {

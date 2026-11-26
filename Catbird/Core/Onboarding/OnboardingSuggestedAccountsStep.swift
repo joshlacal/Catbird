@@ -36,11 +36,11 @@ public struct OnboardingSuggestedAccountsStep: View {
             // Header
             VStack(spacing: 8) {
                 Text("Follow Suggested Accounts")
-                    .font(.title2)
+                    .appFont(AppTextRole.title2)
                     .fontWeight(.bold)
                 
                 Text("Here are popular accounts matching your interests to help build your feed.")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
@@ -53,7 +53,7 @@ public struct OnboardingSuggestedAccountsStep: View {
                 VStack(spacing: 16) {
                     Spacer()
                     ProgressView("Finding accounts for you…")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundStyle(.secondary)
                     Spacer()
                 }
@@ -62,11 +62,11 @@ public struct OnboardingSuggestedAccountsStep: View {
                 VStack(spacing: 16) {
                     Spacer()
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.largeTitle)
+                        .appFont(AppTextRole.largeTitle)
                         .foregroundStyle(.secondary)
                     
                     Text(error)
-                        .font(.callout)
+                        .appFont(AppTextRole.callout)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 32)
@@ -76,7 +76,7 @@ public struct OnboardingSuggestedAccountsStep: View {
                             await loadSuggestedAccounts()
                         }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.catbird(.primary, size: .md))
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -84,14 +84,14 @@ public struct OnboardingSuggestedAccountsStep: View {
                 VStack(spacing: 16) {
                     Spacer()
                     Image(systemName: "person.2.slash")
-                        .font(.largeTitle)
+                        .appFont(AppTextRole.largeTitle)
                         .foregroundStyle(.secondary)
                     
                     Text("No suggestions available right now")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                     
                     Text("You can always discover and follow creators later in Search.")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 32)
@@ -104,21 +104,21 @@ public struct OnboardingSuggestedAccountsStep: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
                         Text(followAllError)
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                             .foregroundStyle(.primary)
                         Spacer()
                         Button {
                             self.followAllError = nil
                         } label: {
                             Image(systemName: "xmark")
-                                .font(.caption.bold())
+                                .appFont(AppTextRole.caption)
+                                .fontWeight(.bold)
                                 .foregroundStyle(.secondary)
                         }
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
-                    .background(Color.orange.opacity(0.12))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .catbirdCard(.notice(.warning))
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
                 }
@@ -137,7 +137,8 @@ public struct OnboardingSuggestedAccountsStep: View {
                             } label: {
                                 Text("Follow All", comment: "Button action to follow all suggested accounts in onboarding.")
                             }
-                            .font(.caption.bold())
+                            .appFont(AppTextRole.caption)
+                            .fontWeight(.bold)
                             .foregroundStyle(.accent)
                         }
                     }
@@ -155,18 +156,13 @@ public struct OnboardingSuggestedAccountsStep: View {
                             Text("Continue (\(followedDIDs.count) followed)", comment: "Button to continue onboarding showing how many accounts were followed.")
                         }
                     }
-                    .fontWeight(.semibold)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 50)
-                    .background(Color.accentColor)
-                    .foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
+                .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
                 
                 Button("Skip for Now") {
                     onSkip()
                 }
-                .font(.subheadline)
+                .appFont(AppTextRole.subheadline)
                 .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 24)
@@ -206,7 +202,7 @@ public struct OnboardingSuggestedAccountsStep: View {
                     .frame(width: 44, height: 44)
                     .overlay(
                         Text(verbatim: String(actor.displayName?.prefix(1) ?? actor.handle.value.prefix(1)))
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                             .foregroundStyle(.accent)
                     )
             }
@@ -215,17 +211,18 @@ public struct OnboardingSuggestedAccountsStep: View {
             VStack(alignment: .leading, spacing: 2) {
                 if let displayName = actor.displayName, !displayName.isEmpty {
                     Text(displayName)
-                        .font(.subheadline.bold())
+                        .appFont(AppTextRole.subheadline)
+                        .fontWeight(.bold)
                         .lineLimit(1)
                 }
                 Text(verbatim: "@\(actor.handle.value)")
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 
                 if let description = actor.description, !description.isEmpty {
                     Text(description)
-                        .font(.caption2)
+                        .appFont(AppTextRole.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .padding(.top, 2)
@@ -235,29 +232,13 @@ public struct OnboardingSuggestedAccountsStep: View {
             Spacer()
             
             // Follow Button
-            Button {
-                toggleFollow(for: actor)
-            } label: {
-                if isProcessing {
-                    ProgressView()
-                        .frame(width: 76, height: 32)
-                } else {
-                    Group {
-                        if isFollowing {
-                            Text("Following", comment: "Button state showing user already follows this suggested account.")
-                        } else {
-                            Text("Follow", comment: "Button action to follow a suggested account.")
-                        }
-                    }
-                    .font(.caption.bold())
-                    .frame(width: 76, height: 32)
-                    .background(isFollowing ? Color.secondary.opacity(0.15) : Color.accentColor)
-                    .foregroundColor(isFollowing ? .primary : .white)
-                    .clipShape(Capsule())
-                }
-            }
-            .buttonStyle(.plain)
-            .disabled(isProcessing || isFollowing)
+            FollowButton(
+                state: isFollowing ? .following : .notFollowing,
+                isLoading: isProcessing,
+                size: .compact,
+                action: { toggleFollow(for: actor) }
+            )
+            .allowsHitTesting(!(isProcessing || isFollowing))
         }
         .padding(.vertical, 4)
     }

@@ -139,6 +139,25 @@ struct DeviceApprovalStateTests {
     #expect(due.title == "Finishing approval")
   }
 
+  @Test("An unnamed quiet approver isn't promised as a way to approve sooner")
+  func quietUnnamedApprover() throws {
+    let state = try #require(DeviceApprovalState.evaluate(
+      currentDeviceId: me,
+      rows: [
+        OwnDeviceApprovalRow(deviceId: mac, status: .dormant, createdAt: hoursAgo(900), lastActiveAt: hoursAgo(168)),
+        OwnDeviceApprovalRow(deviceId: me, status: .pendingApproval, createdAt: hoursAgo(30)),
+      ],
+      now: now
+    ))
+    guard case .approversQuiet = state else {
+      Issue.record("Expected approversQuiet, got \(state)")
+      return
+    }
+    let after = try #require(DeviceApprovalCopy.make(for: state, restoreQueued: true, now: now))
+    #expect(after.message.contains("still counts as signed in"))
+    #expect(!after.message.contains("Another device you’re signed in on can approve"))
+  }
+
   @Test("No approved device left: restore with the backup")
   func noApproverLeft() throws {
     let state = try #require(DeviceApprovalState.evaluate(

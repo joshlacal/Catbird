@@ -127,7 +127,7 @@ struct SuggestedProfilesSheet: View {
                                 did: profile.did
                             ) {
                                 VerificationBadgeView(kind: badgeKind)
-                                    .font(.callout)
+                                    .appFont(AppTextRole.callout)
                             }
                         }
                     

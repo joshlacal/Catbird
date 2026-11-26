@@ -26,24 +26,24 @@ struct RepositoryDiagnosticsView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Image(systemName: "stethoscope")
-                                .foregroundColor(.blue)
+                                .foregroundColor(Color.accentColor)
                             Text("Repository Diagnostics")
-                                .font(.title2)
+                                .appFont(AppTextRole.title2)
                                 .fontWeight(.bold)
                         }
                         
                         Text("Diagnosing parsing and data access for: \(repository.userHandle)")
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                             .foregroundColor(.secondary)
                     }
                     .padding()
                     .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-                    .cornerRadius(12)
+                    .clipShape(Radius.md.shape)
                     
                     // Repository Info
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Repository Information")
-                            .font(.headline)
+                            .appFont(AppTextRole.headline)
                         
                         LazyVGrid(columns: [
                             GridItem(.flexible()),
@@ -73,36 +73,26 @@ struct RepositoryDiagnosticsView: View {
                     if !logs.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Diagnostic Logs")
-                                .font(.headline)
+                                .appFont(AppTextRole.headline)
                             
                             Text("Logs captured: \(logs.count) entries", comment: "Count of diagnostic log entries captured.")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundColor(.secondary)
                             
                             HStack {
                                 Text("Log source:")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .foregroundColor(.secondary)
                                 Text(verbatim: logSource)
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .fontWeight(.medium)
                                     .foregroundColor(.primary)
                             }
                             
                             if repository.parsingLogFileURL != nil {
-                                Text(verbatim: "📁 Parsing logs are stored in file to prevent memory issues. Log analysis results shown above.")
-                                    .font(.caption)
-                                    .foregroundColor(.blue)
-                                    .padding()
-                                    .background(Color.blue.opacity(0.1))
-                                    .cornerRadius(8)
+                                CatbirdNotice(tone: .info, message: Text(verbatim: "📁 Parsing logs are stored in file to prevent memory issues. Log analysis results shown above."))
                             } else {
-                                Text(verbatim: "⚠️ Parsing logs stored in memory. For large repositories, use file-based logging to prevent crashes.")
-                                    .font(.caption)
-                                    .foregroundColor(.orange)
-                                    .padding()
-                                    .background(Color.orange.opacity(0.1))
-                                    .cornerRadius(8)
+                                CatbirdNotice(tone: .warning, message: Text(verbatim: "⚠️ Parsing logs stored in memory. For large repositories, use file-based logging to prevent crashes."))
                             }
                         }
                     }
@@ -121,7 +111,7 @@ struct RepositoryDiagnosticsView: View {
                         }
                         .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.catbird(.primary))
                     .disabled(isRunning)
                 }
                 .padding()
@@ -144,7 +134,7 @@ struct RepositoryDiagnosticsView: View {
     private func diagnosticsResultsView(_ result: DiagnosticsResult) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Diagnostic Results")
-                .font(.headline)
+                .appFont(AppTextRole.headline)
             
             // Data Access Results
             LazyVGrid(columns: [
@@ -183,7 +173,7 @@ struct RepositoryDiagnosticsView: View {
             // Context Status
             VStack(alignment: .leading, spacing: 8) {
                 Text("ModelContext Status")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .fontWeight(.semibold)
                 
                 HStack {
@@ -193,52 +183,44 @@ struct RepositoryDiagnosticsView: View {
                 }
                 
                 if let contextError = result.contextError {
-                    Text(verbatim: "Error: \(contextError)")
-                        .font(.caption)
-                        .foregroundColor(.red)
-                        .padding(.leading)
+                    CatbirdNotice(tone: .error, title: Text("ModelContext Status"), message: Text(verbatim: contextError))
                 }
             }
             .padding()
             .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-            .cornerRadius(8)
+            .clipShape(Radius.sm.shape)
             
             // Sample Data
             if !result.samplePosts.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Sample Posts (First 3)")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .fontWeight(.semibold)
                     
                     ForEach(Array(result.samplePosts.prefix(3)), id: \.id) { post in
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
-                                Text(verbatim: post.postType)
-                                    .font(.caption)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Color.blue.opacity(0.2))
-                                    .cornerRadius(4)
+                                CatbirdBadge(Text(verbatim: post.postType), tone: .accent)
                                 
                                 Text(post.createdAt, style: .date)
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .foregroundColor(.secondary)
                                 
                                 Spacer()
                                 
                                 Text(post.parseConfidence, format: .percent.precision(.fractionLength(0)))
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .foregroundColor(post.parseConfidence > 0.8 ? .green : .orange)
                             }
                             
                             // Use model's sanitized text preview
                             Text(verbatim: post.textPreview)
-                                .font(.body)
+                                .appFont(AppTextRole.body)
                                 .lineLimit(3)
                         }
                         .padding()
                         .background(Color(platformColor: PlatformColor.platformTertiarySystemGroupedBackground))
-                        .cornerRadius(8)
+                        .clipShape(Radius.sm.shape)
                     }
                 }
             }
@@ -247,21 +229,21 @@ struct RepositoryDiagnosticsView: View {
             if !result.connectionTypeBreakdown.isEmpty || !result.atProtocolTypeBreakdown.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Record Type Breakdown")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .fontWeight(.semibold)
                     
                     if !result.connectionTypeBreakdown.isEmpty {
                         Text("Connection Types:")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                         
                         ForEach(result.connectionTypeBreakdown.sorted(by: { $0.key < $1.key }), id: \.key) { type, count in
                             HStack {
                                 Text(verbatim: type.capitalized)
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                 Spacer()
                                 Text(count, format: .number)
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .fontWeight(.medium)
                             }
                             .padding(.horizontal, 8)
@@ -270,18 +252,18 @@ struct RepositoryDiagnosticsView: View {
                     
                     if !result.atProtocolTypeBreakdown.isEmpty {
                         Text("AT Protocol Record Types:")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                             .padding(.top, 4)
                         
                         ForEach(result.atProtocolTypeBreakdown.sorted(by: { $0.key < $1.key }), id: \.key) { type, count in
                             HStack {
                                 Text(verbatim: type)
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .lineLimit(1)
                                 Spacer()
                                 Text(count, format: .number)
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .fontWeight(.medium)
                             }
                             .padding(.horizontal, 8)
@@ -290,7 +272,7 @@ struct RepositoryDiagnosticsView: View {
                 }
                 .padding()
                 .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-                .cornerRadius(8)
+                .clipShape(Radius.sm.shape)
             }
         }
     }
@@ -621,17 +603,17 @@ private struct DiagnosticItem: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(verbatim: label)
-                .font(.caption)
+                .appFont(AppTextRole.caption)
                 .foregroundColor(.secondary)
             Text(verbatim: cleanValue)
-                .font(.body)
+                .appFont(AppTextRole.body)
                 .fontWeight(.medium)
                 .lineLimit(2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
         .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
-        .cornerRadius(8)
+        .clipShape(Radius.sm.shape)
     }
 }
 
@@ -655,7 +637,7 @@ private struct ResultItem: View {
                 Image(systemName: icon)
                     .foregroundColor(color)
                 Text(label)
-                    .font(.caption)
+                    .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                 Spacer()
                 Image(systemName: isMatch ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
@@ -665,11 +647,11 @@ private struct ResultItem: View {
             HStack {
                 VStack(alignment: .leading) {
                     Text(actual, format: .number)
-                        .font(.title2)
+                        .appFont(AppTextRole.title2)
                         .fontWeight(.bold)
                         .foregroundColor(color)
                     Text("Found", comment: "Diagnostic count label for records actually found in storage.")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                 }
                 
@@ -677,18 +659,18 @@ private struct ResultItem: View {
                 
                 VStack(alignment: .trailing) {
                     Text(expected, format: .number)
-                        .font(.title2)
+                        .appFont(AppTextRole.title2)
                         .fontWeight(.bold)
                         .foregroundColor(.secondary)
                     Text("Expected", comment: "Diagnostic count label for records expected from repository metadata.")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                 }
             }
         }
         .padding()
         .background(color.opacity(0.1))
-        .cornerRadius(8)
+        .clipShape(Radius.sm.shape)
     }
 }
 

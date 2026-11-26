@@ -82,62 +82,6 @@ extension View {
             .ignoresSafeArea(.all)
         }
     }
-    // MARK: - Glass Effects
-    
-    /// Apply a glass-like card effect based on theme
-    func themedSolariumCard(
-        intensity: GlassIntensity = .medium,
-        themeManager: ThemeManager,
-        appSettings: AppSettings
-    ) -> some View {
-        self
-            .background(glassBackground(intensity: intensity, themeManager: themeManager))
-            .overlay(glassBorder(intensity: intensity, themeManager: themeManager, appSettings: appSettings))
-            .cornerRadius(12)
-            .background(glassShadow(intensity: intensity, themeManager: themeManager))
-            // Background and border applied without redundant transition
-    }
-    
-    /// Apply a glass-like button effect based on theme
-    func themedSolariumButton(
-        intensity: GlassIntensity = .medium,
-        themeManager: ThemeManager,
-        appSettings: AppSettings
-    ) -> some View {
-        self
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(glassBackground(intensity: intensity, themeManager: themeManager))
-            .overlay(glassBorder(intensity: intensity, themeManager: themeManager, appSettings: appSettings).cornerRadius(8))
-            .cornerRadius(8)
-            // Background and border applied without redundant transition
-    }
-    
-    // MARK: - Private Helper Methods
-    
-    @ViewBuilder
-    private func glassBackground(intensity: GlassIntensity, themeManager: ThemeManager) -> some View {
-        ThemedGlassBackground(themeManager: themeManager, intensity: intensity)
-    }
-    
-    private func glassBorder(intensity: GlassIntensity, themeManager: ThemeManager, appSettings: AppSettings) -> some View {
-        ThemedBorderView(themeManager: themeManager, isProminent: intensity == .strong, appSettings: appSettings)
-    }
-    
-    private func glassShadow(intensity: GlassIntensity, themeManager: ThemeManager) -> some View {
-        ThemedShadowView(themeManager: themeManager)
-    }
-    
-    private func glassBlurRadius(intensity: GlassIntensity) -> CGFloat {
-        switch intensity {
-        case .subtle:
-            return 4
-        case .medium:
-            return 6
-        case .strong:
-            return 8
-        }
-    }
 }
 
 // MARK: - Text Modifiers
@@ -216,22 +160,6 @@ struct ContrastAwareBackgroundModifier: ViewModifier {
     
     func body(content: Content) -> some View {
         content.background(Color.adaptiveBackground(appState: appState, defaultColor: defaultColor))
-    }
-}
-
-struct AccessibleButtonStyle: ButtonStyle {
-    let appState: AppState?
-    
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundStyle(Color.adaptiveForeground(appState: appState, defaultColor: .accentColor))
-            .background(Color.adaptiveBackground(appState: appState, defaultColor: .accentColor.opacity(0.1)))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.adaptiveBorder(appState: appState), lineWidth: 1)
-            )
-            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
-            .accessibleAnimation(.easeInOut(duration: 0.2), value: configuration.isPressed, appState: appState)
     }
 }
 

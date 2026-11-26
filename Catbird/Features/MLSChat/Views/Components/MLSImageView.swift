@@ -188,15 +188,14 @@ struct MLSImageView: View {
       if !isRevealed {
         VStack(spacing: 8) {
           Image(systemName: "eye.slash.fill")
-            .font(.title2)
+            .appFont(AppTextRole.title2)
           Text("This may contain sensitive content")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
           if canRevealSensitiveContent {
             Button("Show") {
               withAnimation { isRevealed = true }
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .buttonStyle(.catbird(.primary, size: .sm))
           }
         }
         .foregroundStyle(.white)
@@ -241,11 +240,11 @@ struct MLSImageView: View {
     } label: {
       VStack(spacing: 8) {
         Image(systemName: "eye.slash.fill")
-          .font(.title2)
+          .appFont(AppTextRole.title2)
         Text("This image may not be appropriate")
-          .font(.caption)
+          .appFont(AppTextRole.caption)
         Text("Tap to learn more")
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundStyle(.secondary)
       }
       .frame(width: size.width, height: size.height)
@@ -268,14 +267,14 @@ struct MLSImageView: View {
     let size = placeholderSize
     VStack(spacing: 4) {
       Image(systemName: "photo.badge.exclamationmark")
-        .font(.title2)
+        .appFont(AppTextRole.title2)
         .foregroundStyle(.secondary)
       Text("Image no longer available")
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .foregroundStyle(.secondary)
       if let alt = imageEmbed.altText {
         Text(alt)
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .foregroundStyle(.tertiary)
       }
     }
@@ -290,10 +289,10 @@ struct MLSImageView: View {
     let size = placeholderSize
     VStack(spacing: 4) {
       Image(systemName: "exclamationmark.triangle")
-        .font(.title2)
+        .appFont(AppTextRole.title2)
         .foregroundStyle(.secondary)
       Text(message)
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .foregroundStyle(.secondary)
     }
     .frame(width: size.width, height: size.height)

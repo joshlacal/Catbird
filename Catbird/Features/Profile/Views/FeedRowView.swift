@@ -10,7 +10,7 @@ struct FeedRowView: View {
         HStack(spacing: 14) {
             if let avatarURL = feed.avatar {
                 let url = URL(string: avatarURL.uriString())
-                LazyImage(request: ImageRequestFactory.image(url, pointSize: CGSize(width: 50, height: 50), scale: displayScale)) { state in
+                LazyImage(request: ImageRequestFactory.image(url, pointSize: CGSize(width: AvatarSize.lg, height: AvatarSize.lg), scale: displayScale)) { state in
                     if let image = state.image {
                         image
                             .resizable()
@@ -20,12 +20,12 @@ struct FeedRowView: View {
                             .fill(Color.secondary.opacity(0.3))
                     }
                 }
-                .frame(width: 50, height: 50)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .frame(width: AvatarSize.lg, height: AvatarSize.lg)
+                .clipShape(RoundedRectangle(cornerRadius: Radius.sm.value, style: .continuous))
             } else {
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: Radius.sm.value, style: .continuous)
                     .fill(Color.secondary.opacity(0.3))
-                    .frame(width: 50, height: 50)
+                    .frame(width: AvatarSize.lg, height: AvatarSize.lg)
             }
 
             VStack(alignment: .leading, spacing: 4) {

@@ -61,11 +61,11 @@ struct ReportConversationView: View {
 
       VStack(spacing: 8) {
         Text("Report Submitted")
-          .font(.title2)
+          .appFont(AppTextRole.title2)
           .fontWeight(.bold)
 
         Text("Thank you for helping keep the community safe. Your report has been submitted to moderators.")
-          .font(.subheadline)
+          .appFont(AppTextRole.subheadline)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
           .padding(.horizontal, 24)
@@ -73,7 +73,7 @@ struct ReportConversationView: View {
 
       if let errorMessage {
         Text(errorMessage)
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.red)
           .padding(.horizontal, 24)
       }

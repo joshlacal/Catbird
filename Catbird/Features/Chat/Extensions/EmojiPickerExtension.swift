@@ -270,7 +270,7 @@ private struct EmojiKitPickerSheet: View {
 //                Spacer()
 //                
 //                Text("Emoji")
-//                    .font(.headline)
+//                    .appFont(AppTextRole.headline)
 //                    .fontWeight(.semibold)
 //                
 //                Spacer()
@@ -312,10 +312,10 @@ private struct EmojiKitPickerSheet: View {
 //                        ForEach(Array(emojiCategories.enumerated()), id: \.0) { (index: Int, category: EmojiCategory) in
 //                            VStack {
 //                                Text(category.symbol)
-//                                    .font(.title2)
+//                                    .appFont(AppTextRole.title2)
 //                                
 //                                Text(category.name)
-//                                    .font(.caption2)
+//                                    .appFont(AppTextRole.caption2)
 //                                    .foregroundColor(selectedCategoryIndex == index ? .accentColor : .secondary)
 //                            }
 //                            .padding(.vertical, 8)
@@ -341,7 +341,7 @@ private struct EmojiKitPickerSheet: View {
 //                                isPresented = false
 //                            } label: {
 //                                Text(emoji)
-//                                    .font(.title3)
+//                                    .appFont(AppTextRole.title3)
 //                                    .frame(width: 36, height: 36)
 //                            }
 //                            .buttonStyle(.plain)

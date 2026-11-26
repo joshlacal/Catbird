@@ -76,8 +76,7 @@ public struct PostInteractionSettingsView: View {
                     await loadExistingRecords()
                   }
                 }
-                .buttonStyle(.bordered)
-                .font(.footnote)
+                .buttonStyle(.catbird(.tonal, size: .sm))
               }
             }
           }

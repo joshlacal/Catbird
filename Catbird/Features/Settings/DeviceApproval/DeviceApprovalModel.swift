@@ -47,7 +47,7 @@ final class DeviceApprovalModel {
   var presentedSheet: Sheet?
   private(set) var restoreQueued = false
   private(set) var isWorking = false
-  private(set) var failure: String?
+  private(set) var failure: DeviceApprovalFailure?
 
   private let logger = Logger(subsystem: "blue.catbird", category: "DeviceApproval")
 
@@ -116,14 +116,14 @@ final class DeviceApprovalModel {
     failure = nil
     defer { isWorking = false }
     guard let coordinator = await appState.getOrOpenMLSCoordinator() else {
-      failure = "Encrypted chat isn’t ready on this device yet. Try again in a moment."
+      failure = .notReady
       return
     }
     do {
       try await coordinator.approveDevice(targetDeviceId: peer.deviceId)
     } catch {
       logger.error("Approving \(String(peer.deviceId.prefix(8)), privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
-      failure = "Couldn’t approve \(peer.displayName): \(error.localizedDescription)"
+      failure = DeviceApprovalFailure(error: error, deviceName: peer.displayName)
     }
     await refresh(appState: appState)
   }

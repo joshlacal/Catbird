@@ -239,8 +239,7 @@ private struct BlockedContentCompactRow: View {
       Spacer(minLength: 0)
     }
     .padding(12)
-    .background(Color.systemGroupedBackground)
-    .clipShape(RoundedRectangle(cornerRadius: 10))
+    .catbirdCard(.panel, radius: .md)
     .accessibilityElement(children: .combine)
     .accessibilityLabel(text)
     .accessibilityHint(tapTarget != nil ? "Opens the blocked post's thread" : "")
@@ -324,9 +323,7 @@ private struct BlockedContentFullCard: View {
     }
     .padding(variant == .anchor ? 16 : 12)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color.systemGroupedBackground)
-    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
-    .clipShape(RoundedRectangle(cornerRadius: 12))
+    .catbirdCard(.embed)
   }
 }
 
@@ -606,7 +603,7 @@ private struct BlockedContentCardVariantPreview: View {
   private func labeledCard(_ label: String, _ relationship: BlockRelationship) -> some View {
     VStack(alignment: .leading, spacing: 4) {
       Text(label)
-        .font(.caption)
+        .appFont(AppTextRole.caption)
         .foregroundStyle(.tertiary)
       BlockedContentCard(
         relationship: relationship,

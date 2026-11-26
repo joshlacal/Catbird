@@ -61,7 +61,7 @@ struct UnifiedMessageReactions: View {
           onReactionLongPress(emoji)
         } label: {
           Image(systemName: "person.2")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .padding(6)
         }
         .buttonStyle(.plain)
@@ -79,11 +79,11 @@ struct UnifiedMessageReactions: View {
   private func reactionPill(emoji: String, count: Int, userReacted: Bool) -> some View {
     HStack(spacing: 4) {
       Text(verbatim: emoji)
-        .font(.caption)
+        .appFont(AppTextRole.caption)
 
       if count > 1 {
         Text(count, format: .number)
-          .font(.caption2)
+          .appFont(AppTextRole.caption2)
           .fontWeight(.medium)
           .foregroundStyle(userReacted ? Color.accentColor : Color.secondary)
       }
@@ -231,10 +231,10 @@ struct UnifiedReactionDetailsSheet<Source: UnifiedChatDataSource>: View {
         Text(profile?.displayName.flatMap { $0.isEmpty ? nil : $0 }
           ?? profile?.handle ?? reaction.senderDID)
         if let handle = profile?.handle {
-          Text(verbatim: "@\(handle)").font(.subheadline).foregroundStyle(.secondary)
+          Text(verbatim: "@\(handle)").appFont(AppTextRole.subheadline).foregroundStyle(.secondary)
         }
         if reaction.isFromCurrentUser {
-          Text("You").font(.caption).foregroundStyle(.secondary)
+          Text("You").appFont(AppTextRole.caption).foregroundStyle(.secondary)
         }
       }
       Spacer(minLength: 4)

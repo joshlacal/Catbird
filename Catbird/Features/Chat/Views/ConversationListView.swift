@@ -221,7 +221,7 @@ struct ConversationListView: View {
           Label("Mute", systemImage: "bell.slash")
         }
       }
-      .tint(convo.muted ? .blue : .orange)
+      .tint(convo.muted ? Color.accentColor : .orange)
     } else {
       Button {
         Task { await chatManager.muteConversation(convoId: convo.id) }

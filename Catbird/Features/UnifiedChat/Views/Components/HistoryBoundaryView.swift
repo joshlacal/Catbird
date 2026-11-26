@@ -9,9 +9,9 @@ struct HistoryBoundaryView: View {
   var body: some View {
     HStack(spacing: 6) {
       Image(systemName: "lock.fill")
-        .font(.caption2)
+        .appFont(AppTextRole.caption2)
       Text(text)
-        .font(.footnote)
+        .appFont(AppTextRole.footnote)
     }
     .foregroundStyle(.secondary)
     .padding(.horizontal, 12)

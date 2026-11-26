@@ -512,17 +512,17 @@ extension EnvironmentValues {
   ) {
     ZStack {
       LinearGradient(
-        colors: [.blue.opacity(0.25), .mint.opacity(0.2)],
+        colors: [Color.accentColor.opacity(0.25), .mint.opacity(0.2)],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
       )
 
       VStack(spacing: 16) {
         Text("Timeline")
-          .font(.largeTitle.weight(.bold))
+          .appFont(AppTextRole.largeTitle).fontWeight(.bold)
 
         Text("Main content stays anchored while the drawer slides over it.")
-          .font(.body)
+          .appFont(AppTextRole.body)
           .multilineTextAlignment(.center)
           .foregroundStyle(.secondary)
           .padding(.horizontal)
@@ -532,14 +532,14 @@ extension EnvironmentValues {
             isDrawerOpen.toggle()
           }
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.catbird(.primary))
       }
       .padding()
     }
   } drawer: {
     VStack(alignment: .leading, spacing: 16) {
       Text("Feeds")
-        .font(.title2.weight(.semibold))
+        .appFont(AppTextRole.title2).fontWeight(.semibold)
 
       Divider()
 

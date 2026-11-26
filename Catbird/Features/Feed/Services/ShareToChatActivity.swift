@@ -856,69 +856,45 @@
     let post: AppBskyFeedDefs.PostView
     @Environment(\.dismiss) private var dismiss
 
+    private var previewText: String {
+      if case .knownType(let record) = post.record, let postRecord = record as? AppBskyFeedPost {
+        return postRecord.text
+      }
+      return ""
+    }
+
     var body: some View {
       NavigationStack {
         ScrollView {
-          VStack(alignment: .leading, spacing: 16) {
-            // Author info
-            HStack(spacing: 12) {
-              if let avatarURL = post.author.avatar?.uriString(),
-                let url = URL(string: avatarURL)
-              {
-                AsyncImage(url: url) { image in
-                  image
-                    .resizable()
-                    .scaledToFill()
-                } placeholder: {
-                  Circle()
-                    .fill(.quaternary)
+          CompactPostCard(
+            avatarURL: post.author.avatar.flatMap { URL(string: $0.uriString()) },
+            displayName: post.author.displayName ?? post.author.handle.description,
+            handle: post.author.handle.description,
+            text: previewText,
+            did: post.author.did.didString(),
+            lineLimit: 100,
+            footer: {
+              HStack(spacing: Space.xl) {
+                Label {
+                  Text(post.likeCount ?? 0, format: .number)
+                } icon: {
+                  Image(systemName: "heart")
                 }
-                .frame(width: 44, height: 44)
-                .clipShape(Circle())
+                Label {
+                  Text(post.repostCount ?? 0, format: .number)
+                } icon: {
+                  Image(systemName: "arrow.2.squarepath")
+                }
+                Label {
+                  Text(post.replyCount ?? 0, format: .number)
+                } icon: {
+                  Image(systemName: "bubble.left")
+                }
               }
-
-              VStack(alignment: .leading, spacing: 2) {
-                Text(post.author.displayName ?? post.author.handle.description)
-                  .font(.subheadline.weight(.semibold))
-                Text(verbatim: "@\(post.author.handle)")
-                  .font(.caption)
-                  .foregroundStyle(.secondary)
-              }
-
-              Spacer()
+              .appFont(AppTextRole.caption)
+              .foregroundStyle(.secondary)
             }
-
-            // Post content
-            if case .knownType(let record) = post.record,
-              let postRecord = record as? AppBskyFeedPost
-            {
-              Text(postRecord.text)
-                .font(.body)
-            }
-
-            // Post stats
-            HStack(spacing: 24) {
-              Label {
-                Text(post.likeCount ?? 0, format: .number)
-              } icon: {
-                Image(systemName: "heart")
-              }
-              Label {
-                Text(post.repostCount ?? 0, format: .number)
-              } icon: {
-                Image(systemName: "arrow.2.squarepath")
-              }
-              Label {
-                Text(post.replyCount ?? 0, format: .number)
-              } icon: {
-                Image(systemName: "bubble.left")
-              }
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-          }
-          .padding()
-          .background(.regularMaterial, in: .rect(cornerRadius: 16))
+          )
           .padding()
         }
         .navigationTitle("Post Preview")

@@ -6,21 +6,23 @@ import SwiftUI
 struct MLSGroupInvitationCard: View {
   @Environment(AppState.self) private var appState
   @Environment(SceneNavigationContext.self) private var sceneContext
+  @Environment(\.colorScheme) private var colorScheme
   let reference: MLSGroupInvitationReference
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      Label("Group invitation", systemImage: "person.2.fill").font(.headline)
+      Label("Group invitation", systemImage: "person.2.fill").appFont(AppTextRole.headline)
       Text("This invitation is separate from the message conversation. Opening it does not join the group.")
-        .font(.caption).foregroundStyle(.secondary)
+        .appFont(AppTextRole.caption).foregroundStyle(.secondary)
       if appState.userDID == reference.recipientDid || appState.userDID == reference.invitedByDid {
         Button("View group invitation") {
           appState.navigateToMLSConversation(reference.conversationId, preferredSceneID: sceneContext.sceneID)
         }
+        .buttonStyle(.catbird(.tonal, size: .sm))
       }
     }
-    .padding()
-    .background(.quaternary, in: .rect(cornerRadius: 12))
+    .padding(Space.lg)
+    .embedCardStyle(colorScheme: colorScheme)
     .accessibilityIdentifier("encrypted-group-invitation")
   }
 }

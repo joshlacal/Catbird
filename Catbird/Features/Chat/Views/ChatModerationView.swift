@@ -39,10 +39,10 @@ struct ChatModerationView: View {
       #else
         VStack(spacing: 12) {
           Image(systemName: "lock.shield")
-            .font(.largeTitle)
+            .appFont(AppTextRole.largeTitle)
             .foregroundColor(.secondary)
           Text("Moderation tools require chat service admin access and are not available in this build.")
-            .font(.callout)
+            .appFont(AppTextRole.callout)
             .multilineTextAlignment(.center)
             .foregroundColor(.secondary)
         }
@@ -396,13 +396,9 @@ struct MessageContextRow: View {
           .foregroundColor(isTargetMessage ? .white : .primary)
 
         if isTargetMessage {
-          Text("Target", comment: "Badge marking the target message in moderation context")
-            .appFont(AppTextRole.caption2)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Color.red)
-            .foregroundColor(.white)
-            .clipShape(Capsule())
+          CatbirdBadge(
+            Text("Target", comment: "Badge marking the target message in moderation context"),
+            tone: .danger)
         }
 
         Spacer()

@@ -13,7 +13,7 @@ struct EnhancedFeedRowView: View {
             // Feed avatar
             if let avatar = feed.avatar,
                let url = URL(string: avatar.uriString()) {
-                LazyImage(request: ImageRequestFactory.image(url, pointSize: 44, scale: displayScale, contentMode: .aspectFill)) { state in
+                LazyImage(request: ImageRequestFactory.image(url, pointSize: AvatarSize.lg, scale: displayScale, contentMode: .aspectFill)) { state in
                     if let image = state.image {
                         image
                             .resizable()
@@ -22,13 +22,13 @@ struct EnhancedFeedRowView: View {
                         Color.gray.opacity(0.2)
                     }
                 }
-                .frame(width: 44, height: 44)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .frame(width: AvatarSize.lg, height: AvatarSize.lg)
+                .clipShape(RoundedRectangle(cornerRadius: Radius.sm.value, style: .continuous))
             } else {
                 // Placeholder
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: Radius.sm.value, style: .continuous)
                     .fill(Color.gray.opacity(0.2))
-                    .frame(width: 44, height: 44)
+                    .frame(width: AvatarSize.lg, height: AvatarSize.lg)
                     .overlay(
                         Image(systemName: "rectangle.grid.1x2")
                             .foregroundColor(Color.gray)

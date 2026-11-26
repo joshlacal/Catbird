@@ -40,13 +40,15 @@ struct BlockAccountView: View {
                 if let error = errorMessage {
                     Section {
                         Text(error)
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.red)
                     }
                 }
                 
                 blockActionSection
             }
+            .scrollContentBackground(.hidden)
+            .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
             .navigationTitle("Block Account")
             #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
@@ -91,16 +93,16 @@ struct BlockAccountView: View {
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(profile.displayName ?? "@\(profile.handle.description)")
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                     Text(verbatim: "@\(profile.handle.description)")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundStyle(.secondary)
                 }
             }
             .padding(.vertical, 4)
             
             Text("Blocking this user will prevent them from seeing your posts, following you, or mentioning you. They will not be notified that you blocked them.")
-                .font(.footnote)
+                .appFont(AppTextRole.footnote)
                 .foregroundStyle(.secondary)
         }
     }
@@ -109,15 +111,15 @@ struct BlockAccountView: View {
         Section {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "lock.shield.fill")
-                    .font(.title3)
+                    .appFont(AppTextRole.title3)
                     .foregroundStyle(.orange)
                 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Encrypted Chat Notice")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .fontWeight(.semibold)
                     Text("You share \(mlsAffectedConvoCount) end-to-end encrypted conversations with this user. Blocking them will cause you to leave those conversations.", comment: "Warning when blocking a user with shared E2EE chats — variable is the number of conversations.")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -140,7 +142,7 @@ struct BlockAccountView: View {
                         Image(systemName: isFeatureUnavailable ? "info.circle" : "exclamationmark.triangle.fill")
                             .foregroundStyle(isFeatureUnavailable ? Color.secondary : Color.orange)
                         Text(loadError)
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                             .foregroundStyle(.secondary)
                     }
                     
@@ -148,8 +150,7 @@ struct BlockAccountView: View {
                         Button("Retry") {
                             Task { await loadMutualGroups() }
                         }
-                        .font(.caption)
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.catbird(.tonal, size: .sm))
                     }
                 }
                 .padding(.vertical, 4)
@@ -158,7 +159,7 @@ struct BlockAccountView: View {
                     Image(systemName: "checkmark.circle")
                         .foregroundStyle(.green)
                     Text("No shared group chats")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 4)
@@ -173,7 +174,7 @@ struct BlockAccountView: View {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange)
                             Text(loadError)
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundStyle(.secondary)
                         }
                         
@@ -181,8 +182,7 @@ struct BlockAccountView: View {
                             Button("Retry") {
                                 Task { await loadMutualGroups() }
                             }
-                            .font(.caption)
-                            .buttonStyle(.bordered)
+                            .buttonStyle(.catbird(.tonal, size: .sm))
                         }
                     }
                     .padding(.vertical, 2)
@@ -200,7 +200,7 @@ struct BlockAccountView: View {
                             }
                         } else {
                             Text("Load More Groups")
-                                .font(.subheadline)
+                                .appFont(AppTextRole.subheadline)
                         }
                     }
                 }
@@ -216,7 +216,7 @@ struct BlockAccountView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(convoName(convo))
-                        .font(.body)
+                        .appFont(AppTextRole.body)
                         .fontWeight(.medium)
                     
                     let memberCount = convo.members.count
@@ -227,8 +227,8 @@ struct BlockAccountView: View {
                             Text("\(memberCount) members • Member", comment: "Group chat member count and membership status — variable is member count.")
                         }
                     }
-                    .font(.caption)
-                    .foregroundStyle(isOwner ? Color.blue : Color.secondary)
+                    .appFont(AppTextRole.caption)
+                    .foregroundStyle(isOwner ? Color.accentColor : Color.secondary)
                 }
                 
                 Spacer()
@@ -239,15 +239,12 @@ struct BlockAccountView: View {
                     Button("Remove Member") {
                         Task { await removeMember(from: convo) }
                     }
-                    .font(.caption)
-                    .buttonStyle(.bordered)
-                    .tint(.red)
+                    .buttonStyle(.catbird(.destructive, size: .sm))
                 } else {
                     Button("Leave Group") {
                         Task { await leaveGroup(convo: convo) }
                     }
-                    .font(.caption)
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.catbird(.tonal, size: .sm))
                     .tint(.orange)
                 }
             }

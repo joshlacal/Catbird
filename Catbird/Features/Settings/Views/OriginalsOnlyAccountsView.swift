@@ -123,8 +123,7 @@ struct OriginalsOnlyAccountsView: View {
       Button("Show Reposts") {
         appState.feedFilterSettings.setRepostMuted(false, for: did)
       }
-      .buttonStyle(.bordered)
-      .controlSize(.small)
+      .buttonStyle(.catbird(.tonal, size: .sm))
       .accessibilityLabel("Show reposts from \(title)")
     }
     .padding(.vertical, 2)

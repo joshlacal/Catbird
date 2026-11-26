@@ -31,9 +31,9 @@ import SwiftUI
                 ) {
                     VStack(spacing: 2) {
                         Text("This is a message request")
-                            .font(.subheadline.weight(.semibold))
+                            .appFont(AppTextRole.subheadline).fontWeight(.semibold)
                         Text("Accept to continue the conversation")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }
                     .multilineTextAlignment(.center)

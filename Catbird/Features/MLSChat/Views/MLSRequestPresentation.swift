@@ -23,7 +23,7 @@ struct MLSRequestPresentation: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 20) {
-        Label(title, systemImage: "lock.fill").font(.headline)
+        Label(title, systemImage: "lock.fill").appFont(AppTextRole.headline)
         switch preview {
         case .ready(let text, let invitation):
           Text(verbatim: text)
@@ -34,7 +34,7 @@ struct MLSRequestPresentation: View {
             .background(.quaternary, in: .rect(cornerRadius: 18))
           if let invitation {
             Text("Includes a group invitation. Accepting this message request does not accept the group invitation.")
-              .font(.caption).foregroundStyle(.secondary)
+              .appFont(AppTextRole.caption).foregroundStyle(.secondary)
             if let onOpenInvitation {
               Button("View group invitation") { onOpenInvitation(invitation) }
             }
@@ -67,7 +67,7 @@ struct MLSRequestPresentation: View {
           if busy && consent != .incomingPending { ProgressView() }
         }
         .buttonStyle(.borderless)
-        .font(.footnote)
+        .appFont(AppTextRole.footnote)
       }
       .padding()
       .frame(maxWidth: 720, alignment: .leading)

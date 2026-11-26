@@ -1130,16 +1130,24 @@ extension MainContentView {
   #endif
 
   /// Inherit tab content geometry instead of estimating system bar clearance.
+  ///
+  /// The FAB opens the composer sheet and never sits beside a keyboard of its
+  /// own, so it ignores the keyboard safe area. Otherwise the composer's
+  /// keyboard, dismissed together with its sheet, can leave the button resting
+  /// above the tab bar on a stale keyboard inset.
   @ViewBuilder
   private var composeOverlay: some View {
     #if os(iOS) && !targetEnvironment(macCatalyst)
-    if #available(iOS 26.0, *) {
-      GlassEffectContainer(spacing: 20) {
+    Group {
+      if #available(iOS 26.0, *) {
+        GlassEffectContainer(spacing: 20) {
+          fabView
+        }
+      } else {
         fabView
       }
-    } else {
-      fabView
     }
+    .ignoresSafeArea(.keyboard, edges: .bottom)
     #endif
   }
 

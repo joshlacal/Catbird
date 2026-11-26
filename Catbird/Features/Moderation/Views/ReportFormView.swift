@@ -200,6 +200,8 @@ struct ReportFormView: View {
     var body: some View {
         NavigationStack {
             contentForStep
+                .scrollContentBackground(.hidden)
+                .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
                 .navigationTitle(navigationTitle)
                 #if os(iOS)
                 .toolbarTitleDisplayMode(.inline)
@@ -268,10 +270,10 @@ struct ReportFormView: View {
             Section {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Reporting")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                     Text(contentDescription)
-                        .font(.headline)
+                        .appFont(AppTextRole.headline)
                 }
                 .padding(.vertical, 4)
             }
@@ -284,23 +286,23 @@ struct ReportFormView: View {
                     } label: {
                         HStack(spacing: 12) {
                             Image(systemName: category.iconName)
-                                .font(.title3)
+                                .appFont(AppTextRole.title3)
                                 .foregroundStyle(category.iconColor)
                                 .frame(width: 28)
                             
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(category.title)
-                                    .font(.body)
+                                    .appFont(AppTextRole.body)
                                     .foregroundStyle(.primary)
                                 Text(category.subtitle)
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
                                     .foregroundStyle(.secondary)
                             }
                             
                             Spacer()
                             
                             Image(systemName: "chevron.forward")
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundStyle(.tertiary)
                         }
                         .padding(.vertical, 4)
@@ -319,7 +321,7 @@ struct ReportFormView: View {
                     currentStep = .selectCategory
                 } label: {
                     Label("Back to Categories", systemImage: "chevron.backward")
-                        .font(.subheadline)
+                        .appFont(AppTextRole.subheadline)
                 }
             }
             
@@ -347,11 +349,11 @@ struct ReportFormView: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(item.title)
-                                .font(.body)
+                                .appFont(AppTextRole.body)
                                 .fontWeight(.medium)
                                 .foregroundStyle(.primary)
                             Text(item.description)
-                                .font(.caption)
+                                .appFont(AppTextRole.caption)
                                 .foregroundStyle(.secondary)
                         }
                         .padding(.vertical, 4)
@@ -367,7 +369,7 @@ struct ReportFormView: View {
         Form {
             Section("Non-Consensual Intimate Imagery") {
                 Text("Are you shown in this image or video, or are you an authorized representative of the person shown?")
-                    .font(.subheadline)
+                    .appFont(AppTextRole.subheadline)
                     .padding(.vertical, 4)
                 
                 Button {
@@ -383,7 +385,7 @@ struct ReportFormView: View {
                             Image(systemName: "arrow.up.right.square")
                         }
                         Text("Opens the official Bluesky emergency takedown request form.")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 4)
@@ -396,7 +398,7 @@ struct ReportFormView: View {
                         Text("No — Report on Behalf of Someone Else")
                             .fontWeight(.medium)
                         Text("Continue submitting an in-app report for moderator review.")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 4)
@@ -425,7 +427,7 @@ struct ReportFormView: View {
         Form {
             Section("Subject") {
                 Text(contentDescription)
-                    .font(.body)
+                    .appFont(AppTextRole.body)
             }
             
             Section("Reason") {
@@ -445,10 +447,10 @@ struct ReportFormView: View {
                                 .fontWeight(.medium)
                             Spacer()
                             Image(systemName: "checkmark.shield.fill")
-                                .foregroundStyle(.blue)
+                                .foregroundStyle(Color.accentColor)
                         }
                         Text("Child safety and violent extremism reports are always routed directly to official Bluesky safety teams.")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 2)
@@ -463,7 +465,7 @@ struct ReportFormView: View {
                         Text("Official Bluesky Moderation")
                             .fontWeight(.medium)
                         Text("Your other moderation services couldn’t be loaded, so this report will go to Bluesky.")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 2)
@@ -483,7 +485,7 @@ struct ReportFormView: View {
                             Text(displayName)
                                 .foregroundStyle(.secondary)
                             Image(systemName: "chevron.up.chevron.down")
-                                .font(.caption2)
+                                .appFont(AppTextRole.caption2)
                                 .foregroundStyle(.tertiary)
                         }
                     }
@@ -494,9 +496,9 @@ struct ReportFormView: View {
             if let timestamp = videoTimestamp, timestamp >= 1.0, (selectedLabeler == nil || selectedLabeler?.creator.did.didString() == ReportingService.officialBlueskyDID) {
                 Section("Video Attachment") {
                     Toggle("Include video timestamp (\(formatTimestamp(timestamp)))", isOn: $includeVideoTimestamp)
-                        .tint(.blue)
+                        .tint(Color.accentColor)
                     Text("Helps moderators jump directly to the reported section of the video.")
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -510,7 +512,7 @@ struct ReportFormView: View {
                 Section {
                     Text(errorMessage)
                         .foregroundStyle(.red)
-                        .font(.caption)
+                        .appFont(AppTextRole.caption)
                 }
             }
             
@@ -534,7 +536,8 @@ struct ReportFormView: View {
                     }
                 }
                 .disabled(isSubmitting || (!isBlueskyOnly && isLoadingLabelers))
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
+                .listRowBackground(Color.clear)
             }
             
             Section {

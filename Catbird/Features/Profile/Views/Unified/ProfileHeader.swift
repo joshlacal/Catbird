@@ -283,13 +283,13 @@ struct ProfileHeader: View {
                     ProgressView()
                         .progressViewStyle(.circular)
                         .tint(subscriptionButtonTint)
-                        .frame(width: 36, height: 36)
+                        .frame(width: ControlHeight.md, height: ControlHeight.md)
                 } else {
                     Image(systemName: subscriptionButtonIcon)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(subscriptionButtonTint)
                         .frame(width: 18, height: 18)
-                        .padding(9)
+                        .padding(11)
                         .background(
                             Circle()
                                 .fill(currentActivitySubscriptionState == .none ? Color.clear : subscriptionButtonTint.opacity(0.15))
@@ -469,7 +469,7 @@ struct ProfileHeader: View {
                 Group {
                     if isConcealed {
                         // Hidden avatar placeholder
-                        RoundedRectangle(cornerRadius: 12)
+                        RoundedRectangle(cornerRadius: Radius.md.value, style: .continuous)
                             .fill(Color.secondary.opacity(0.3))
                             .overlay(
                                 Image(systemName: "eye.slash.fill")
@@ -484,7 +484,7 @@ struct ProfileHeader: View {
                             if let image = state.image {
                                 image.resizable().aspectRatio(contentMode: .fill)
                             } else {
-                                RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.3))
+                                RoundedRectangle(cornerRadius: Radius.md.value, style: .continuous).fill(Color.secondary.opacity(0.3))
                             }
                         }
                         .matchedTransitionSource(id: profile.avatar?.uriString() ?? "", in: imageTransition)
@@ -497,9 +497,9 @@ struct ProfileHeader: View {
                 }
                 .modifier(AvatarViewerAccessibility(isEnabled: canOpenAvatarViewer))
                 .frame(width: avatarSize, height: avatarSize)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .clipShape(RoundedRectangle(cornerRadius: Radius.md.value, style: .continuous))
                 .background(
-                    RoundedRectangle(cornerRadius: 16)
+                    RoundedRectangle(cornerRadius: Radius.lg.value, style: .continuous)
                         .fill(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
                         .padding(-4)
                 )
@@ -627,7 +627,7 @@ struct ProfileHeader: View {
                             .padding(.horizontal, 4)
                             .padding(.bottom, 2)
                             .background(
-                                RoundedRectangle(cornerRadius: 12)
+                                RoundedRectangle(cornerRadius: Radius.md.value, style: .continuous)
                                     .fill(Color.secondary.opacity(0.1))
                             )
 
@@ -661,7 +661,7 @@ struct ProfileHeader: View {
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(
-                                RoundedRectangle(cornerRadius: 4)
+                                RoundedRectangle(cornerRadius: Radius.xs.value, style: .continuous)
                                     .fill(Color.secondary.opacity(0.15))
                             )
                     }
@@ -675,7 +675,7 @@ struct ProfileHeader: View {
                         showingAccountLabels = true
                     } label: {
                         Label("\(visibleAccountLabels.count) account labels", systemImage: "tag")
-                            .font(.subheadline)
+                            .appFont(AppTextRole.subheadline)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .buttonStyle(.plain)
@@ -721,7 +721,7 @@ struct ProfileHeader: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "link")
-                            .font(.caption)
+                            .appFont(AppTextRole.caption)
                         Text(urlString.replacingOccurrences(of: "https://", with: "").replacingOccurrences(of: "http://", with: ""))
                             .lineLimit(1)
                     }
@@ -1042,20 +1042,12 @@ struct ProfileHeader: View {
             isEditingProfile = true
         }) {
             Text("Edit Profile")
-                .appFont(AppTextRole.subheadline)
-                .fontWeight(.medium)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 9)
-                .foregroundColor(Color("AccentTextColor"))
         }
-        .background(
-            Capsule()
-                .stroke(Color.accentColor, lineWidth: 1.5)
-        )
+        .buttonStyle(.catbird(.outline, size: .md))
     }
-    
+
     /// Circular chat button that sits to the left of Follow. It, the bell and the
-    /// Follow / Following / Edit Profile pills all render 36pt tall.
+    /// Follow / Following / Edit Profile pills all render 40pt tall.
     private var messageButton: some View {
         Button(action: openChat) {
             Group {
@@ -1069,10 +1061,10 @@ struct ProfileHeader: View {
                 }
             }
             .frame(width: 18, height: 18)
-            .padding(9)
+            .padding(11)
             .overlay(
                 Circle()
-                    .stroke(Color.accentColor, lineWidth: 1.5)
+                    .stroke(Color.secondary.opacity(0.35), lineWidth: 1)
             )
             .contentShape(Circle())
         }
@@ -1089,27 +1081,11 @@ struct ProfileHeader: View {
     @ViewBuilder
     private var followButton: some View {
         if profile.viewer?.blocking != nil || profile.viewer?.blockedBy == true {
-            // Show blocked state instead of follow button. Neutral styling —
-            // direction (you blocked them / they blocked you / mutual) is
-            // carried by the block relationship banner's text, not this pill.
-            HStack {
-                Image(systemName: "person.crop.circle.badge.xmark")
-                    .appFont(AppTextRole.footnote)
-                Text("Blocked", comment: "Disabled pill shown in place of the Follow button when a block exists between accounts.")
-                    .fixedSize(horizontal: true, vertical: false)
-            }
-            .appFont(AppTextRole.subheadline)
-            .fontWeight(.medium)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .foregroundColor(.secondary)
-            .background(
-                Capsule()
-                    .stroke(Color.secondary, lineWidth: 1.5)
-            )
-            .accessibilityElement(children: .combine)
+            // Neutral blocked pill: direction (you blocked them / they blocked you / mutual)
+            // is carried by the block relationship banner's text, not this pill.
+            FollowButton(state: .blocked, size: .regular) {}
         } else if localIsFollowing {
-            Button(action: {
+            FollowButton(state: .following, size: .regular) {
                 if DestructiveActionConfirmation.shouldConfirm(
                     isEnabled: appState.appSettings.confirmBeforeActions
                 ) {
@@ -1117,44 +1093,14 @@ struct ProfileHeader: View {
                 } else {
                     performUnfollow()
                 }
-            }) {
-                HStack {
-                    Image(systemName: "checkmark")
-                        .appFont(AppTextRole.footnote)
-                    Text("Following", comment: "Active button state indicating the viewer currently follows this profile; tapping unfollows.")
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-                .appFont(AppTextRole.subheadline)
-                .fontWeight(.medium)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 9)
-                .foregroundColor(Color("AccentTextColor"))
-                .cornerRadius(16)
             }
-            .background(
-                Capsule()
-                    .stroke(Color.accentColor, lineWidth: 1.5)
-            )
-            
         } else {
-            Button(action: {
+            FollowButton(state: .notFollowing, size: .regular) {
                 performFollow()
-            }) {
-                HStack {
-                    Image(systemName: "plus")
-                        .appFont(AppTextRole.footnote)
-                    Text("Follow", comment: "Action button verb to start following a user profile.")
-                }
-                .appFont(AppTextRole.subheadline)
-                .fontWeight(.medium)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 9)
-                .foregroundColor(.white)
-                .background(Capsule().fill(Color.accentColor))
             }
         }
     }
-    
+
     // MARK: - Labeler Buttons
     
     @State private var isSubscribeButtonLoading = false
@@ -1165,8 +1111,7 @@ struct ProfileHeader: View {
         Group {
             if isSubscribeButtonLoading {
                 ProgressView()
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                    .frame(minWidth: ControlHeight.md * 2.5, minHeight: ControlHeight.md)
             } else if viewModel.isSubscribedToLabeler {
                 Button(action: {
                     Task(priority: .userInitiated) {
@@ -1185,23 +1130,13 @@ struct ProfileHeader: View {
                         isSubscribeButtonLoading = false
                     }
                 }) {
-                    HStack {
+                    HStack(spacing: Space.xs) {
                         Image(systemName: "checkmark")
-                            .appFont(AppTextRole.footnote)
                         Text("Subscribed", comment: "Active button state indicating the viewer is subscribed to this moderation labeler.")
                             .fixedSize(horizontal: true, vertical: false)
                     }
-                    .appFont(AppTextRole.subheadline)
-                    .fontWeight(.medium)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 9)
-                    .foregroundColor(Color("AccentTextColor"))
-                    .cornerRadius(16)
                 }
-                .background(
-                    Capsule()
-                        .stroke(Color.accentColor, lineWidth: 1.5)
-                )
+                .buttonStyle(.catbird(.tonal, size: .md))
             } else {
                 Button(action: {
                     Task(priority: .userInitiated) {
@@ -1220,18 +1155,12 @@ struct ProfileHeader: View {
                         isSubscribeButtonLoading = false
                     }
                 }) {
-                    HStack {
+                    HStack(spacing: Space.xs) {
                         Image(systemName: "plus")
-                            .appFont(AppTextRole.footnote)
                         Text("Subscribe", comment: "Action button verb to subscribe to a moderation labeler.")
                     }
-                    .appFont(AppTextRole.subheadline)
-                    .fontWeight(.medium)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 9)
-                    .foregroundColor(.white)
-                    .background(Capsule().fill(Color.accentColor))
                 }
+                .buttonStyle(.catbird(.primary, size: .md))
             }
         }
     }
@@ -1270,10 +1199,10 @@ struct ProfileHeader: View {
                     }
                 }
                 .frame(width: 18, height: 18)
-                .padding(9)
+                .padding(11)
                 .overlay(
                     Circle()
-                        .stroke(Color.accentColor, lineWidth: 1.5)
+                        .stroke(Color.secondary.opacity(0.35), lineWidth: 1)
                 )
                 .contentShape(Circle())
             }
@@ -1296,7 +1225,7 @@ struct ProfileHeader: View {
                         .padding(.horizontal, 10)
                         .background(
                             Capsule()
-                                .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                                .stroke(Color.secondary.opacity(0.35), lineWidth: 1)
                         )
                 }
                 .buttonStyle(.plain)

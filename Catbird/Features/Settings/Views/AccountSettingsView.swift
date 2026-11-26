@@ -919,23 +919,9 @@ struct AccountSettingsView: View {
     private var emailStatusBadge: some View {
         Group {
             if isEmailVerified {
-                Label("Verified", systemImage: "checkmark.seal.fill")
-                    .appFont(AppTextRole.caption)
-                    .fontWeight(.medium)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.green.opacity(0.2))
-                    .foregroundStyle(.green)
-                    .cornerRadius(6)
+                CatbirdBadge("Verified", systemImage: "checkmark.seal.fill", tone: .success)
             } else if !email.isEmpty {
-                Label("Unverified", systemImage: "exclamationmark.triangle.fill")
-                    .appFont(AppTextRole.caption)
-                    .fontWeight(.medium)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.orange.opacity(0.2))
-                    .foregroundStyle(.orange)
-                    .cornerRadius(6)
+                CatbirdBadge("Unverified", systemImage: "exclamationmark.triangle.fill", tone: .warning)
             }
         }
     }
