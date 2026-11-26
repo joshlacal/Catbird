@@ -30,7 +30,7 @@ actor CapturingRawXRPC: CircleRawXRPC {
 
 private enum RawFixtures {
   static let alice = "did:plc:alice"
-  static let encryptedSpace = try! SpaceRef(uriString: "at://did:plc:alice/space/blue.catbird.circle.encrypted/3enc")
+  static let encryptedSpace = try! SpaceRef(uriString: "at:space/did:plc:alice/blue.catbird.circle.encrypted/3enc")
   static let circle = CircleSummary(
     uri: encryptedSpace, circleId: try! TID(tidString: "3l7familycirc"), name: "Close",
     owner: try! DID(didString: alice), memberCount: 1, muted: nil

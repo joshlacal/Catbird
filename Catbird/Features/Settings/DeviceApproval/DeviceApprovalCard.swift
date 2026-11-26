@@ -34,10 +34,22 @@ struct DeviceApprovalCard: View {
         .fixedSize(horizontal: false, vertical: true)
 
       if let failure = model.failure {
-        Text(failure)
+        Text(failure.message)
           .font(.footnote)
           .foregroundStyle(.red)
+          .fixedSize(horizontal: false, vertical: true)
           .accessibilityIdentifier("device-approval-failure")
+        if let detail = failure.detail {
+          DisclosureGroup("Details for Support") {
+            Text(verbatim: detail)
+              .font(.caption2.monospaced())
+              .textSelection(.enabled)
+              .frame(maxWidth: .infinity, alignment: .leading)
+          }
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+          .accessibilityIdentifier("device-approval-failure-details")
+        }
       }
 
       HStack(spacing: 10) {
@@ -84,7 +96,7 @@ struct DeviceApprovalCard: View {
     case .checkAgain:
       Task { @MainActor in
         await model.refresh(appState: appState)
-        await model.finishSelfApprovalIfDue(appState: appState)
+        await model.finishQueuedRestore(appState: appState, force: true)
       }
     }
   }
@@ -93,7 +105,7 @@ struct DeviceApprovalCard: View {
 // MARK: - Tracking
 
 /// Keeps a `DeviceApprovalModel` current for the view it modifies: loads it per account,
-/// reloads when the app comes back, finishes a due self-approval, and presents the restore
+/// reloads when the app comes back, publishes a queued restore, and presents the restore
 /// and Devices screens the card opens.
 struct DeviceApprovalTracking: ViewModifier {
   @Environment(AppState.self) private var appState
@@ -112,7 +124,7 @@ struct DeviceApprovalTracking: ViewModifier {
         guard phase == .active else { return }
         Task { @MainActor in
           await model.refresh(appState: appState)
-          await model.finishSelfApprovalIfDue(appState: appState)
+          await model.finishQueuedRestore(appState: appState)
         }
       }
       .sheet(item: $model.presentedSheet, onDismiss: {

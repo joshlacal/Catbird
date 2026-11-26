@@ -988,7 +988,26 @@ actor CircleService {
     let start = lifecycleEpoch
     let page = try await transport.listCircles(cursor: cursor)
     restore(page.circles.map(\.uri), since: start)
+    scheduleAlphaRekeys(page.circles)
     return page
+  }
+
+  /// Off the list's path: each encrypted Circle listed gets one
+  /// `rekeyAlphaCircleIfNeeded`, a no-op unless this device held it during the
+  /// Spaces alpha. A failure is retried on the next listing.
+  private func scheduleAlphaRekeys(_ circles: [CircleSummary]) {
+    let encrypted = circles.filter(\.isEncrypted)
+    guard !encrypted.isEmpty else { return }
+    Task {
+      guard let manager = try? await self.requireKeyManager() else { return }
+      for circle in encrypted {
+        do {
+          try await manager.rekeyAlphaCircleIfNeeded(circle: circle)
+        } catch {
+          Self.logger.notice("Circles: alpha rekey deferred (\(String(describing: type(of: error)), privacy: .public))")
+        }
+      }
+    }
   }
 
   func getFeed(space: SpaceRef?, cursor: String? = nil) async throws -> CircleFeedPage {

@@ -112,6 +112,47 @@ struct CircleDraftDestinationTests {
     #expect(await transport.publicEndpointCallCount == 0)
   }
 
+  @Test("A Circle reply saved during the Spaces alpha restores with its parent and references in the current form")
+  func alphaCircleReplyRestores() async throws {
+    let appState = await makeAppState(circlesEnabled: true, allowWrites: true)
+    let transport = DestinationRecordingCircleTransport()
+    let model = PostComposerViewModel(appState: appState, circleService: CircleService(transport: transport))
+    let saved = CircleDraftDestination(circle: CircleTestFixtures.family, accountDID: account, reply: savedReply())
+    var json = String(decoding: try JSONEncoder().encode(
+      makeDraft("Private reply", parentURI: parentURI, destination: saved)
+    ), as: UTF8.self)
+    for uri in [parentURI, rootURI, CircleTestFixtures.familyURI.uriString()] {
+      json = json.replacingOccurrences(of: Self.escaped(uri), with: Self.escaped(Self.alphaForm(uri)))
+    }
+    #expect(!json.contains(Self.escaped("at:space/")))
+    let draft = try JSONDecoder().decode(PostComposerDraft.self, from: Data(json.utf8))
+
+    model.restoreDraftState(draft)
+
+    guard case .circle(let restored) = model.destination else {
+      Issue.record("An alpha-era Circle draft must restore into its Circle")
+      return
+    }
+    #expect(restored.uri == CircleTestFixtures.familyURI)
+    try await waitUntil { model.parentPost != nil }
+    #expect(model.parentPost?.uri.uriString() == parentURI)
+    let ref = try #require(model.circleReplyRef())
+    #expect(ref.root.uri.uriString() == rootURI)
+    #expect(ref.parent.uri.uriString() == parentURI)
+  }
+
+  /// `at:space/{did}/...` as the Spaces alpha wrote it, `at://{did}/space/...`.
+  private static func alphaForm(_ uri: String) -> String {
+    let rest = uri.dropFirst("at:space/".count)
+    let did = rest.prefix { $0 != "/" }
+    return "at://\(did)/space\(rest.dropFirst(did.count))"
+  }
+
+  /// A string as JSONEncoder writes it, with `/` escaped.
+  private static func escaped(_ string: String) -> String {
+    string.replacingOccurrences(of: "/", with: "\\/")
+  }
+
   @Test("A Circle that is gone keeps the draft private and blocks posting until an audience is chosen")
   func missingCircleBlocksPosting() async throws {
     let appState = await makeAppState(circlesEnabled: true, allowWrites: true)

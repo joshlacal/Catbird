@@ -22,7 +22,7 @@ private enum KeyFixtures {
   static let bob = try! DID(didString: "did:plc:bob")
   static let carol = try! DID(didString: "did:plc:carol")
   static let dave = try! DID(didString: "did:plc:dave")
-  static let spaceURI = try! SpaceRef(uriString: "at://did:plc:alice/space/blue.catbird.circle.encrypted/3enc")
+  static let spaceURI = try! SpaceRef(uriString: "at:space/did:plc:alice/blue.catbird.circle.encrypted/3enc")
   static let circle = BlueCatbirdCircleDefs.CircleSummary(
     uri: spaceURI,
     circleId: try! TID(tidString: "3l7familycirc"),
@@ -61,6 +61,44 @@ final class InMemoryCircleKeychain: CircleKeychain, @unchecked Sendable {
 
   func accessibility(service: String, account: String) -> String? {
     lock.withLock { items[service]?[account]?.accessibility }
+  }
+}
+
+/// `CircleKeychain` over another one, failing listing or writes on demand
+/// (a transient Keychain error such as `errSecInteractionNotAllowed`).
+final class FailingCircleKeychain: CircleKeychain, @unchecked Sendable {
+  static let transientError = CircleKeychainError.status(errSecInteractionNotAllowed)
+  private let base: any CircleKeychain
+  private let lock = NSLock()
+  private var _failAccounts = false
+  private var _failWrites = false
+  var failAccounts: Bool {
+    get { lock.withLock { _failAccounts } }
+    set { lock.withLock { _failAccounts = newValue } }
+  }
+  var failWrites: Bool {
+    get { lock.withLock { _failWrites } }
+    set { lock.withLock { _failWrites = newValue } }
+  }
+
+  init(_ base: any CircleKeychain) { self.base = base }
+
+  func read(service: String, account: String) throws -> Data? {
+    try base.read(service: service, account: account)
+  }
+
+  func write(service: String, account: String, data: Data, accessibility: String) throws {
+    if failWrites { throw Self.transientError }
+    try base.write(service: service, account: account, data: data, accessibility: accessibility)
+  }
+
+  func delete(service: String, account: String) throws {
+    try base.delete(service: service, account: account)
+  }
+
+  func accounts(service: String) throws -> [String] {
+    if failAccounts { throw Self.transientError }
+    return try base.accounts(service: service)
   }
 }
 
@@ -798,13 +836,122 @@ struct CircleKeyManagerTests {
     #expect(try await h.store.pendingRewraps(spaceURI: KeyFixtures.space).isEmpty)
     #expect(await h.transport.puts.map(\.rkey).suffix(3) == ["000003", "000002", "000001"])
   }
+
+  // MARK: Spaces alpha rekey
+
+  private static let alphaSpace = "at://did:plc:alice/space/blue.catbird.circle.encrypted/3enc"
+
+  /// Writes versions 1...n under the alpha account form, as a Spaces alpha
+  /// build left them. `h.store` moves them on its first read.
+  private func seedAlpha(_ h: Harness, versions: ClosedRange<UInt64>, space: String = alphaSpace) async throws {
+    let alpha = CircleKeyStore(accountDID: KeyFixtures.owner.didString(), keychain: h.keychain)
+    for version in versions {
+      try await alpha.store(
+        spaceURI: space, keyVersion: version, circleKey: Data(repeating: UInt8(version), count: 32),
+        createdAt: Date(), reason: version == 1 ? "created" : "manualRotation"
+      )
+    }
+  }
+
+  @Test func alphaCircleOwnerRekeysOnceToTheRoster() async throws {
+    let h = Harness()
+    try await seedAlpha(h, versions: 1...2)
+    await h.transport.setRoster([KeyFixtures.bob, KeyFixtures.carol])
+
+    #expect(try await h.manager.rekeyAlphaCircleIfNeeded(circle: KeyFixtures.circle))
+
+    #expect(await h.transport.puts.map(\.rkey) == ["000003"])
+    #expect(await h.transport.putReasons() == ["manualRotation"])
+    #expect(Set(await h.crypto.wraps.first?.memberDIDs ?? []) == [KeyFixtures.bob.didString(), KeyFixtures.carol.didString()])
+    #expect(try await h.store.latestVersion(spaceURI: KeyFixtures.space) == 3)
+    // The alpha versions stay readable on this device.
+    #expect(try await h.store.key(spaceURI: KeyFixtures.space, keyVersion: 2) == Data(repeating: 2, count: 32))
+    #expect(try await h.store.alphaRekeyAfterVersion(spaceURI: KeyFixtures.space) == nil)
+
+    #expect(try await !h.manager.rekeyAlphaCircleIfNeeded(circle: KeyFixtures.circle))
+    #expect(await h.transport.puts.count == 1)
+  }
+
+  @Test func circleWithoutAlphaItemIsNotRekeyed() async throws {
+    let h = Harness()
+    try await h.seed(versions: 1...2)
+
+    #expect(try await !h.manager.rekeyAlphaCircleIfNeeded(circle: KeyFixtures.circle))
+
+    #expect(await h.transport.getKeysSince.isEmpty)
+    #expect(await h.transport.puts.isEmpty)
+  }
+
+  @Test func alphaCircleAlreadyRekeyedByAnotherOwnerDeviceIsLeftAlone() async throws {
+    let h = Harness()
+    try await seedAlpha(h, versions: 1...2)
+    await h.transport.setKeyEntries([try makeKeyEntry(version: 3, reason: "manualRotation")])
+    await h.crypto.setOpenable([3: Data(repeating: 0x33, count: 32)])
+
+    #expect(try await !h.manager.rekeyAlphaCircleIfNeeded(circle: KeyFixtures.circle))
+
+    #expect(await h.transport.puts.isEmpty)
+    #expect(try await h.store.latestVersion(spaceURI: KeyFixtures.space) == 3)
+    #expect(try await h.store.alphaRekeyAfterVersion(spaceURI: KeyFixtures.space) == nil)
+  }
+
+  @Test func memberDeviceNeverRekeysAnAlphaCircle() async throws {
+    let h = Harness()
+    let bobsSpace = try SpaceRef(uriString: "at:space/did:plc:bob/blue.catbird.circle.encrypted/3enc")
+    let bobsCircle = BlueCatbirdCircleDefs.CircleSummary(
+      uri: bobsSpace, circleId: try TID(tidString: "3l7familycirc"), name: "Bob's",
+      owner: KeyFixtures.bob, memberCount: 2, muted: nil
+    )
+    try await seedAlpha(h, versions: 1...1, space: "at://did:plc:bob/space/blue.catbird.circle.encrypted/3enc")
+
+    #expect(try await !h.manager.rekeyAlphaCircleIfNeeded(circle: bobsCircle))
+
+    #expect(await h.transport.puts.isEmpty)
+    #expect(try await h.store.alphaRekeyAfterVersion(spaceURI: bobsSpace.uriString()) == nil)
+    #expect(try await h.store.key(spaceURI: bobsSpace.uriString(), keyVersion: 1) == Data(repeating: 1, count: 32))
+  }
+
+  @Test func failedAlphaRekeyIsRetried() async throws {
+    let h = Harness()
+    try await seedAlpha(h, versions: 1...1)
+    await h.transport.setRoster([KeyFixtures.bob])
+    await h.crypto.setFailingVersions([2])
+
+    await #expect(throws: (any Error).self) {
+      try await h.manager.rekeyAlphaCircleIfNeeded(circle: KeyFixtures.circle)
+    }
+    #expect(try await h.store.alphaRekeyAfterVersion(spaceURI: KeyFixtures.space) == 1)
+
+    await h.crypto.setFailingVersions([])
+    #expect(try await h.manager.rekeyAlphaCircleIfNeeded(circle: KeyFixtures.circle))
+    #expect(await h.transport.puts.map(\.rkey) == ["000002"])
+  }
+
+  @Test func postingNeverUsesAnAlphaKeyWhileItsRekeyIsOwed() async throws {
+    let h = Harness()
+    try await seedAlpha(h, versions: 1...1)
+    await h.transport.setRoster([KeyFixtures.bob])
+    await h.crypto.setFailingVersions([2])
+
+    // The rekey fails, so the post fails rather than going out under version 1.
+    await #expect(throws: (any Error).self) {
+      try await h.manager.keyForPosting(circle: KeyFixtures.circle)
+    }
+    #expect(await h.transport.puts.isEmpty)
+
+    // Once the rekey goes through, posting uses the new version.
+    await h.crypto.setFailingVersions([])
+    let key = try await h.manager.keyForPosting(circle: KeyFixtures.circle)
+    #expect(key.version == 2)
+    #expect(try await h.store.alphaRekeyAfterVersion(spaceURI: KeyFixtures.space) == nil)
+  }
 }
 
 // MARK: - CircleKeyStore
 
 @Suite("CircleKeyStore")
 struct CircleKeyStoreTests {
-  private let space = "at://did:plc:alice/space/blue.catbird.circle.encrypted/3enc"
+  private let space = "at:space/did:plc:alice/blue.catbird.circle.encrypted/3enc"
 
   @Test func storeThenReadBack() async throws {
     let keychain = InMemoryCircleKeychain()
@@ -856,6 +1003,118 @@ struct CircleKeyStoreTests {
     #expect(try await store.joinedAtVersion(spaceURI: space, did: "did:plc:dave") == 4)
     try await store.setJoinedAtVersion(spaceURI: space, did: "did:plc:dave", version: 0)
     #expect(try await store.joinedAtVersions(spaceURI: space).isEmpty)
+  }
+
+  @Test func alphaFormKeychainItemMovesToCurrentAccount() async throws {
+    let keychain = InMemoryCircleKeychain()
+    let legacySpace = "at://did:plc:alice/space/blue.catbird.circle.encrypted/3enc"
+    let key = Data(repeating: 7, count: 32)
+    // An item saved during the Spaces alpha, under the old account form.
+    try await CircleKeyStore(accountDID: "did:plc:alice", keychain: keychain)
+      .store(spaceURI: legacySpace, keyVersion: 1, circleKey: key, createdAt: Date(), reason: "created")
+
+    let store = CircleKeyStore(accountDID: "did:plc:alice", keychain: keychain)
+    #expect(try await store.key(spaceURI: space, keyVersion: 1) == key)
+    #expect(try keychain.accounts(service: CircleKeyStore.keychainService) == ["did:plc:alice|\(space)"])
+  }
+
+  @Test func failedAlphaMoveBlocksMutationsUntilItSucceeds() async throws {
+    let keychain = InMemoryCircleKeychain()
+    let legacySpace = "at://did:plc:alice/space/blue.catbird.circle.encrypted/3enc"
+    let oldKey = Data(repeating: 1, count: 32)
+    let newKey = Data(repeating: 2, count: 32)
+    let alpha = CircleKeyStore(accountDID: "did:plc:alice", keychain: keychain)
+    try await alpha.store(spaceURI: legacySpace, keyVersion: 1, circleKey: oldKey, createdAt: Date(), reason: "created")
+    try await alpha.setPendingRewrap(spaceURI: legacySpace, did: "__acl__:did:plc:carol", reason: "aclRemovePending")
+    try await alpha.setJoinedAtVersion(spaceURI: legacySpace, did: "did:plc:dave", version: 1)
+
+    let flaky = FailingCircleKeychain(keychain)
+    flaky.failAccounts = true
+    let store = CircleKeyStore(accountDID: "did:plc:alice", keychain: flaky)
+    // Neither a read nor a mutation proceeds on the unmigrated account.
+    await #expect(throws: CircleKeychainError.self) { try await store.allVersions(spaceURI: space) }
+    await #expect(throws: CircleKeychainError.self) {
+      try await store.store(spaceURI: space, keyVersion: 2, circleKey: newKey, createdAt: Date(), reason: "manualRotation")
+    }
+    #expect(try keychain.read(service: CircleKeyStore.keychainService, account: "did:plc:alice|\(space)") == nil)
+
+    flaky.failAccounts = false
+    try await store.store(spaceURI: space, keyVersion: 2, circleKey: newKey, createdAt: Date(), reason: "manualRotation")
+    #expect(try await store.allVersions(spaceURI: space) == [1, 2])
+    #expect(try await store.key(spaceURI: space, keyVersion: 1) == oldKey)
+    #expect(try await store.pendingRewraps(spaceURI: space).map(\.did) == ["__acl__:did:plc:carol"])
+    #expect(try await store.joinedAtVersion(spaceURI: space, did: "did:plc:dave") == 1)
+    #expect(try keychain.accounts(service: CircleKeyStore.keychainService) == ["did:plc:alice|\(space)"])
+  }
+
+  @Test func alphaItemMergesIntoExistingCurrentItem() async throws {
+    let keychain = InMemoryCircleKeychain()
+    let legacySpace = "at://did:plc:alice/space/blue.catbird.circle.encrypted/3enc"
+    let legacyKey = Data(repeating: 1, count: 32)
+    let legacyConflictKey = Data(repeating: 9, count: 32)
+    let currentKey = Data(repeating: 2, count: 32)
+    // Both accounts hold an item (left by a build that skipped the merge).
+    // This store has already run its move, so it writes both as given.
+    let seeding = CircleKeyStore(accountDID: "did:plc:alice", keychain: keychain)
+    _ = try await seeding.allVersions(spaceURI: space)
+    try await seeding.store(spaceURI: legacySpace, keyVersion: 1, circleKey: legacyKey, createdAt: Date(), reason: "created")
+    try await seeding.store(spaceURI: legacySpace, keyVersion: 2, circleKey: legacyConflictKey, createdAt: Date(), reason: "created")
+    try await seeding.setPendingRewrap(spaceURI: legacySpace, did: "did:plc:bob", reason: "directory unreachable")
+    try await seeding.setJoinedAtVersion(spaceURI: legacySpace, did: "did:plc:carol", version: 3)
+    try await seeding.setJoinedAtVersion(spaceURI: legacySpace, did: "did:plc:dave", version: 1)
+    try await seeding.store(spaceURI: space, keyVersion: 2, circleKey: currentKey, createdAt: Date(), reason: "manualRotation")
+    try await seeding.setPendingRewrap(spaceURI: space, did: "__acl__:did:plc:erin", reason: "aclRemovePending")
+    try await seeding.setJoinedAtVersion(spaceURI: space, did: "did:plc:carol", version: 2)
+    try await seeding.setJoinedAtVersion(spaceURI: space, did: "did:plc:dave", version: 4)
+
+    // A failed merged write keeps the alpha item.
+    let flaky = FailingCircleKeychain(keychain)
+    flaky.failWrites = true
+    let store = CircleKeyStore(accountDID: "did:plc:alice", keychain: flaky)
+    await #expect(throws: CircleKeychainError.self) { try await store.allVersions(spaceURI: space) }
+    #expect(try keychain.read(service: CircleKeyStore.keychainService, account: "did:plc:alice|\(legacySpace)") != nil)
+
+    flaky.failWrites = false
+    #expect(try await store.allVersions(spaceURI: space) == [1, 2])
+    #expect(try await store.key(spaceURI: space, keyVersion: 1) == legacyKey)
+    #expect(try await store.key(spaceURI: space, keyVersion: 2) == currentKey)
+    #expect(try await store.pendingRewraps(spaceURI: space).map(\.did) == ["__acl__:did:plc:erin", "did:plc:bob"])
+    #expect(try await store.joinedAtVersions(spaceURI: space) == ["did:plc:carol": 3, "did:plc:dave": 4])
+    #expect(try keychain.accounts(service: CircleKeyStore.keychainService) == ["did:plc:alice|\(space)"])
+  }
+
+  @Test func movedAlphaItemOwesOneRekeyPastItsNewestVersion() async throws {
+    let keychain = InMemoryCircleKeychain()
+    let legacySpace = "at://did:plc:alice/space/blue.catbird.circle.encrypted/3enc"
+    let alpha = CircleKeyStore(accountDID: "did:plc:alice", keychain: keychain)
+    for version in UInt64(1)...3 {
+      try await alpha.store(
+        spaceURI: legacySpace, keyVersion: version, circleKey: Data(repeating: UInt8(version), count: 32),
+        createdAt: Date(), reason: "created"
+      )
+    }
+
+    let store = CircleKeyStore(accountDID: "did:plc:alice", keychain: keychain)
+    #expect(try await store.alphaRekeyAfterVersion(spaceURI: space) == 3)
+    try await store.clearAlphaRekey(spaceURI: space)
+    #expect(try await store.alphaRekeyAfterVersion(spaceURI: space) == nil)
+    #expect(try await store.allVersions(spaceURI: space) == [1, 2, 3])
+
+    // An item first written in the current form owes nothing.
+    let fresh = "at:space/did:plc:alice/blue.catbird.circle.encrypted/3new"
+    try await store.store(spaceURI: fresh, keyVersion: 1, circleKey: Data(repeating: 9, count: 32), createdAt: Date(), reason: "created")
+    #expect(try await store.alphaRekeyAfterVersion(spaceURI: fresh) == nil)
+  }
+
+  @Test func legacySpaceURIConversion() {
+    #expect(LegacySpaceURI.fromLegacySpaceUri("at://did:plc:alice/space/blue.catbird.circle/3abc")
+      == "at:space/did:plc:alice/blue.catbird.circle/3abc")
+    #expect(LegacySpaceURI.fromLegacySpaceUri(
+      "at://did:plc:alice/space/blue.catbird.circle/3abc/did:plc:bob/app.bsky.feed.post/1"
+    ) == "at:space/did:plc:alice/blue.catbird.circle/3abc/did:plc:bob/app.bsky.feed.post/1")
+    #expect(LegacySpaceURI.fromLegacySpaceUri("at:space/did:plc:alice/blue.catbird.circle/3abc") == nil)
+    #expect(LegacySpaceURI.fromLegacySpaceUri("at://did:plc:alice/app.bsky.feed.post/1") == nil)
+    #expect(LegacySpaceURI.normalized("at://did:plc:alice/app.bsky.feed.post/1") == "at://did:plc:alice/app.bsky.feed.post/1")
   }
 
   @Test func keychainItemIsDeviceOnlyAfterFirstUnlock() async throws {

@@ -2,17 +2,17 @@
   "WARNING": "TEST ONLY key material. Never use outside tests. Random per generation.",
   "author_did": "did:plc:ownerfixturecirclesaaaaa",
   "circle_id": "3kcircleid22a",
-  "circle_key_hex": "113e255b893f6d39da94ab3970a52bfcaf7e345f8e7a88f31a7216fecbac1a85",
+  "circle_key_hex": "af2f6e15823a327e68db1bde2b0ac214a30abc48113993837e81915c7dbc9ce5",
   "created_at": "2026-11-07T12:05:00.000Z",
   "expected_text": "cross-language circle post",
   "key_version": 3,
   "owner_did": "did:plc:ownerfixturecirclesaaaaa",
-  "owner_epoch_head_hex": "ca5723b2c01d48fd9d15a7db9cca021df11462adf502fc875b213de47f1221c8",
-  "post_key_hex": "791ed66a63007bd95bbfae1d01b7c70fb7a0c9c20786c34af61faec0834e9d34",
+  "owner_epoch_head_hex": "4b91f1ab0386eb9c73520f175bab5e4f6b3a463032e44c6191e88d5edb134fc8",
+  "post_key_hex": "7706f54423e47dd06f0799667e3033e02b99484a611bed94ff71f00ebbe759cf",
   "post_uri": "at://did:plc:ownerfixturecirclesaaaaa/blue.catbird.circle.post/3l7post2222aa",
   "recipient_did": "did:plc:alicefixturecirclesaaaaa",
-  "recipient_epoch_head_hex": "adbc81406897f1d0138c266f8a8e378f79cc671933fd4ed70c8aa872713c00ef",
+  "recipient_epoch_head_hex": "ddfbdbdb065dc7255b7491f5db6c7dcfab914a8c7da086412eb6f874ff111e2f",
   "recipient_epoch_seq": 0,
-  "recipient_root_hex": "46511b2968c4c05d199753a799e1e6344d79abe4981ece15f44f54c8f3c65be2",
-  "space_uri": "at://did:plc:ownerfixturecirclesaaaaa/space/blue.catbird.circle.encrypted/3l7circ2222aa"
+  "recipient_root_hex": "7b628a0c10ae7621f8b281f1dea452cea3a09d44e26800ea1da75c06e8119616",
+  "space_uri": "at:space/did:plc:ownerfixturecirclesaaaaa/blue.catbird.circle.encrypted/3l7circ2222aa"
 }

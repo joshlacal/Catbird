@@ -84,7 +84,7 @@ enum CrossLanguageFixtures {
   }
 
   /// The regenerated fixtures carry the real Space URI form
-  /// (`at://<did>/space/<type>/<skey>`), parsed as is.
+  /// (`at:space/<did>/<type>/<skey>`), parsed as is.
   static func spaceRef(_ manifest: Manifest) throws -> SpaceRef {
     let space = try SpaceRef(uriString: manifest.space_uri)
     #expect(space.uriString() == manifest.space_uri)

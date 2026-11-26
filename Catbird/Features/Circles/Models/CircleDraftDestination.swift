@@ -23,10 +23,11 @@ struct CircleDraftDestination: Codable, Hashable, Sendable {
     }
 
     /// The references as a post record carries them, or nil when one no longer parses.
+    /// A draft saved during the Spaces alpha holds `at://{did}/space/...` URIs; they are read in the current form.
     var ref: AppBskyFeedPost.ReplyRef? {
-      guard let rootURI = try? ATProtocolURI(uriString: self.rootURI),
+      guard let rootURI = try? ATProtocolURI(uriString: LegacySpaceURI.normalized(self.rootURI)),
             let rootCID = try? CID.parse(self.rootCID),
-            let parentURI = try? ATProtocolURI(uriString: self.parentURI),
+            let parentURI = try? ATProtocolURI(uriString: LegacySpaceURI.normalized(self.parentURI)),
             let parentCID = try? CID.parse(self.parentCID) else { return nil }
       return AppBskyFeedPost.ReplyRef(
         root: ComAtprotoRepoStrongRef(uri: rootURI, cid: CIDString(rootCID)),
@@ -53,8 +54,9 @@ struct CircleDraftDestination: Codable, Hashable, Sendable {
   }
 
   /// The Circle as the composer posts to it, or nil when a stored identifier no longer parses.
+  /// A `spaceURI` saved during the Spaces alpha is read in the current form.
   var circle: CircleSummary? {
-    guard let space = try? SpaceRef(uriString: spaceURI),
+    guard let space = try? SpaceRef(uriString: LegacySpaceURI.normalized(spaceURI)),
           let circleID = try? TID(tidString: self.circleID),
           let owner = try? DID(didString: ownerDID) else { return nil }
     return CircleSummary(uri: space, circleId: circleID, name: name, owner: owner)

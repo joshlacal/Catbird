@@ -171,7 +171,7 @@ struct CircleServiceTests {
 
   @Test("An enabled incompatible service is rejected")
   func incompatibleProtocolIsRejected() async {
-    #expect(CircleConfiguration.protocolRevision == "d4def6e9f521896ed8222f576d54923d00b5fbeb")
+    #expect(CircleConfiguration.protocolRevision == "1f510f8e36a973f6fd055da349b586918805ae66")
     let service = CircleService(transport: RecordingCircleTransport(capabilities:
       CircleCapability(enabled: true, protocolRevision: "old-profile", supportsImages: true)))
     await #expect(throws: CircleError.protocolRevisionMismatch) { try await service.capabilities() }
@@ -493,9 +493,9 @@ struct CircleServiceTests {
 /// Shared test fixtures for Circle tests.
 enum CircleTestFixtures {
   static let alice = try! DID(didString: "did:plc:alice")
-  static let familyURI = try! SpaceRef(uriString: "at://did:plc:alice/space/blue.catbird.circle/3abc")
+  static let familyURI = try! SpaceRef(uriString: "at:space/did:plc:alice/blue.catbird.circle/3abc")
   static let familyCircleId = try! TID(tidString: "3l7familycirc")
-  static let workURI = try! SpaceRef(uriString: "at://did:plc:alice/space/blue.catbird.circle/9xyz")
+  static let workURI = try! SpaceRef(uriString: "at:space/did:plc:alice/blue.catbird.circle/9xyz")
   static let workCircleId = try! TID(tidString: "3l7workcircle")
 
   static let family = BlueCatbirdCircleDefs.CircleSummary(
