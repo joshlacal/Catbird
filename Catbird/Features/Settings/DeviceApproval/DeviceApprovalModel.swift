@@ -64,38 +64,50 @@ final class DeviceApprovalModel {
 
   func refresh(appState: AppState) async {
     let loaded = await appState.loadDeviceApprovalState()
-    state = loaded
-    restoreQueued = false
-    guard let loaded, loaded.isPending,
-          let coordinator = await appState.getOrOpenMLSCoordinator(),
-          let status = try? await coordinator.labyrinthStatus()
-    else {
-      return
+    var queued = false
+    if let loaded, loaded.isPending,
+       let coordinator = await appState.getOrOpenMLSCoordinator(),
+       let status = try? await coordinator.labyrinthStatus() {
+      queued = status.pendingDirectoryEpoch != nil
     }
-    restoreQueued = status.pendingDirectoryEpoch != nil
+    // Set both together, so the view never sees a brief "nothing queued" that would restart
+    // the self-approval task and publish again in a loop.
+    state = loaded
+    restoreQueued = queued
   }
 
-  /// Publishes the queued restore again once the server's hold is over, which approves this
-  /// device, then reads the state again.
-  func finishSelfApprovalIfDue(appState: AppState, now: Date = Date()) async {
-    guard restoreQueued,
-          let state, state.isPending,
-          let due = state.selfApprovalDate, due <= now,
-          let coordinator = await appState.getOrOpenMLSCoordinator()
-    else {
+  /// When the last automatic publish of the queued restore ran. Automatic tries wait
+  /// `autoRetryInterval` between them; Check Again doesn't.
+  @ObservationIgnored private var lastAutoFlush: Date?
+  @ObservationIgnored private let autoRetryInterval: TimeInterval = 30
+
+  /// Publishes the queued restore again, then reads the state again. A restore made with the
+  /// recovery code or passkey proves this device, so the server approves it at once and the
+  /// wait banner goes away. A restore with nothing to chain to still waits for the server's
+  /// hold, and the publish is just refused again until then.
+  ///
+  /// - Parameter force: true for the person's own Check Again, which skips the spacing
+  ///   between automatic tries.
+  func finishQueuedRestore(appState: AppState, force: Bool = false, now: Date = Date()) async {
+    guard restoreQueued, let state, state.isPending else { return }
+    if !force, let last = lastAutoFlush, now.timeIntervalSince(last) < autoRetryInterval {
       return
     }
+    lastAutoFlush = now
+    guard let coordinator = await appState.getOrOpenMLSCoordinator() else { return }
     do {
       _ = try await coordinator.flushLabyrinthQueue()
     } catch {
-      logger.error("Self-approval publish retry failed: \(error.localizedDescription, privacy: .public)")
+      logger.error("Queued restore publish failed: \(error.localizedDescription, privacy: .public)")
     }
     await refresh(appState: appState)
   }
 
-  /// Waits until this device's self-approval is due, then finishes it. Returns at once when
-  /// nothing is queued. Cancelled with the view that runs it.
+  /// Publishes a queued restore at once, and if the server still holds it, tries again when
+  /// the hold ends. Returns at once when nothing is queued. Cancelled with the view that runs it.
   func waitForSelfApproval(appState: AppState) async {
+    guard restoreQueued else { return }
+    await finishQueuedRestore(appState: appState)
     guard restoreQueued, let due = state?.selfApprovalDate else { return }
     let delay = due.timeIntervalSinceNow
     if delay > 0 {
@@ -107,7 +119,7 @@ final class DeviceApprovalModel {
         return
       }
     }
-    await finishSelfApprovalIfDue(appState: appState)
+    await finishQueuedRestore(appState: appState, force: true)
   }
 
   func approve(_ peer: DeviceApprovalPeer, appState: AppState) async {
