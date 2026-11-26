@@ -34,10 +34,22 @@ struct DeviceApprovalCard: View {
         .fixedSize(horizontal: false, vertical: true)
 
       if let failure = model.failure {
-        Text(failure)
+        Text(failure.message)
           .font(.footnote)
           .foregroundStyle(.red)
+          .fixedSize(horizontal: false, vertical: true)
           .accessibilityIdentifier("device-approval-failure")
+        if let detail = failure.detail {
+          DisclosureGroup("Details for Support") {
+            Text(verbatim: detail)
+              .font(.caption2.monospaced())
+              .textSelection(.enabled)
+              .frame(maxWidth: .infinity, alignment: .leading)
+          }
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+          .accessibilityIdentifier("device-approval-failure-details")
+        }
       }
 
       HStack(spacing: 10) {
