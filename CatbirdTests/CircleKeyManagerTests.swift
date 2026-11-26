@@ -926,6 +926,25 @@ struct CircleKeyManagerTests {
     #expect(try await h.manager.rekeyAlphaCircleIfNeeded(circle: KeyFixtures.circle))
     #expect(await h.transport.puts.map(\.rkey) == ["000002"])
   }
+
+  @Test func postingNeverUsesAnAlphaKeyWhileItsRekeyIsOwed() async throws {
+    let h = Harness()
+    try await seedAlpha(h, versions: 1...1)
+    await h.transport.setRoster([KeyFixtures.bob])
+    await h.crypto.setFailingVersions([2])
+
+    // The rekey fails, so the post fails rather than going out under version 1.
+    await #expect(throws: (any Error).self) {
+      try await h.manager.keyForPosting(circle: KeyFixtures.circle)
+    }
+    #expect(await h.transport.puts.isEmpty)
+
+    // Once the rekey goes through, posting uses the new version.
+    await h.crypto.setFailingVersions([])
+    let key = try await h.manager.keyForPosting(circle: KeyFixtures.circle)
+    #expect(key.version == 2)
+    #expect(try await h.store.alphaRekeyAfterVersion(spaceURI: KeyFixtures.space) == nil)
+  }
 }
 
 // MARK: - CircleKeyStore

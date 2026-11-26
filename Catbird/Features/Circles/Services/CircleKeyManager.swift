@@ -207,6 +207,11 @@ actor CircleKeyManager {
   func keyForPosting(circle: CircleSummary) async throws -> (version: UInt64, key: Data) {
     try await serialized {
       _ = try Self.trustedOwner(circle)
+      // An alpha key's remote wraps don't open under the at:space/ form, so a post sealed
+      // with it would be unreadable on devices without the cached key. Finish the owed
+      // rekey first; if it fails, the post fails with it instead of going out under the
+      // alpha key.
+      _ = try await self.rekeyAlphaUnlocked(circle: circle)
       let serverLatest = try await self.syncRemote(circle: circle, full: false)
       guard let current = try await self.currentKey(circle: circle) else {
         throw CircleError.encryptionUnavailable
@@ -345,25 +350,30 @@ actor CircleKeyManager {
   @discardableResult
   func rekeyAlphaCircleIfNeeded(circle: CircleSummary) async throws -> Bool {
     try await serialized {
-      let space = circle.uri.uriString()
-      guard let alphaLatest = try await self.store.alphaRekeyAfterVersion(spaceURI: space) else { return false }
-      guard circle.isEncrypted, (try? Self.trustedOwner(circle)) == self.ownerDID else {
-        try await self.store.clearAlphaRekey(spaceURI: space)
-        return false
-      }
-      let remoteLatest = try await self.syncRemote(circle: circle, full: false)
-      if let held = try await self.store.latestVersion(spaceURI: space), held > alphaLatest {
-        try await self.store.clearAlphaRekey(spaceURI: space)
-        return false
-      }
-      let roster = try await self.currentRoster(circle)
-      _ = try await self.rotateUnlocked(
-        circle: circle, memberDIDs: roster, reason: "manualRotation", remoteLatest: remoteLatest
-      )
-      try await self.store.clearAlphaRekey(spaceURI: space)
-      self.logger.notice("Circles: rekeyed an alpha Circle under the at:space/ form")
-      return true
+      try await self.rekeyAlphaUnlocked(circle: circle)
     }
+  }
+
+  /// `rekeyAlphaCircleIfNeeded` for callers already on the manager's queue.
+  private func rekeyAlphaUnlocked(circle: CircleSummary) async throws -> Bool {
+    let space = circle.uri.uriString()
+    guard let alphaLatest = try await store.alphaRekeyAfterVersion(spaceURI: space) else { return false }
+    guard circle.isEncrypted, (try? Self.trustedOwner(circle)) == ownerDID else {
+      try await store.clearAlphaRekey(spaceURI: space)
+      return false
+    }
+    let remoteLatest = try await syncRemote(circle: circle, full: false)
+    if let held = try await store.latestVersion(spaceURI: space), held > alphaLatest {
+      try await store.clearAlphaRekey(spaceURI: space)
+      return false
+    }
+    let roster = try await currentRoster(circle)
+    _ = try await rotateUnlocked(
+      circle: circle, memberDIDs: roster, reason: "manualRotation", remoteLatest: remoteLatest
+    )
+    try await store.clearAlphaRekey(spaceURI: space)
+    logger.notice("Circles: rekeyed an alpha Circle under the at:space/ form")
+    return true
   }
 
   // MARK: - Serialization
