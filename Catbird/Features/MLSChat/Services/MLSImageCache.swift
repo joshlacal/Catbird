@@ -20,6 +20,10 @@ actor MLSImageCache {
     return cache
   }()
 
+  /// Keys inserted into the thumbnail tier, so one blob's size variants can be removed together.
+  /// NSCache may evict entries on its own; a stale key here only costs a no-op removal.
+  private var thumbnailKeys: Set<String> = []
+
   private init() {
     let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
     baseCacheDir = caches.appendingPathComponent("mls-images", isDirectory: true)
@@ -101,6 +105,7 @@ actor MLSImageCache {
     guard let data = knownData ?? getOriginalData(blobId: blobId, userDID: userDID) else { return nil }
     guard let thumbnail = decodeThumbnail(from: data, maxPixelSize: maxPixelSize) else { return nil }
     thumbnailMemoryCache.setObject(thumbnail, forKey: memKey as NSString, cost: computeCost(for: thumbnail))
+    thumbnailKeys.insert(memKey)
     return thumbnail
   }
 
@@ -130,12 +135,30 @@ actor MLSImageCache {
     evictIfNeeded()
   }
 
+  /// Remove the decrypted bytes and every downsampled variant of specific blobs, for a message
+  /// erased from this device.
+  func remove(blobIds: [String], userDID: String) {
+    guard !userDID.isEmpty else { return }
+    let dir = userCacheDir(for: userDID)
+    let userPrefix = "\(sanitizedDID(userDID))/"
+    for blobId in blobIds where !blobId.isEmpty {
+      try? FileManager.default.removeItem(at: dir.appendingPathComponent(blobId))
+      let prefix = "\(userPrefix)\(blobId)@"
+      let keys = thumbnailKeys.filter { $0.hasPrefix(prefix) }
+      for key in keys {
+        thumbnailMemoryCache.removeObject(forKey: key as NSString)
+      }
+      thumbnailKeys.subtract(keys)
+    }
+  }
+
   /// Purge all cached images for a specific user DID (called on logout or account removal)
   func purge(for userDID: String) {
     guard !userDID.isEmpty else { return }
     let dir = baseCacheDir.appendingPathComponent(sanitizedDID(userDID), isDirectory: true)
     try? FileManager.default.removeItem(at: dir)
     thumbnailMemoryCache.removeAllObjects()
+    thumbnailKeys.removeAll()
   }
 
   /// Purge all cached images across all accounts
@@ -143,6 +166,7 @@ actor MLSImageCache {
     try? FileManager.default.removeItem(at: baseCacheDir)
     try? FileManager.default.createDirectory(at: baseCacheDir, withIntermediateDirectories: true)
     thumbnailMemoryCache.removeAllObjects()
+    thumbnailKeys.removeAll()
   }
 
   private func evictIfNeeded() {

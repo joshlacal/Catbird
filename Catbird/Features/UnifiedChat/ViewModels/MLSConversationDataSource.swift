@@ -12,6 +12,7 @@ import Observation
 import OSLog
 import Petrel
 import SwiftUI
+import UserNotifications
 
 /// A locally-originated outgoing message that has no server row yet.
 struct PendingMLSSend: Identifiable, Equatable, Sendable {
@@ -44,6 +45,7 @@ struct MLSMessageActionPerformer {
   let edit: @MainActor (_ conversationID: String, _ messageID: String, _ text: String) async throws -> Void
   let unsend: @MainActor (_ conversationID: String, _ messageID: String) async throws -> Void
   var react: (@MainActor (_ conversationID: String, _ messageID: String, _ emoji: String, _ action: MLSReactionPayload.ReactionAction) async throws -> Void)? = nil
+  var deleteForMe: (@MainActor (_ conversationID: String, _ messageID: String) async throws -> Void)? = nil
 }
 
 private enum DecodedMLSRowEvent {
@@ -1050,10 +1052,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         )
       }
 
-      confirmedMessages.removeAll { $0.id == resolvedMessageID }
-      loadedRowsByID.removeValue(forKey: resolvedMessageID)
-      pendingIDAliases.removeValue(forKey: resolvedMessageID)
-      optimisticReactionsByMessageID.removeValue(forKey: resolvedMessageID)
+      purgeErasedMessage(resolvedMessageID, blobIDs: Self.attachmentBlobIDs(for: target.mlsEmbed))
       return true
     } catch {
       self.error = error
@@ -1065,6 +1064,87 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
   func deleteMessage(messageID: String) async {
     _ = await unsendMessage(messageID: messageID)
+  }
+
+  /// Erases one confirmed message (from any sender) for this account only. Native code
+  /// deletes the local copy and records a durable marker, then files an owner tombstone so the
+  /// account's other devices erase it too; other members keep their copies. Unlike sending,
+  /// this works while the conversation cannot send (a pending request, a blocked recovery).
+  func deleteMessageForMe(messageID: String) async {
+    guard let target = message(for: messageID), target.canDeleteForMe else { return }
+    let resolvedMessageID = target.id
+    let blobIDs = Self.attachmentBlobIDs(for: target.mlsEmbed)
+
+    do {
+      if let actionPerformer {
+        guard let deleteForMe = actionPerformer.deleteForMe else {
+          throw NSError(
+            domain: "MLS",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: String(localized: "MLS service not available")]
+          )
+        }
+        try await deleteForMe(conversationId, resolvedMessageID)
+      } else {
+        guard let coordinator = activeCoordinator else {
+          throw NSError(
+            domain: "MLS",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: String(localized: "MLS service not available")]
+          )
+        }
+        try await coordinator.deleteMessageForMe(
+          conversationId: conversationId,
+          messageId: resolvedMessageID
+        )
+      }
+      purgeErasedMessage(resolvedMessageID, blobIDs: blobIDs)
+    } catch {
+      self.error = error
+      logger.error("Failed to delete MLS message for me: \(error.localizedDescription)")
+    }
+  }
+
+  /// Blob IDs of the decrypted attachments a message references, for the local cache purge.
+  static func attachmentBlobIDs(for embed: MLSEmbedData?) -> [String] {
+    switch embed {
+    case .image(let image): [image.blobId]
+    case .audio(let audio): [audio.blobId]
+    default: []
+    }
+  }
+
+  /// Drops every copy of an erased message that this process holds: the row and its reaction
+  /// overlay, decrypted attachment bytes in the image cache, and any delivered notification
+  /// that still shows its text. The native store has already erased the durable copy.
+  private func purgeErasedMessage(_ messageID: String, blobIDs: [String]) {
+    confirmedMessages.removeAll { $0.id == messageID }
+    loadedRowsByID.removeValue(forKey: messageID)
+    pendingIDAliases.removeValue(forKey: messageID)
+    optimisticReactionsByMessageID.removeValue(forKey: messageID)
+
+    let userDID = currentUserDID
+    if !blobIDs.isEmpty {
+      Task { await MLSImageCache.shared.remove(blobIds: blobIDs, userDID: userDID) }
+    }
+    guard appState != nil || injectedCoordinator != nil else { return }
+    let conversationID = conversationId
+    Task { await Self.removeDeliveredNotifications(conversationID: conversationID, messageID: messageID) }
+  }
+
+  /// Delivered MLS notifications carry `convo_id` and `message_id` (set by the notification
+  /// service extension), so the one showing an erased message's preview can be withdrawn.
+  private static func removeDeliveredNotifications(conversationID: String, messageID: String) async {
+    let center = UNUserNotificationCenter.current()
+    let delivered = await center.deliveredNotifications()
+    let identifiers = delivered.compactMap { notification -> String? in
+      let info = notification.request.content.userInfo
+      guard info["message_id"] as? String == messageID,
+            info["convo_id"] as? String == conversationID else { return nil }
+      return notification.request.identifier
+    }
+    guard !identifiers.isEmpty else { return }
+    center.removeDeliveredNotifications(withIdentifiers: identifiers)
   }
 
   // MARK: - Profile Enrichment
