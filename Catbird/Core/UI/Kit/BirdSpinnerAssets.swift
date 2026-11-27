@@ -52,11 +52,15 @@ enum BirdSpinnerAssets {
     let root = Entity()
     root.name = "BirdSpinnerRoot"
     root.addChild(model)
+    // Size by the whole bird, but pivot on the centre of the head (the
+    // gumdrop), so turning reads as the bird looking around rather than the
+    // protruding beak dragging the whole model around a shifted axis.
     let bounds = model.visualBounds(relativeTo: root)
     let height = max(bounds.extents.y, .ulpOfOne)
     let scale = 1 / height
+    let pivot = model.findEntity(named: "Head")?.visualBounds(relativeTo: root).center ?? bounds.center
     model.scale *= SIMD3(repeating: scale)
-    model.position = -bounds.center * scale
+    model.position = -pivot * scale
     return root
   }
 
