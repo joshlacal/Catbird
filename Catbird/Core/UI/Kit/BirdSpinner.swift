@@ -3,10 +3,11 @@
 //  Catbird
 //
 //  A tactile loading indicator: the 3D Catbird mascot rendered by RealityKit
-//  (virtual camera, transparent background). Idles with a slow turn, slight
-//  forward tilt and a gentle bob. Drag spins it (yaw, limited pitch) and
-//  releases with inertia that eases back into the idle turn; tap squashes and
-//  stretches it. Reduce Motion shows a still front three-quarter pose.
+//  (virtual camera, transparent background). The bird pivots about the centre
+//  of its head and looks around: idle, it glances in different directions
+//  with a slight forward tilt and a gentle bob; drag, and it follows your
+//  finger (up, down, left, right); tap, and it looks at you and bounces.
+//  Reduce Motion shows a still front three-quarter pose.
 //
 //  Debug playground: `simctl launch <udid> blue.catbird -BirdSpinnerPlayground 1`
 //
@@ -56,8 +57,8 @@ struct BirdSpinner: View {
 
   private var dragGesture: some Gesture {
     DragGesture(minimumDistance: 2)
-      .onChanged { value in motion.drag(translation: value.translation, viewSize: size) }
-      .onEnded { value in motion.release(velocity: value.velocity, viewSize: size) }
+      .onChanged { value in motion.look(at: value.location, viewSize: size) }
+      .onEnded { _ in motion.release() }
   }
 }
 
@@ -71,30 +72,50 @@ final class BirdSpinnerMotion {
   /// Called once, on the first rendered frame after the model is in the scene.
   var onFirstFrame: (@MainActor () -> Void)?
 
+  /// Which way the bird is looking, coarsely; a change while dragging ticks.
+  private enum Facing: Equatable {
+    case front, left, right, upward, downward
+  }
+
+  /// A damped spring's stiffness (1/s²) and damping ratio.
+  private struct Spring {
+    let stiffness: Float
+    let dampingRatio: Float
+    var damping: Float { 2 * stiffness.squareRoot() * dampingRatio }
+  }
+
   // MARK: Tuning
-  /// Idle turn rate: one revolution every 8 s.
-  private let idleYawRate: Float = .pi * 2 / 8
+  /// Furthest the head turns left/right and up/down while following a finger.
+  private let maxYaw: Float = 55 * .pi / 180
+  private let maxPitch: Float = 38 * .pi / 180
+  /// Range of the idle glances, kept well inside the drag limits.
+  private let idleYaw: Float = 32 * .pi / 180
+  private let idlePitch: Float = 16 * .pi / 180
+  /// How long each idle glance is held, in seconds.
+  private let idleHold: ClosedRange<Float> = 1.1...2.6
   /// Forward tilt (top toward the viewer) in radians.
-  private let forwardTilt: Float = 0.14
-  /// Still pose for Reduce Motion: beak turned 35° toward the viewer's right.
-  private let staticYaw: Float = 35 * .pi / 180
-  private let maxPitch: Float = 0.45
-  private let maxYawRate: Float = 30
+  private let forwardTilt: Float = 0.10
+  /// Still pose for Reduce Motion: beak turned 30° toward the viewer's right.
+  private let staticYaw: Float = 30 * .pi / 180
   private let bobAmplitude: Float = 0.025
   private let bobPeriod: Float = 2.6
-  /// How quickly fling inertia relaxes back to the idle turn (1/s).
-  private let inertiaRelax: Float = 1.1
+  /// Snappy while a finger leads, softer for idle glances.
+  private let followSpring = Spring(stiffness: 140, dampingRatio: 0.8)
+  private let idleSpring = Spring(stiffness: 34, dampingRatio: 0.75)
 
   // MARK: State
   private var yaw: Float = 0
-  private var yawRate: Float = .pi * 2 / 8
   private var pitch: Float = 0
+  private var yawRate: Float = 0
   private var pitchRate: Float = 0
+  private var targetYaw: Float = 0
+  private var targetPitch: Float = 0
+  /// Seconds until the next idle glance.
+  private var holdRemaining: Float = 1.2
   private var clock: Float = 0
   private var bounceAge: Float?
   private var isDragging = false
-  private var lastTranslation: CGSize = .zero
-  private var lastFrontIndex = 0
+  private var facing: Facing = .front
 
   private var bird: Entity?
   private var subscription: EventSubscription?
@@ -124,8 +145,6 @@ final class BirdSpinnerMotion {
     guard let bird = try? await BirdSpinnerAssets.makeBird() else { return }
     let environment = try? await BirdSpinnerAssets.fillEnvironment()
     self.bird = bird
-    yaw = reduceMotion ? staticYaw : 0
-    lastFrontIndex = frontIndex(for: yaw)
 
     let rig = Entity()
     rig.addChild(bird)
@@ -160,33 +179,37 @@ final class BirdSpinnerMotion {
 
   // MARK: Gestures
 
-  func drag(translation: CGSize, viewSize: CGFloat) {
+  /// Points the bird's gaze at a finger, given in the view's own coordinates.
+  /// The head turns further the further the finger is from the centre, easing
+  /// into its limits so a finger outside the view never snaps it around.
+  func look(at location: CGPoint, viewSize: CGFloat) {
     if !isDragging {
       isDragging = true
-      lastTranslation = .zero
-      yawRate = 0
-      pitchRate = 0
       PlatformHaptics.light()
       PlatformHaptics.prepare(.soft)
     }
-    let radiansPerPoint = Float.pi / Float(max(viewSize, 1))
-    let deltaX = Float(translation.width - lastTranslation.width)
-    let deltaY = Float(translation.height - lastTranslation.height)
-    lastTranslation = translation
-    yaw += deltaX * radiansPerPoint
-    pitch = min(max(pitch + deltaY * radiansPerPoint * 0.6, -maxPitch), maxPitch)
-    tickIfPassingFront()
+    let half = Float(max(viewSize, 1)) / 2
+    let offsetX = (Float(location.x) - half) / half
+    let offsetY = (Float(location.y) - half) / half
+    // Positive yaw turns the beak (+Z) toward +X, the viewer's right; positive
+    // pitch about X tips it down, so a finger below the centre looks down.
+    targetYaw = maxYaw * tanh(offsetX * 1.2)
+    targetPitch = maxPitch * tanh(offsetY * 1.2)
+    tickIfFacingChanged()
   }
 
-  func release(velocity: CGSize, viewSize: CGFloat) {
+  /// Lets go: the bird holds the last look for a beat, then resumes glancing.
+  func release() {
     isDragging = false
-    let radiansPerPoint = Float.pi / Float(max(viewSize, 1))
-    yawRate = min(max(Float(velocity.width) * radiansPerPoint, -maxYawRate), maxYawRate)
-    pitchRate = Float(velocity.height) * radiansPerPoint * 0.3
+    holdRemaining = 0.7
   }
 
+  /// Looks at the viewer and bounces.
   func bounce() {
     bounceAge = 0
+    targetYaw = 0
+    targetPitch = 0
+    holdRemaining = 1.4
     PlatformHaptics.light()
   }
 
@@ -201,30 +224,26 @@ final class BirdSpinnerMotion {
     #if DEBUG
     if rawDelta > 0 { recordFrame(delta: rawDelta) }
     #endif
-    let delta = min(rawDelta, 1 / 20)  // don't jump after a hitch or pause
+    let delta = min(rawDelta, 1 / 30)  // don't jump after a hitch or pause
 
     if reduceMotion {
       bird.transform = Transform(
         scale: .one,
-        rotation: simd_quatf(angle: forwardTilt, axis: [1, 0, 0])
-          * simd_quatf(angle: staticYaw, axis: [0, 1, 0]),
+        rotation: simd_quatf(angle: staticYaw, axis: [0, 1, 0])
+          * simd_quatf(angle: forwardTilt, axis: [1, 0, 0]),
         translation: .zero)
       return
     }
 
     clock += delta
     if !isDragging {
-      // Inertia relaxes exponentially into the idle turn.
-      yawRate += (idleYawRate - yawRate) * (1 - exp(-inertiaRelax * delta))
-      yaw += yawRate * delta
-      // Pitch springs back to level (critically-ish damped).
-      let stiffness: Float = 40
-      let damping: Float = 11
-      pitchRate += (-stiffness * pitch - damping * pitchRate) * delta
-      pitch = min(max(pitch + pitchRate * delta, -maxPitch), maxPitch)
-      if abs(yawRate - idleYawRate) > 0.6 { tickIfPassingFront() } else { lastFrontIndex = frontIndex(for: yaw) }
+      holdRemaining -= delta
+      if holdRemaining <= 0 { pickIdleGlance() }
     }
-    yaw = yaw.truncatingRemainder(dividingBy: .pi * 2000)  // keep Float precision
+
+    let spring = isDragging ? followSpring : idleSpring
+    step(&yaw, rate: &yawRate, toward: targetYaw, spring: spring, delta: delta)
+    step(&pitch, rate: &pitchRate, toward: targetPitch, spring: spring, delta: delta)
 
     var scale = SIMD3<Float>(repeating: 1)
     var hop: Float = 0
@@ -239,24 +258,52 @@ final class BirdSpinnerMotion {
     }
 
     let bob = bobAmplitude * sin(clock * 2 * .pi / bobPeriod)
+    // Pitch in the head's own frame, then turn: a nod stays a nod at any yaw.
     bird.transform = Transform(
       scale: scale,
-      rotation: simd_quatf(angle: forwardTilt + pitch, axis: [1, 0, 0])
-        * simd_quatf(angle: yaw, axis: [0, 1, 0]),
+      rotation: simd_quatf(angle: yaw, axis: [0, 1, 0])
+        * simd_quatf(angle: forwardTilt + pitch, axis: [1, 0, 0]),
       translation: [0, bob + hop, 0])
+  }
+
+  /// Semi-implicit Euler step of a damped spring; stable at frame-rate steps.
+  private func step(_ value: inout Float, rate: inout Float, toward target: Float, spring: Spring, delta: Float) {
+    rate += (spring.stiffness * (target - value) - spring.damping * rate) * delta
+    value += rate * delta
+  }
+
+  /// Chooses the next idle glance: often back at the viewer, otherwise
+  /// somewhere new and clearly different from where it is looking now.
+  private func pickIdleGlance() {
+    holdRemaining = Float.random(in: idleHold)
+    if abs(targetYaw) + abs(targetPitch) > 0.05, Float.random(in: 0...1) < 0.35 {
+      targetYaw = 0
+      targetPitch = 0
+      return
+    }
+    var nextYaw: Float
+    repeat {
+      nextYaw = Float.random(in: -idleYaw...idleYaw)
+    } while abs(nextYaw - targetYaw) < idleYaw * 0.5
+    targetYaw = nextYaw
+    targetPitch = Float.random(in: -idlePitch...idlePitch)
   }
 
   // MARK: Haptic ticks
 
-  private func frontIndex(for yaw: Float) -> Int {
-    Int((yaw / (.pi * 2)).rounded())
+  private func currentFacing() -> Facing {
+    let horizontal = targetYaw / maxYaw
+    let vertical = targetPitch / maxPitch
+    guard max(abs(horizontal), abs(vertical)) > 0.5 else { return .front }
+    if abs(horizontal) >= abs(vertical) { return horizontal > 0 ? .right : .left }
+    return vertical > 0 ? .downward : .upward
   }
 
-  /// A soft tick each time the beak swings past the viewer.
-  private func tickIfPassingFront() {
-    let index = frontIndex(for: yaw)
-    if index != lastFrontIndex {
-      lastFrontIndex = index
+  /// A soft tick each time the dragged gaze swings into a new direction.
+  private func tickIfFacingChanged() {
+    let next = currentFacing()
+    if next != facing {
+      facing = next
       PlatformHaptics.soft()
     }
   }
@@ -291,7 +338,7 @@ struct BirdSpinnerPlayground: View {
               BirdSpinner(size: 120)
             }
           }
-          Text(verbatim: "Drag to spin · tap to bounce")
+          Text(verbatim: "Drag to look around · tap to bounce")
             .font(.footnote)
             .foregroundStyle(.secondary)
         }
