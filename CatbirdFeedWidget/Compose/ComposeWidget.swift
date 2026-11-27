@@ -120,17 +120,17 @@ struct ComposeWidgetView: View {
   }
 
   var body: some View {
-    VStack(spacing: WidgetSpacing.md) {
+    VStack(spacing: WidgetSpacing.sm) {
       WidgetAvatar(name: entry.displayName ?? entry.handle, size: WidgetAvatarSize.xxl)
 
       Text(promptText)
-        .font(.system(size: 12, weight: .medium))
+        .widgetFont(.body, weight: .medium)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
 
       Image(systemName: WidgetSymbol.compose)
-        .font(.system(size: 16, weight: .medium))
-        .foregroundStyle(.blue)
+        .widgetFont(.iconCompact, weight: .medium)
+        .foregroundStyle(Color.accentColor)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .containerBackground(.clear, for: .widget)
