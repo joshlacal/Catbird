@@ -16,8 +16,8 @@ enum AskCatbirdToolPostFormatter {
 
   static let coverage = """
   Post text, attachment descriptions, link previews and quoted posts only. Images, video and \
-  linked pages were not inspected. Counts are as of retrieval. Each id is a navigation identifier \
-  for tool arguments and citations, never a visible label.
+  linked pages were not inspected. Counts are as of retrieval. A post's id (such as p3) is for tool \
+  arguments and citation links like [@alice](p3), never visible text.
   """
 
   struct Quoted: Encodable, Equatable {
@@ -58,19 +58,24 @@ enum AskCatbirdToolPostFormatter {
   ]
 
   /// JSON for a list of posts with one shared coverage statement.
-  static func list(_ posts: [AppBskyFeedDefs.PostView], now: Date = Date()) -> String {
-    CopilotPrompt.sourceJSON(List(posts: posts.map { post($0, now: now) }, coverage: coverage))
+  static func list(_ posts: [AppBskyFeedDefs.PostView], refs: AskCatbirdPostRefs? = nil, now: Date = Date()) -> String {
+    let items = posts.map { view in
+      post(view, id: refs?.ref(for: view.uri.uriString()), now: now)
+    }
+    return CopilotPrompt.sourceJSON(List(posts: items, coverage: coverage))
   }
 
-  static func post(_ view: AppBskyFeedDefs.PostView, textLimit: Int = textLimit, now: Date = Date()) -> Post {
-    post(CopilotPostEvidenceBuilder.build(view), view: view, textLimit: textLimit, now: now)
+  static func post(_ view: AppBskyFeedDefs.PostView, textLimit: Int = textLimit, id: String? = nil, now: Date = Date()) -> Post {
+    post(CopilotPostEvidenceBuilder.build(view), view: view, textLimit: textLimit, id: id, now: now)
   }
 
+  /// `id` names the post for the model; it defaults to the post's AT URI.
   static func post(
-    _ evidence: CopilotPostEvidence, view: AppBskyFeedDefs.PostView, textLimit: Int = textLimit, now: Date = Date()
+    _ evidence: CopilotPostEvidence, view: AppBskyFeedDefs.PostView, textLimit: Int = textLimit,
+    id: String? = nil, now: Date = Date()
   ) -> Post {
     let selected = evidence.selectedPost
-    var result = Post(id: selected.uri)
+    var result = Post(id: id ?? selected.uri)
     result.author = selected.authorHandle.map { "@" + $0 }
     result.authorName = selected.authorName.flatMap { $0.isEmpty ? nil : $0 }
     if case .knownType(let record) = view.record, let body = record as? AppBskyFeedPost {

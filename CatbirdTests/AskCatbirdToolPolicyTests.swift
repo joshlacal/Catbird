@@ -118,6 +118,21 @@ struct AskCatbirdThreadFormatterTests {
         #expect(payload["serverReportsAdditionalContext"] as? Bool == true)
     }
 
+    @Test(.enabled(if: formatterAvailable)) func shortPostIdsReplaceURIsAndExpandBack() throws {
+        guard #available(iOS 26.0, macOS 26.0, *) else { return }
+        let refs = AskCatbirdPostRefs()
+        let items = try (0 ..< 3).map { try item(index: $0, depth: $0, text: "Post \($0)") }
+        let transcript = try AskCatbirdThreadFormatter.format(.init(thread: items, hasOtherReplies: false), refs: refs)
+        #expect(!transcript.text.contains("at://"))
+        let rows = try #require(payload(transcript.text)["posts"] as? [[String: Any]])
+        #expect(rows.compactMap { $0["id"] as? String } == ["p1", "p2", "p3"])
+        #expect(rows.last?["replyTo"] as? String == "p2")
+        // Sources keep real URIs, and expanded evidence names every post by URI again.
+        #expect(transcript.sources.allSatisfy { $0.uri?.hasPrefix("at://") == true })
+        let expanded = try #require(payload(refs.expandJSON(transcript.text))["posts"] as? [[String: Any]])
+        #expect(expanded.compactMap { $0["id"] as? String } == (0 ..< 3).map(uri))
+    }
+
     @Test(.enabled(if: formatterAvailable)) func unreadableFocusDoesNotReturnNeighborsAsTheAnswer() throws {
         guard #available(iOS 26.0, macOS 26.0, *) else { return }
         let emptyFocus = try item(index: 0, depth: 0, text: "")
