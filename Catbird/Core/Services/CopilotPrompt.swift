@@ -38,7 +38,7 @@ enum CopilotPrompt {
   ) -> String {
     let bundle = SourceBundle(
       context: SourceContext(value: context),
-      conversationHistory: CopilotContextBudget.extractPairs(from: history),
+      conversationHistory: CopilotContextBudget.promptPairs(from: history),
       retrievedEvidence: evidence
     )
     return """

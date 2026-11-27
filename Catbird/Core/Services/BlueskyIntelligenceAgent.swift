@@ -122,40 +122,9 @@ enum AskCatbirdToolPolicy {
 
 /// Shared bounded metadata representation for search and thread neighbors.
 enum AskCatbirdPostFormatter {
-    struct SearchResult: Encodable {
-        let posts: [CopilotPostEvidence]
-        let coverage: String
-    }
-
     static func hasContent(_ evidence: CopilotPostEvidence) -> Bool {
         !(evidence.selectedPost.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !evidence.selectedPost.media.isEmpty || evidence.selectedPost.quotedPostURI != nil
-    }
-
-    static func compact(_ evidence: CopilotPostEvidence, textLimit: Int = 200) -> CopilotPostEvidence {
-        func bounded(_ original: CopilotPostEvidence.Post) -> CopilotPostEvidence.Post {
-            var post = original
-            if let text = post.text, text.count > textLimit {
-                post.text = String(text.prefix(textLimit))
-                post.textTruncated = true
-            }
-            post.media = post.media.map { original in
-                var media = original
-                if let alt = media.altText, alt.count > 200 {
-                    media.altText = String(alt.prefix(200)); media.truncatedFields.append("altText")
-                }
-                if let description = media.description, description.count > 200 {
-                    media.description = String(description.prefix(200)); media.truncatedFields.append("description")
-                }
-                // Read tools expose metadata; explicit image candidates come only from selected context.
-                media.thumbnailURL = nil
-                media.imageURL = nil
-                return media
-            }
-            return post
-        }
-        return .init(selectedPost: bounded(evidence.selectedPost),
-                     quotedPosts: evidence.quotedPosts.map(bounded), coverage: evidence.coverage)
     }
 }
 
@@ -387,11 +356,13 @@ actor BlueskyIntelligenceAgent {
         let budget = AskCatbirdToolPolicy.Budget(route: .privateCloudCompute)
         let linkRegistry = AskCatbirdLinkRegistry(seedText: [prompt, Self.formatContextualPrompt(context: context, history: history, prompt: prompt)])
         let readBudget = CopilotReadBudget(maximumReads: budget.reads)
+        let postRefs = AskCatbirdPostRefs()
         let toolContext = ToolContext(
             client: client, logger: logger, sourceCollector: sourceCollector,
             readBudget: readBudget,
             maximumResultTokens: budget.resultTokens,
             linkRegistry: linkRegistry,
+            postRefs: postRefs,
             tokenCounter: { text in
                 if #available(iOS 26.4, macOS 26.4, *) {
                     return try await tokenizerModel.tokenCount(for: Prompt(text))
@@ -472,6 +443,7 @@ actor BlueskyIntelligenceAgent {
             trim: fit.trim,
             sourceCollector: sourceCollector,
             proposalSink: proposalSink,
+            postRefs: postRefs,
             continuation: continuation,
             deltaTracker: deltaTracker,
             generation: generation
@@ -492,11 +464,13 @@ actor BlueskyIntelligenceAgent {
         let budget = AskCatbirdToolPolicy.Budget(route: .onDevice)
         let linkRegistry = AskCatbirdLinkRegistry(seedText: [prompt, Self.formatContextualPrompt(context: context, history: history, prompt: prompt)])
         let readBudget = CopilotReadBudget(maximumReads: budget.reads)
+        let postRefs = AskCatbirdPostRefs()
         let toolContext = ToolContext(
             client: client, logger: logger, sourceCollector: sourceCollector,
             readBudget: readBudget,
             maximumResultTokens: budget.resultTokens,
             linkRegistry: linkRegistry,
+            postRefs: postRefs,
             tokenCounter: { text in
                 if #available(iOS 26.4, macOS 26.4, *), let model {
                     return try await model.tokenCount(for: Prompt(text))
@@ -648,7 +622,7 @@ actor BlueskyIntelligenceAgent {
         }
         try await streamAndEmit(stream: runtime.stream(fullInput, level), trim: trim,
                                 sourceCollector: sourceCollector, proposalSink: proposalSink,
-                                continuation: continuation, generation: generation,
+                                postRefs: postRefs, continuation: continuation, generation: generation,
                                 validateImageAccess: {
                                     if fullInput.image != nil {
                                         try await imageAuthorization.require(context: context, accountDID: accountDID)
@@ -670,6 +644,7 @@ actor BlueskyIntelligenceAgent {
         trim: CopilotContextTrim,
         sourceCollector: TurnSourceCollector,
         proposalSink: TurnProposalSink,
+        postRefs: AskCatbirdPostRefs,
         continuation: AsyncThrowingStream<CopilotTurnEvent, Error>.Continuation,
         deltaTracker: TurnDeltaTracker? = nil,
         generation: UInt64,
@@ -677,19 +652,27 @@ actor BlueskyIntelligenceAgent {
     ) async throws {
         try turnGeneration.check(generation)
         var previousContent = ""
+        // Post ids the model cites are expanded to AT URIs before anything is shown or saved.
+        var answer = AskCatbirdRefStream(refs: postRefs)
+        func emit(_ delta: String) async {
+            guard !delta.isEmpty else { return }
+            continuation.yield(.textDelta(delta))
+            await deltaTracker?.markDeltaEmitted()
+        }
         for try await latestContent in stream {
             try await validateImageAccess()
             try turnGeneration.check(generation)
             if latestContent.count > previousContent.count {
-                let delta = String(latestContent.dropFirst(previousContent.count))
                 if !(previousContent.isEmpty
                     && latestContent.trimmingCharacters(in: .whitespacesAndNewlines)
                         .lowercased() == "null") {
-                    continuation.yield(.textDelta(delta))
-                    await deltaTracker?.markDeltaEmitted()
+                    await emit(answer.next(latestContent))
                 }
                 previousContent = latestContent
             }
+        }
+        if previousContent.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() != "null" {
+            await emit(answer.finish(previousContent))
         }
 
         try await validateImageAccess()
@@ -709,7 +692,11 @@ actor BlueskyIntelligenceAgent {
         for evidence in await sourceCollector.allEvidence() {
             try await validateImageAccess()
             try turnGeneration.check(generation)
-            continuation.yield(.evidence(evidence))
+            // Saved evidence is replayed in later turns, which have their own ids.
+            continuation.yield(.evidence(CopilotEvidence(
+                origin: evidence.origin, text: postRefs.expandJSON(evidence.text),
+                sources: evidence.sources, wasTruncated: evidence.wasTruncated
+            )))
         }
 
         if let proposal = await proposalSink.proposal {
@@ -1239,12 +1226,15 @@ struct ToolContext: @unchecked Sendable {
     let readBudget: CopilotReadBudget?
     let maximumResultTokens: Int
     let linkRegistry: AskCatbirdLinkRegistry?
+    /// Short post ids for this turn; nil shows full AT URIs.
+    let postRefs: AskCatbirdPostRefs?
     let tokenCounter: @Sendable (String) async throws -> Int
 
     init(client: ATProtoClient, logger: Logger, sourceCollector: TurnSourceCollector? = nil,
          readBudget: CopilotReadBudget? = nil,
          maximumResultTokens: Int = CopilotToolResult.maximumTokens,
          linkRegistry: AskCatbirdLinkRegistry? = nil,
+         postRefs: AskCatbirdPostRefs? = nil,
          tokenCounter: @escaping @Sendable (String) async throws -> Int = { $0.utf8.count }) {
         self.client = client
         self.logger = logger
@@ -1252,7 +1242,13 @@ struct ToolContext: @unchecked Sendable {
         self.readBudget = readBudget
         self.maximumResultTokens = maximumResultTokens
         self.linkRegistry = linkRegistry
+        self.postRefs = postRefs
         self.tokenCounter = tokenCounter
+    }
+
+    /// A post URI from a tool argument: a short post id, AT URI or bsky.app link.
+    func postURI(_ input: String) throws -> ATProtocolURI {
+        try AskCatbirdToolPolicy.postURI(postRefs?.resolve(input) ?? input)
     }
 
     static let readLimitReachedMessage = """
@@ -1500,7 +1496,7 @@ enum AskCatbirdThreadFormatter {
         let sources: [CopilotSource]
     }
 
-    static func format(_ output: AppBskyUnspeccedGetPostThreadV2.Output) throws -> Transcript {
+    static func format(_ output: AppBskyUnspeccedGetPostThreadV2.Output, refs: AskCatbirdPostRefs? = nil) throws -> Transcript {
         let ordered = output.thread.sorted {
             AskCatbirdToolPolicy.precedes(depth: $0.depth, otherDepth: $1.depth)
         }
@@ -1524,46 +1520,39 @@ enum AskCatbirdThreadFormatter {
         }
         for item in selected {
             let role = item.depth == 0 ? "focus" : (item.depth < 0 ? "ancestor" : "reply")
-            var row: [String: Any] = ["id": item.uri.uriString(), "role": role, "depth": item.depth]
+            let id = refs?.ref(for: item.uri.uriString()) ?? item.uri.uriString()
+            var row: [String: Any] = ["id": id]
             if case .appBskyUnspeccedDefsThreadItemPost(let value) = item.value,
                !value.hiddenByThreadgate, !value.mutedByViewer {
                 let post = value.post
-                row["author"] = "@" + post.author.handle.description
-                if let name = post.author.displayName, !name.isEmpty { row["authorName"] = name }
-                if case .knownType(let record) = post.record, let body = record as? AppBskyFeedPost {
-                    // Preserve all authored content in short threads, including newlines.
-                    // Unusually token-expensive text can still exceed local model context;
-                    // do not silently omit short-thread content to hide that error.
-                    let textLimit = item.depth == 0 || !isLong ? 3000 : 200
-                    row["text"] = String(body.text.prefix(textLimit))
-                    row["textTruncated"] = body.text.count > textLimit
-                    row["replyTo"] = body.reply.map { $0.parent.uri.uriString() as Any } ?? NSNull()
-                    row["root"] = body.reply.map { $0.root.uri.uriString() as Any } ?? NSNull()
-                    let snapshot = CopilotPostEvidenceBuilder.build(post)
-                    let evidence = item.depth == 0 ? snapshot : AskCatbirdPostFormatter.compact(snapshot)
-                    let data = try JSONEncoder().encode(evidence)
-                    let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-                    let selectedPost = object?["selectedPost"] as? [String: Any]
-                    row["media"] = selectedPost?["media"]
-                    row["quotedPostURI"] = selectedPost?["quotedPostURI"]
-                    row["quotedPosts"] = object?["quotedPosts"]
-                    row["coverage"] = evidence.coverage + evidence.selectedPost.coverage
-                    for source in evidence.sources where !sources.contains(source) { sources.append(source) }
-                } else {
-                    row["contentStatus"] = "unreadable record; do not infer its contents"
+                let snapshot = CopilotPostEvidenceBuilder.build(post)
+                // Whole posts fit; only neighbors in long threads are shortened.
+                let textLimit = item.depth == 0 || !isLong ? AskCatbirdToolPostFormatter.textLimit : 200
+                row = AskCatbirdToolPostFormatter.dictionary(
+                    AskCatbirdToolPostFormatter.post(snapshot, view: post, textLimit: textLimit, refs: refs)
+                )
+                row["isReply"] = nil
+                if case .knownType(let record) = post.record, let body = record as? AppBskyFeedPost,
+                   let parent = body.reply?.parent.uri.uriString(), item.depth > 1 {
+                    // Depth and order place ancestors and direct replies; deeper replies
+                    // name their parent because sibling branches interleave.
+                    row["replyTo"] = refs?.ref(for: parent) ?? parent
                 }
+                for source in snapshot.sources where !sources.contains(source) { sources.append(source) }
                 let source = CopilotSource(label: ToolFormatter.sourceLabel(post: post), uri: post.uri.uriString())
                 if !sources.contains(where: { $0.uri == source.uri }) { sources.append(source) }
             } else {
                 row["contentStatus"] = "unavailable or restricted; do not infer its contents"
             }
+            row["role"] = role
+            row["depth"] = item.depth
             rows.append(row)
         }
         let payload: [String: Any] = [
             "posts": rows,
             "omittedReturnedItems": max(ordered.count - selected.count, 0),
             "serverReportsAdditionalContext": serverHasMore,
-            "coverage": "All returned items are included when there are at most six; longer results contain focus and nearest context. Server request is bounded to two reply levels and three replies per branch. Hidden or restricted replies and deeper branches may be absent. This endpoint has no continuation cursor; fetch a returned post ID to inspect another branch. IDs are tool/navigation identities, never visible labels."
+            "coverage": "Ordered by position: negative depth is an ancestor (-1 the direct parent), 0 the focus post, positive depth a reply. Up to six posts; two reply levels, three replies per branch; hidden replies may be absent. Fetch a reply's id to read its branch. " + AskCatbirdToolPostFormatter.coverage
         ]
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys, .withoutEscapingSlashes])
         return Transcript(text: String(decoding: data, as: UTF8.self), sources: sources)
@@ -1587,7 +1576,7 @@ private struct ThreadFetchTool: Tool {
     @available(iOS 26.0, macOS 26.0, *)
     @Generable
     struct Arguments {
-        @Guide(description: "The at:// post URI or https://bsky.app/profile/.../post/... link from context or search results. Never invent an identifier.")
+        @Guide(description: "A post id such as p3, an at:// post URI, or a bsky.app post link from context or results. Never invent an identifier.")
         let uri: String
 
     }
@@ -1601,7 +1590,7 @@ private struct ThreadFetchTool: Tool {
     func fetch(arguments: Arguments) async throws -> String {
         context.logger.debug("fetch_thread invoked")
         
-        guard let uri = try? AskCatbirdToolPolicy.postURI(arguments.uri) else {
+        guard let uri = try? context.postURI(arguments.uri) else {
             context.logger.error("Invalid URI format: \(arguments.uri)")
             throw BlueskyAgentError.invalidThreadURI(arguments.uri)
         }
@@ -1639,7 +1628,7 @@ private struct ThreadFetchTool: Tool {
             throw BlueskyAgentError.emptyResult("thread (empty array)")
         }
 
-        let transcript = try AskCatbirdThreadFormatter.format(threadData)
+        let transcript = try AskCatbirdThreadFormatter.format(threadData, refs: context.postRefs)
         for source in transcript.sources {
             await context.recordSource(label: source.label, uri: source.uri)
         }
@@ -1705,11 +1694,7 @@ private struct PostSearchTool: Tool {
             )
         }
 
-        let snapshots = posts.prefix(limit).map { AskCatbirdPostFormatter.compact(CopilotPostEvidenceBuilder.build($0)) }
-        return CopilotPrompt.sourceJSON(AskCatbirdPostFormatter.SearchResult(
-            posts: snapshots,
-            coverage: "Bounded supplied post, attachment descriptions, link previews and quoted records only. Media bytes and linked pages were not inspected."
-        ))
+        return AskCatbirdToolPostFormatter.list(Array(posts.prefix(limit)), refs: context.postRefs)
     }
 }
 

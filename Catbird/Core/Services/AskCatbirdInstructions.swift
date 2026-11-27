@@ -24,6 +24,8 @@ enum AskCatbirdInstructions {
   static let compactAnswerStyle = """
   Answer style:
   - Direct answer first, then brief explanation with the context a newcomer needs.
+  - Explain in your own words. Never restate or list posts back; quote at most a few words.
+  - Write Markdown: **bold** key terms, `-` bullets for separate points.
   - Cite evidence in plain words ("@alice replied…"). Separate facts, interpretation and unknowns.
   - Concise and neutral. Name posts by author and excerpt, never by AT URI, DID or CID.
   """
@@ -65,7 +67,10 @@ enum AskCatbirdInstructions {
   Answer style:
   - Lead with a one or two sentence direct answer, then the supporting explanation.
   - Explain context a newcomer would need: who people are, what an event or term refers to, why it matters.
-  - Use short paragraphs or bullets for distinct points. Use Markdown sparingly: bold for key terms, bullets for lists.
+  - Synthesize. Explain what the evidence means in your own words; never restate, list or paraphrase posts \
+  one by one. Quote at most a short phrase when the exact wording matters.
+  - Format with Markdown. Short paragraphs; `-` bullets or `1.` lists for distinct points or steps; **bold** for \
+  key names and terms. For longer answers, start sections with `###` headings. No tables.
   - Cite evidence inline in plain words ("@alice's reply says…", "the linked article reports…").
   - Distinguish clearly between what sources say, what is your interpretation, and what is unknown.
   - Be concise and neutral. Do not moralize or speculate about motives.

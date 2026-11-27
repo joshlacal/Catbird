@@ -41,21 +41,25 @@ struct CopilotPostEvidenceTests {
   }
 
   @Test
-  func boundedSearchMetadataKeepsTextAttachmentsAndAvailableQuotesTogether() throws {
+  func toolPostKeepsWholeTextAttachmentsAndQuotesWithoutStorageIdentities() throws {
     let quote = try quoted("quoted", text: "Quoted claim")
-    let snapshot = CopilotPostEvidenceBuilder.build(try post(text: String(repeating: "A", count: 300),
-      embed: .appBskyEmbedRecordWithMediaView(.init(record: quote, media: .appBskyEmbedImagesView(images(alt: "Blue cat"))))))
-    let search = AskCatbirdPostFormatter.compact(snapshot)
-    #expect(search.selectedPost.text?.count == 200)
-    #expect(search.selectedPost.textTruncated)
-    #expect(search.selectedPost.media.first?.altText == "Blue cat")
-    #expect(search.quotedPosts.first?.text == "Quoted claim")
-    #expect(search.selectedPost.quotedPostURI == uriString("quoted"))
-    #expect(search.selectedPost.media.first?.thumbnailURL == nil)
-    #expect(search.selectedPost.media.first?.imageURL == nil)
-    let text = CopilotPrompt.sourceJSON(AskCatbirdPostFormatter.SearchResult(posts: [search], coverage: "Supplied metadata"))
+    let fullText = String(repeating: "A", count: 300)
+    let view = try post(text: fullText,
+      embed: .appBskyEmbedRecordWithMediaView(.init(record: quote, media: .appBskyEmbedImagesView(images(alt: "Blue cat")))))
+    let toolPost = AskCatbirdToolPostFormatter.post(view)
+    #expect(toolPost.id == view.uri.uriString())
+    #expect(toolPost.text == fullText)
+    #expect(toolPost.textTruncated == nil)
+    #expect(toolPost.media == ["image: Blue cat"])
+    #expect(toolPost.quotedPosts?.first?.text == "Quoted claim")
+    #expect(toolPost.notes == nil)
+    let text = AskCatbirdToolPostFormatter.list([view])
     #expect(text.contains("Blue cat") && text.contains("Quoted claim"))
-    #expect(AskCatbirdPostFormatter.hasContent(search))
+    // CIDs, DIDs, image URLs and per-post boilerplate cost tokens without helping answers.
+    #expect(!text.contains("bafy") && !text.contains("authorDID") && !text.contains("example.test"))
+    #expect(!text.contains("Snapshot of supplied post"))
+    #expect(text.components(separatedBy: "were not inspected").count == 2)
+    #expect(AskCatbirdPostFormatter.hasContent(CopilotPostEvidenceBuilder.build(view)))
   }
 
   @Test
@@ -143,6 +147,37 @@ struct CopilotPostEvidenceTests {
     #expect(evidence.selectedPost.quotedPostURI == uriString("unhydrated"))
     #expect(evidence.selectedPost.coverage.contains("Quoted post contents were not supplied."))
     #expect(evidence.quotedPosts.isEmpty)
+  }
+
+  @Test
+  func toolPostNamesQuotedPostsSoTheyCanBeFetched() throws {
+    let refs = AskCatbirdPostRefs()
+    let hydrated = AskCatbirdToolPostFormatter.post(
+      try post(embed: .appBskyEmbedRecordView(quoted("quoted", text: "Quoted claim"))), refs: refs)
+    #expect(hydrated.id == "p1")
+    #expect(hydrated.quotedPosts?.first?.id == "p2")
+    #expect(refs.uri(for: "p2") == uriString("quoted"))
+
+    let bare = try AppBskyEmbedRecord(record: .init(uri: uri("unhydrated"), cid: CIDString(cid())))
+    let unhydrated = AskCatbirdToolPostFormatter.post(try post(rawEmbed: .appBskyEmbedRecord(bare)))
+    #expect(unhydrated.quotedPosts?.first?.id == uriString("unhydrated"))
+    #expect(unhydrated.quotedPosts?.first?.status?.contains("not supplied") == true)
+  }
+
+  @Test
+  func toolPostKeepsLinkURLsWholeWhenResultsAreTrimmed() async throws {
+    let url = "https://example.test/" + String(repeating: "long-path/", count: 12) + "article"
+    let link = AppBskyEmbedExternal(external: .init(
+      uri: URI(uriString: url), title: "Article title", description: "Preview only"
+    ))
+    let view = try post(text: String(repeating: "A", count: 300), rawEmbed: .appBskyEmbedExternal(link))
+    let toolPost = AskCatbirdToolPostFormatter.post(view)
+    #expect(toolPost.media == ["link: Article title — Preview only"])
+    #expect(toolPost.links == [url])
+    let bounded = try await CopilotToolResult.bounded(
+      AskCatbirdToolPostFormatter.list([view]), maximumTokens: 700, tokenCount: { $0.utf8.count })
+    #expect(bounded.wasTruncated)
+    #expect(bounded.text.contains(url))
   }
 
   @Test

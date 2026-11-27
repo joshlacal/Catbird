@@ -315,11 +315,7 @@ struct AskCatbirdTurnView: View {
           }
           .accessibilityLabel("Catbird is responding")
         } else {
-          Text(CopilotReferencePresentation.render(turn.text, sources: turn.sources ?? []))
-            .appFont(AppTextRole.body)
-            .lineSpacing(Space.xs)
-            .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
+          AskCatbirdMarkdownText(text: turn.text, sources: turn.sources ?? [])
         }
         if let coverage = turn.evidence?.last(where: { $0.origin == "selected_image" }) {
           Label(coverage.text.replacingOccurrences(
