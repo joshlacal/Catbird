@@ -184,30 +184,16 @@
       "swiftlint.no_legacy_material" : 1,
       "swiftlint.no_raw_corner_radius" : 1
     },
-    "Catbird/Core/Preview/PreviewModifiers.swift" : {
-      "raw_font" : 4,
-      "raw_spacing" : 3,
-      "swiftlint.no_raw_system_font_size" : 1,
-      "swiftlint.no_raw_text_style_font" : 3
-    },
     "Catbird/Core/State/AppStateManager.swift" : {
       "raw_animation" : 4
     },
     "Catbird/Core/State/ThemeManager.swift" : {
-      "raw_color" : 4
+      "raw_color" : 1
     },
     "Catbird/Core/UI/AdaptiveGlassEffect.swift" : {
-      "legacy_material" : 6,
-      "raw_color" : 7,
-      "raw_corner_radius" : 1,
-      "swiftlint.no_hardcoded_blue" : 1,
-      "swiftlint.no_legacy_material" : 6,
-      "swiftlint.no_raw_corner_radius" : 1
-    },
-    "Catbird/Core/UI/AsyncProfileImage.swift" : {
-      "raw_animation" : 1,
-      "raw_color" : 6,
-      "raw_spacing" : 1
+      "legacy_material" : 2,
+      "raw_color" : 1,
+      "swiftlint.no_legacy_material" : 2
     },
     "Catbird/Core/UI/Drag/BigDefaultButtonDropDelegate.swift" : {
       "raw_animation" : 2
@@ -223,13 +209,6 @@
       "raw_spacing" : 1,
       "swiftlint.no_raw_text_style_font" : 2
     },
-    "Catbird/Core/UI/ErrorStateView.swift" : {
-      "legacy_design_tokens" : 3,
-      "raw_color" : 2,
-      "raw_corner_radius" : 1,
-      "raw_spacing" : 11,
-      "swiftlint.no_cornerradius_modifier" : 1
-    },
     "Catbird/Core/UI/ExpandableAltTextCaption.swift" : {
       "off_grid_spacing" : 1,
       "raw_animation" : 2,
@@ -238,9 +217,7 @@
       "swiftlint.no_cornerradius_modifier" : 1
     },
     "Catbird/Core/UI/FAB.swift" : {
-      "raw_color" : 3,
-      "raw_spacing" : 7,
-      "small_tap_target" : 3
+      "small_tap_target" : 1
     },
     "Catbird/Core/UI/FlexibleHeaderGeometry.swift" : {
       "raw_corner_radius" : 1
@@ -298,29 +275,12 @@
       "swiftlint.no_cornerradius_modifier" : 1
     },
     "Catbird/Core/UI/ThemedViewModifiers.swift" : {
-      "legacy_material" : 7,
-      "raw_corner_radius" : 4,
+      "legacy_material" : 4,
       "raw_spacing" : 1,
-      "swiftlint.no_hardcoded_blue" : 1,
-      "swiftlint.no_legacy_material" : 7,
-      "swiftlint.no_raw_corner_radius" : 4
+      "swiftlint.no_legacy_material" : 4
     },
     "Catbird/Core/UI/ThreadSeparatorView.swift" : {
       "raw_spacing" : 2
-    },
-    "Catbird/Core/UI/ToastNotification.swift" : {
-      "legacy_material" : 1,
-      "off_grid_spacing" : 1,
-      "raw_animation" : 3,
-      "raw_color" : 4,
-      "raw_spacing" : 4,
-      "swiftlint.no_legacy_material" : 1
-    },
-    "Catbird/Core/UI/ValidatingTextField.swift" : {
-      "raw_color" : 4,
-      "raw_corner_radius" : 2,
-      "raw_spacing" : 2,
-      "swiftlint.no_raw_corner_radius" : 2
     },
     "Catbird/Core/UI/VerificationBadgeView.swift" : {
       "raw_color" : 2,
@@ -539,16 +499,7 @@
       "swiftlint.no_raw_system_font_size" : 3
     },
     "Catbird/Features/Chat/Views/MLSDirectDraftConversationView.swift" : {
-      "legacy_material" : 1,
-      "off_grid_spacing" : 2,
-      "raw_color" : 3,
-      "raw_corner_radius" : 2,
-      "raw_font" : 8,
-      "raw_spacing" : 12,
-      "swiftlint.no_legacy_material" : 1,
-      "swiftlint.no_raw_corner_radius" : 2,
-      "swiftlint.no_raw_system_font_size" : 1,
-      "swiftlint.no_raw_text_style_font" : 7
+      "raw_color" : 3
     },
     "Catbird/Features/Chat/Views/MLSIntroSheet.swift" : {
       "off_grid_spacing" : 2,
@@ -833,15 +784,11 @@
       "swiftlint.no_legacy_material" : 3
     },
     "Catbird/Features/Feed/Views/Components/PostComposer/Components/EnhancedRichTextEditor.swift" : {
-      "off_grid_spacing" : 2,
+      "off_grid_spacing" : 1,
       "raw_color" : 3,
-      "raw_corner_radius" : 2,
-      "raw_font" : 19,
-      "raw_spacing" : 20,
-      "small_tap_target" : 6,
-      "swiftlint.no_hardcoded_blue" : 2,
-      "swiftlint.no_raw_corner_radius" : 2,
-      "swiftlint.no_raw_system_font_size" : 14
+      "raw_font" : 5,
+      "raw_spacing" : 2,
+      "swiftlint.no_hardcoded_blue" : 2
     },
     "Catbird/Features/Feed/Views/Components/PostComposer/Components/LinkEditingOverlay.swift" : {
       "legacy_material" : 1,
@@ -1183,12 +1130,9 @@
       "swiftlint.no_raw_text_style_font" : 13
     },
     "Catbird/Features/Feed/Views/FeedProductPageView.swift" : {
-      "off_grid_spacing" : 6,
+      "off_grid_spacing" : 4,
       "raw_color" : 2,
-      "raw_font" : 3,
-      "raw_spacing" : 17,
-      "small_tap_target" : 2,
-      "swiftlint.no_raw_text_style_font" : 3
+      "raw_spacing" : 12
     },
     "Catbird/Features/Feed/Views/FeedRemovalBadgeOverlay.swift" : {
       "raw_animation" : 1,
@@ -1204,14 +1148,10 @@
       "raw_spacing" : 9
     },
     "Catbird/Features/Feed/Views/FeedStorefrontComponents.swift" : {
-      "off_grid_spacing" : 2,
+      "off_grid_spacing" : 1,
       "raw_color" : 4,
       "raw_corner_radius" : 2,
-      "raw_font" : 2,
-      "raw_spacing" : 9,
-      "swiftlint.no_raw_corner_radius" : 1,
-      "swiftlint.no_raw_system_font_size" : 1,
-      "swiftlint.no_raw_text_style_font" : 1
+      "swiftlint.no_raw_corner_radius" : 1
     },
     "Catbird/Features/Feed/Views/FeedView.swift" : {
       "raw_animation" : 1
@@ -1445,7 +1385,7 @@
       "raw_color" : 22,
       "raw_corner_radius" : 15,
       "raw_font" : 4,
-      "raw_spacing" : 6,
+      "raw_spacing" : 3,
       "swiftlint.no_cornerradius_modifier" : 1,
       "swiftlint.no_raw_corner_radius" : 17,
       "swiftlint.no_raw_text_style_font" : 3
@@ -1529,14 +1469,7 @@
       "raw_spacing" : 1
     },
     "Catbird/Features/MLSChat/LabyrinthSettingsAndRestoreView.swift" : {
-      "legacy_material" : 1,
-      "off_grid_spacing" : 6,
-      "raw_animation" : 2,
-      "raw_color" : 14,
-      "raw_font" : 1,
-      "raw_spacing" : 7,
-      "swiftlint.no_legacy_material" : 1,
-      "swiftlint.no_raw_text_style_font" : 1
+      "raw_color" : 14
     },
     "Catbird/Features/MLSChat/MLSConversationDetailView.swift" : {
       "legacy_material" : 1,
@@ -1545,12 +1478,7 @@
       "swiftlint.no_legacy_material" : 1
     },
     "Catbird/Features/MLSChat/MLSSpacesRequiredGateView.swift" : {
-      "off_grid_spacing" : 1,
-      "raw_color" : 1,
-      "raw_font" : 9,
-      "raw_spacing" : 9,
-      "swiftlint.no_raw_system_font_size" : 1,
-      "swiftlint.no_raw_text_style_font" : 6
+      "raw_color" : 1
     },
     "Catbird/Features/MLSChat/Models/MLSCleanSlateModels.swift" : {
       "legacy_design_tokens" : 15,
@@ -1632,14 +1560,7 @@
       "swiftlint.no_raw_system_font_size" : 1
     },
     "Catbird/Features/MLSChat/Views/Components/VoiceMessagePlayerView.swift" : {
-      "off_grid_spacing" : 2,
-      "raw_animation" : 1,
-      "raw_color" : 6,
-      "raw_corner_radius" : 1,
-      "raw_font" : 2,
-      "raw_spacing" : 3,
-      "swiftlint.no_raw_corner_radius" : 1,
-      "swiftlint.no_raw_system_font_size" : 2
+      "raw_color" : 6
     },
     "Catbird/Features/MLSChat/Views/Components/VoiceRecordingOverlay.swift" : {
       "raw_animation" : 1,
@@ -2078,14 +1999,7 @@
       "swiftlint.no_raw_system_font_size" : 3
     },
     "Catbird/Features/Settings/DeviceApproval/DeviceApprovalCard.swift" : {
-      "legacy_design_tokens" : 2,
-      "off_grid_spacing" : 3,
-      "raw_color" : 4,
-      "raw_corner_radius" : 1,
-      "raw_font" : 5,
-      "swiftlint.no_hardcoded_blue" : 1,
-      "swiftlint.no_raw_corner_radius" : 1,
-      "swiftlint.no_raw_text_style_font" : 5
+      "raw_color" : 2
     },
     "Catbird/Features/Settings/DeviceManagementView.swift" : {
       "off_grid_spacing" : 1,
@@ -2396,62 +2310,30 @@
       "swiftlint.no_legacy_material" : 1,
       "swiftlint.no_raw_corner_radius" : 1
     },
-    "CatbirdFeedWidget/CatbirdFeedWidget.swift" : {
-      "raw_font" : 17,
-      "swiftlint.no_raw_system_font_size" : 13,
-      "swiftlint.no_raw_text_style_font" : 4
-    },
-    "CatbirdFeedWidget/Compose/ComposeWidget.swift" : {
-      "raw_color" : 1,
-      "raw_font" : 2,
-      "swiftlint.no_hardcoded_blue" : 1,
-      "swiftlint.no_raw_system_font_size" : 2
-    },
     "CatbirdFeedWidget/LockScreen/LockScreenWidgets.swift" : {
-      "raw_color" : 2,
-      "raw_font" : 3,
-      "swiftlint.no_raw_system_font_size" : 3
-    },
-    "CatbirdFeedWidget/Shared/WidgetDesignSystem.swift" : {
-      "raw_color" : 1,
-      "raw_font" : 11,
-      "raw_spacing" : 1,
-      "swiftlint.no_raw_system_font_size" : 11
-    },
-    "CatbirdNotificationWidget/CatbirdNotificationWidget.swift" : {
-      "legacy_material" : 2,
-      "off_grid_spacing" : 1,
-      "raw_color" : 5,
-      "raw_corner_radius" : 2,
-      "raw_font" : 15,
-      "raw_spacing" : 5,
-      "swiftlint.no_legacy_material" : 2,
-      "swiftlint.no_raw_corner_radius" : 2,
-      "swiftlint.no_raw_system_font_size" : 5,
-      "swiftlint.no_raw_system_text_style_font" : 9,
-      "swiftlint.no_raw_text_style_font" : 1
+      "raw_color" : 1
     }
   },
   "ruleTotals" : {
-    "legacy_design_tokens" : 433,
-    "legacy_material" : 79,
-    "off_grid_spacing" : 464,
-    "raw_animation" : 245,
-    "raw_color" : 1331,
-    "raw_corner_radius" : 415,
-    "raw_font" : 675,
-    "raw_spacing" : 2346,
-    "small_tap_target" : 14,
-    "swiftlint.no_cornerradius_modifier" : 75,
-    "swiftlint.no_hardcoded_blue" : 18,
+    "legacy_design_tokens" : 428,
+    "legacy_material" : 67,
+    "off_grid_spacing" : 444,
+    "raw_animation" : 238,
+    "raw_color" : 1293,
+    "raw_corner_radius" : 399,
+    "raw_font" : 579,
+    "raw_spacing" : 2246,
+    "small_tap_target" : 4,
+    "swiftlint.no_cornerradius_modifier" : 74,
+    "swiftlint.no_hardcoded_blue" : 14,
     "swiftlint.no_legacy_design_tokens" : 259,
-    "swiftlint.no_legacy_material" : 76,
-    "swiftlint.no_raw_corner_radius" : 288,
-    "swiftlint.no_raw_system_font_size" : 200,
-    "swiftlint.no_raw_system_text_style_font" : 19,
-    "swiftlint.no_raw_text_style_font" : 255,
+    "swiftlint.no_legacy_material" : 64,
+    "swiftlint.no_raw_corner_radius" : 273,
+    "swiftlint.no_raw_system_font_size" : 146,
+    "swiftlint.no_raw_system_text_style_font" : 10,
+    "swiftlint.no_raw_text_style_font" : 224,
     "unreasoned_lint_disable" : 1
   },
   "schemaVersion" : 1,
-  "totalViolations" : 7193
+  "totalViolations" : 6763
 }

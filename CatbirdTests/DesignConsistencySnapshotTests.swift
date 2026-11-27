@@ -154,7 +154,7 @@ struct DesignConsistencySnapshotTests {
 
     let compliantLabel = UILabel(frame: CGRect(x: 16, y: 56, width: 280, height: 24))
     compliantLabel.text = "FontManager monospaced text"
-    compliantLabel.font = UIFont.monospacedSystemFont(ofSize: 16, weight: .regular)
+    compliantLabel.font = UIFont.monospacedSystemFont(ofSize: 16, weight: UIFont.Weight.regular)
     compliantLabel.textColor = .white
     compliantLabel.accessibilityIdentifier = "fixture.monoLabel"
     container.addSubview(compliantLabel)

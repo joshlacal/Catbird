@@ -36,6 +36,14 @@ public struct FileRuleExemptions: Sendable {
             exempt.insert(.rawFont)
         }
 
+        if normalized.hasSuffix("CatbirdFeedWidget/Shared/WidgetDesignSystem.swift")
+            || normalized.hasSuffix("CatbirdNotificationWidget/NotificationWidgetDesignSystem.swift")
+        {
+            exempt.insert(.rawCornerRadius)
+            exempt.insert(.rawFont)
+            exempt.insert(.rawColor)
+        }
+
         return FileRuleExemptions(exemptRules: exempt)
     }
 }

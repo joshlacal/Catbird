@@ -242,6 +242,7 @@ private struct CatbirdKitGalleryContent: View {
         }
       }
       .padding(Space.screenMargin)
+      .containerRelativeFrame(.horizontal, alignment: .leading)
     }
     .background(theme.surface(.canvas))
     .sheet(isPresented: $showsSheetSample) {
@@ -369,32 +370,38 @@ private struct CatbirdKitGalleryContent: View {
   private var buttons: some View {
     section("Buttons") {
       ForEach(CatbirdButtonKind.allCases, id: \.self) { kind in
-        HStack {
-          ForEach(CatbirdButtonSize.allCases, id: \.self) { size in
-            Button {} label: { Text(verbatim: String(describing: kind)) }
-              .buttonStyle(.catbird(kind, size: size))
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack {
+            ForEach(CatbirdButtonSize.allCases, id: \.self) { size in
+              Button {} label: { Text(verbatim: String(describing: kind)) }
+                .buttonStyle(.catbird(kind, size: size))
+            }
           }
         }
       }
       Button {} label: { Text(verbatim: "Full width lg") }
         .buttonStyle(.catbird(.primary, size: .lg, fullWidth: true))
-      HStack {
-        Button {} label: { Text(verbatim: "Loading") }
-          .buttonStyle(.catbird(.primary, size: .md, isLoading: true))
-        Button {} label: { Text(verbatim: "Disabled") }
-          .buttonStyle(.catbird(.primary, size: .md)).disabled(true)
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack {
+          Button {} label: { Text(verbatim: "Loading") }
+            .buttonStyle(.catbird(.primary, size: .md, isLoading: true))
+          Button {} label: { Text(verbatim: "Disabled") }
+            .buttonStyle(.catbird(.primary, size: .md)).disabled(true)
+        }
       }
     }
   }
 
   private var iconButtons: some View {
     section("Icon buttons") {
-      HStack {
-        ForEach(CatbirdButtonSize.allCases, id: \.self) { size in
-          CatbirdIconButton(systemImage: "plus", label: Text(verbatim: "Add"), size: size) {}
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack {
+          ForEach(CatbirdButtonSize.allCases, id: \.self) { size in
+            CatbirdIconButton(systemImage: "plus", label: Text(verbatim: "Add"), size: size) {}
+          }
+          CatbirdIconButton(systemImage: "heart", label: Text(verbatim: "Like"), style: .quiet) {}
+          CatbirdIconButton(systemImage: "bell", label: Text(verbatim: "Alerts"), style: .glass) {}
         }
-        CatbirdIconButton(systemImage: "heart", label: Text(verbatim: "Like"), style: .quiet) {}
-        CatbirdIconButton(systemImage: "bell", label: Text(verbatim: "Alerts"), style: .glass) {}
       }
     }
   }
@@ -402,15 +409,19 @@ private struct CatbirdKitGalleryContent: View {
   private var follow: some View {
     section("Follow") {
       ForEach(FollowButtonSize.allCases, id: \.self) { size in
-        HStack {
-          ForEach(FollowButtonState.allCases, id: \.self) { state in
-            FollowButton(state: state, size: size) {}
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack {
+            ForEach(FollowButtonState.allCases, id: \.self) { state in
+              FollowButton(state: state, size: size) {}
+            }
           }
         }
       }
-      HStack {
-        FollowButton(state: .notFollowing, isLoading: true) {}
-        FollowButton(state: .following, isLoading: true) {}
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack {
+          FollowButton(state: .notFollowing, isLoading: true) {}
+          FollowButton(state: .following, isLoading: true) {}
+        }
       }
     }
   }
@@ -418,10 +429,12 @@ private struct CatbirdKitGalleryContent: View {
   private var feedLibrary: some View {
     section("Feed library (visual)") {
       ForEach(FeedLibraryButtonSize.allCases, id: \.self) { size in
-        HStack {
-          FeedLibraryButtonLabel(membership: .absent, size: size)
-          FeedLibraryButtonLabel(membership: .saved, size: size)
-          FeedLibraryButtonLabel(membership: .pinned, size: size)
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack {
+            FeedLibraryButtonLabel(membership: .absent, size: size)
+            FeedLibraryButtonLabel(membership: .saved, size: size)
+            FeedLibraryButtonLabel(membership: .pinned, size: size)
+          }
         }
       }
     }
@@ -429,16 +442,20 @@ private struct CatbirdKitGalleryContent: View {
 
   private var chipsAndBadges: some View {
     section("Chips and badges") {
-      HStack {
-        CatbirdChip(title: Text(verbatim: "Selected"), isSelected: chipSelected) {
-          self.chipSelected.toggle()
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack {
+          CatbirdChip(title: Text(verbatim: "Selected"), isSelected: chipSelected) {
+            self.chipSelected.toggle()
+          }
+          CatbirdChip(title: Text(verbatim: "Idle"), systemImage: "flame", action: {})
+          CatbirdChip(title: Text(verbatim: "Small"), size: .sm)
         }
-        CatbirdChip(title: Text(verbatim: "Idle"), systemImage: "flame", action: {})
-        CatbirdChip(title: Text(verbatim: "Small"), size: .sm)
       }
-      HStack {
-        ForEach(CatbirdTone.allCases, id: \.self) { tone in
-          CatbirdBadge(Text(verbatim: String(describing: tone)), tone: tone)
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack {
+          ForEach(CatbirdTone.allCases, id: \.self) { tone in
+            CatbirdBadge(Text(verbatim: String(describing: tone)), tone: tone)
+          }
         }
       }
     }
@@ -481,12 +498,14 @@ private struct CatbirdKitGalleryContent: View {
 
   private var avatarsSection: some View {
     section("Avatars") {
-      HStack(spacing: Space.md) {
-        CatbirdAvatar(url: nil, displayName: "Alice", size: AvatarSize.xs)
-        CatbirdAvatar(url: nil, displayName: "Bob", size: AvatarSize.sm)
-        CatbirdAvatar(url: nil, displayName: "Catbird", size: AvatarSize.md)
-        CatbirdAvatar(url: nil, displayName: "Dana", size: AvatarSize.lg)
-        CatbirdAvatar(url: nil, displayName: "Eve", size: AvatarSize.xl, shape: .squircle(.md))
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: Space.md) {
+          CatbirdAvatar(url: nil, displayName: "Alice", size: AvatarSize.xs)
+          CatbirdAvatar(url: nil, displayName: "Bob", size: AvatarSize.sm)
+          CatbirdAvatar(url: nil, displayName: "Catbird", size: AvatarSize.md)
+          CatbirdAvatar(url: nil, displayName: "Dana", size: AvatarSize.lg)
+          CatbirdAvatar(url: nil, displayName: "Eve", size: AvatarSize.xl, shape: .squircle(.md))
+        }
       }
     }
   }
@@ -539,13 +558,15 @@ private struct CatbirdKitGalleryContent: View {
 
   private var iconsSection: some View {
     section("Icon scale") {
-      HStack(spacing: Space.lg) {
-        ForEach(CatbirdSymbolRole.allCases, id: \.self) { role in
-          VStack(spacing: Space.xs) {
-            Image(systemName: "sparkles").catbirdSymbol(role)
-            Text(verbatim: "\(Int(role.pointSize))")
-              .appFont(AppTextRole.caption2)
-              .foregroundStyle(theme.text(.secondary))
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: Space.lg) {
+          ForEach(CatbirdSymbolRole.allCases, id: \.self) { role in
+            VStack(spacing: Space.xs) {
+              Image(systemName: "sparkles").catbirdSymbol(role)
+              Text(verbatim: "\(Int(role.pointSize))")
+                .appFont(AppTextRole.caption2)
+                .foregroundStyle(theme.text(.secondary))
+            }
           }
         }
       }
@@ -554,27 +575,29 @@ private struct CatbirdKitGalleryContent: View {
 
   private var glassSection: some View {
     section("Liquid Glass (.catbirdGlass)") {
-      HStack(spacing: Space.md) {
-        Text(verbatim: "Regular")
-          .appFont(AppTextRole.footnote.weight(.semibold))
-          .foregroundStyle(theme.text(.primary))
-          .padding(.horizontal, Space.lg)
-          .padding(.vertical, Space.sm)
-          .catbirdGlass(.regular, in: Capsule(style: .continuous), interactive: true)
-        Text(verbatim: "Clear Tinted")
-          .appFont(AppTextRole.footnote.weight(.semibold))
-          .foregroundStyle(theme.onAccent)
-          .padding(.horizontal, Space.lg)
-          .padding(.vertical, Space.sm)
-          .catbirdGlass(.clear, in: Capsule(style: .continuous), interactive: true, tinted: true)
-        Text(verbatim: "Prominent")
-          .appFont(AppTextRole.footnote.weight(.semibold))
-          .foregroundStyle(theme.onAccent)
-          .padding(.horizontal, Space.lg)
-          .padding(.vertical, Space.sm)
-          .catbirdGlass(.prominent, in: Capsule(style: .continuous), interactive: true, tinted: true)
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: Space.md) {
+          Text(verbatim: "Regular")
+            .appFont(AppTextRole.footnote.weight(.semibold))
+            .foregroundStyle(theme.text(.primary))
+            .padding(.horizontal, Space.lg)
+            .padding(.vertical, Space.sm)
+            .catbirdGlass(.regular, in: Capsule(style: .continuous), interactive: true)
+          Text(verbatim: "Clear Tinted")
+            .appFont(AppTextRole.footnote.weight(.semibold))
+            .foregroundStyle(theme.onAccent)
+            .padding(.horizontal, Space.lg)
+            .padding(.vertical, Space.sm)
+            .catbirdGlass(.clear, in: Capsule(style: .continuous), interactive: true, tinted: true)
+          Text(verbatim: "Prominent")
+            .appFont(AppTextRole.footnote.weight(.semibold))
+            .foregroundStyle(theme.onAccent)
+            .padding(.horizontal, Space.lg)
+            .padding(.vertical, Space.sm)
+            .catbirdGlass(.prominent, in: Capsule(style: .continuous), interactive: true, tinted: true)
+        }
+        .padding(Space.lg)
       }
-      .padding(Space.lg)
       .frame(maxWidth: .infinity)
       .background(BrandGradientFill().catbirdClip(.lg))
     }
@@ -596,11 +619,13 @@ private struct CatbirdKitGalleryContent: View {
 
   private var radii: some View {
     section("Radius") {
-      HStack {
-        ForEach(Radius.allCases, id: \.self) { radius in
-          VStack {
-            radius.shape.fill(theme.accentChrome.opacity(0.3)).frame(width: 52, height: 52)
-            Text(verbatim: "\(Int(radius.value))").appFont(AppTextRole.caption)
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack {
+          ForEach(Radius.allCases, id: \.self) { radius in
+            VStack {
+              radius.shape.fill(theme.accentChrome.opacity(0.3)).frame(width: 52, height: 52)
+              Text(verbatim: "\(Int(radius.value))").appFont(AppTextRole.caption)
+            }
           }
         }
       }

@@ -118,7 +118,7 @@ private struct CatbirdButtonBody: View {
   private var foreground: AnyShapeStyle {
     switch kind {
     case .primary, .brand, .glassProminent: return AnyShapeStyle(theme.onAccent)
-    case .tonal, .quiet: return AnyShapeStyle(TintShapeStyle())
+    case .tonal, .quiet: return AnyShapeStyle(theme.accentText)
     case .outline, .glass: return AnyShapeStyle(theme.text(.primary))
     case .muted: return AnyShapeStyle(theme.text(.secondary))
     case .destructive: return AnyShapeStyle(theme.semantic(.danger))
@@ -127,10 +127,7 @@ private struct CatbirdButtonBody: View {
 
   /// Never the tint shape style itself: a tint that resolves to the tint recurses forever.
   private var spinnerTint: AnyShapeStyle? {
-    switch kind {
-    case .tonal, .quiet: return nil
-    default: return foreground
-    }
+    foreground
   }
 
   var body: some View {
@@ -181,9 +178,9 @@ private struct CatbirdButtonBody: View {
     let shape = Capsule(style: .continuous)
     let tonal = increased ? 0.22 : 0.14
     switch kind {
-    case .primary: shape.fill(TintShapeStyle())
+    case .primary: shape.fill(theme.accentChrome)
     case .brand: shape.fill(BrandGradient.current(theme: theme))
-    case .tonal: shape.fill(TintShapeStyle().opacity(tonal))
+    case .tonal: shape.fill(theme.accentChrome.opacity(tonal))
     case .destructive: shape.fill(theme.semantic(.danger).opacity(tonal))
     case .outline, .muted, .quiet, .glass, .glassProminent: Color.clear
     }

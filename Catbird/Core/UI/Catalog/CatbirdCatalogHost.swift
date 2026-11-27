@@ -14,6 +14,24 @@ import SwiftUI
 import UIKit
 #endif
 
+/// Stores the most recent `blue.catbird://catalog?...` URL in case a deep link
+/// arrives during cold launch before `CatbirdCatalogHost` subscribes to notifications.
+@MainActor
+enum CatbirdCatalogRouteInbox {
+  static var pendingURL: URL?
+
+  static func enqueue(_ url: URL) {
+    pendingURL = url
+    NotificationCenter.default.post(name: .catbirdCatalogRouteChanged, object: url)
+  }
+
+  static func takePendingURL() -> URL? {
+    let url = pendingURL
+    pendingURL = nil
+    return url
+  }
+}
+
 /// Root DEBUG container launched via `-CatbirdCatalog <surface|all>`.
 @MainActor
 struct CatbirdCatalogHost: View {
@@ -121,14 +139,27 @@ struct CatbirdCatalogHost: View {
 
   private func bootstrapIfNeeded() async {
     guard session == nil else { return }
+    if let pending = CatbirdCatalogRouteInbox.takePendingURL(),
+       let updated = config.applying(catalogURL: pending) {
+      config = updated
+    }
     do {
-      session = try await CatbirdCatalogEnvironment.makeSession(for: config, strictOffline: true)
+      let created = try await CatbirdCatalogEnvironment.makeSession(for: config, strictOffline: true)
+      if let pending = CatbirdCatalogRouteInbox.takePendingURL(),
+         let updated = config.applying(catalogURL: pending) {
+        config = updated
+      }
+      // Re-apply latest `config` in case a `blue.catbird://catalog?...` deep link arrived
+      // while `makeSession` was suspended on async initialization.
+      created.apply(config: config)
+      session = created
     } catch {
       failureMessage = error.localizedDescription
     }
   }
 
   private func handleCatalogURL(_ url: URL) {
+    CatbirdCatalogRouteInbox.pendingURL = nil
     guard let updated = config.applying(catalogURL: url) else { return }
     applyUpdatedConfig(updated)
   }

@@ -1260,7 +1260,7 @@ private extension CatbirdApp {
      let scheme = url.scheme?.lowercased(),
      (scheme == "blue.catbird" || scheme == "catbird"),
      url.host?.lowercased() == "catalog" {
-    NotificationCenter.default.post(name: .catbirdCatalogRouteChanged, object: url)
+    CatbirdCatalogRouteInbox.enqueue(url)
     return
   }
   #endif

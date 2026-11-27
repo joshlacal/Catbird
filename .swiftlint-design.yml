@@ -33,7 +33,7 @@ custom_rules:
     name: "No raw corner radius"
     regex: 'RoundedRectangle\(cornerRadius:\s*[0-9]|cornerRadius:\s*[0-9]|\.rect\(cornerRadius:|\.layer\.cornerRadius\s*='
     included: 'Catbird/(App|Core|Features)/|(CatbirdFeedWidget|CatbirdNotificationWidget|NotificationServiceExtension|SharedDraftImporter)/'
-    excluded: 'Core/UI/Kit/|Packages/CatbirdDesignSystem/|_trash/|Core/UI/DesignTokens\.swift$'
+    excluded: 'Core/UI/Kit/|Packages/CatbirdDesignSystem/|_trash/|Core/UI/DesignTokens\.swift$|WidgetDesignSystem\.swift$|NotificationWidgetDesignSystem\.swift$'
     match_kinds:
       - identifier
       - keyword
@@ -57,7 +57,7 @@ custom_rules:
     name: "No .font(.system(size:))"
     regex: '\.font\(\.system\(size:|\bFont\.system\(size:'
     included: 'Catbird/(App|Core|Features)/|(CatbirdFeedWidget|CatbirdNotificationWidget|NotificationServiceExtension|SharedDraftImporter)/'
-    excluded: 'Core/UI/Kit/|Packages/CatbirdDesignSystem/|_trash/|Core/State/FontManager\.swift$|Core/Services/FontManager\.swift$|Core/Extensions/Typography\.swift$|Core/UI/Typography\.swift$|Core/UI/AppUIFont\.swift$|Core/UI/DesignTokens\.swift$'
+    excluded: 'Core/UI/Kit/|Packages/CatbirdDesignSystem/|_trash/|Core/State/FontManager\.swift$|Core/Services/FontManager\.swift$|Core/Extensions/Typography\.swift$|Core/UI/Typography\.swift$|Core/UI/AppUIFont\.swift$|Core/UI/DesignTokens\.swift$|WidgetDesignSystem\.swift$|NotificationWidgetDesignSystem\.swift$'
     match_kinds:
       - identifier
       - keyword
