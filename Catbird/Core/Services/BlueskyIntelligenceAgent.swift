@@ -122,40 +122,9 @@ enum AskCatbirdToolPolicy {
 
 /// Shared bounded metadata representation for search and thread neighbors.
 enum AskCatbirdPostFormatter {
-    struct SearchResult: Encodable {
-        let posts: [CopilotPostEvidence]
-        let coverage: String
-    }
-
     static func hasContent(_ evidence: CopilotPostEvidence) -> Bool {
         !(evidence.selectedPost.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !evidence.selectedPost.media.isEmpty || evidence.selectedPost.quotedPostURI != nil
-    }
-
-    static func compact(_ evidence: CopilotPostEvidence, textLimit: Int = 200) -> CopilotPostEvidence {
-        func bounded(_ original: CopilotPostEvidence.Post) -> CopilotPostEvidence.Post {
-            var post = original
-            if let text = post.text, text.count > textLimit {
-                post.text = String(text.prefix(textLimit))
-                post.textTruncated = true
-            }
-            post.media = post.media.map { original in
-                var media = original
-                if let alt = media.altText, alt.count > 200 {
-                    media.altText = String(alt.prefix(200)); media.truncatedFields.append("altText")
-                }
-                if let description = media.description, description.count > 200 {
-                    media.description = String(description.prefix(200)); media.truncatedFields.append("description")
-                }
-                // Read tools expose metadata; explicit image candidates come only from selected context.
-                media.thumbnailURL = nil
-                media.imageURL = nil
-                return media
-            }
-            return post
-        }
-        return .init(selectedPost: bounded(evidence.selectedPost),
-                     quotedPosts: evidence.quotedPosts.map(bounded), coverage: evidence.coverage)
     }
 }
 
@@ -1524,46 +1493,38 @@ enum AskCatbirdThreadFormatter {
         }
         for item in selected {
             let role = item.depth == 0 ? "focus" : (item.depth < 0 ? "ancestor" : "reply")
-            var row: [String: Any] = ["id": item.uri.uriString(), "role": role, "depth": item.depth]
+            var row: [String: Any] = ["id": item.uri.uriString()]
             if case .appBskyUnspeccedDefsThreadItemPost(let value) = item.value,
                !value.hiddenByThreadgate, !value.mutedByViewer {
                 let post = value.post
-                row["author"] = "@" + post.author.handle.description
-                if let name = post.author.displayName, !name.isEmpty { row["authorName"] = name }
-                if case .knownType(let record) = post.record, let body = record as? AppBskyFeedPost {
-                    // Preserve all authored content in short threads, including newlines.
-                    // Unusually token-expensive text can still exceed local model context;
-                    // do not silently omit short-thread content to hide that error.
-                    let textLimit = item.depth == 0 || !isLong ? 3000 : 200
-                    row["text"] = String(body.text.prefix(textLimit))
-                    row["textTruncated"] = body.text.count > textLimit
-                    row["replyTo"] = body.reply.map { $0.parent.uri.uriString() as Any } ?? NSNull()
-                    row["root"] = body.reply.map { $0.root.uri.uriString() as Any } ?? NSNull()
-                    let snapshot = CopilotPostEvidenceBuilder.build(post)
-                    let evidence = item.depth == 0 ? snapshot : AskCatbirdPostFormatter.compact(snapshot)
-                    let data = try JSONEncoder().encode(evidence)
-                    let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-                    let selectedPost = object?["selectedPost"] as? [String: Any]
-                    row["media"] = selectedPost?["media"]
-                    row["quotedPostURI"] = selectedPost?["quotedPostURI"]
-                    row["quotedPosts"] = object?["quotedPosts"]
-                    row["coverage"] = evidence.coverage + evidence.selectedPost.coverage
-                    for source in evidence.sources where !sources.contains(source) { sources.append(source) }
-                } else {
-                    row["contentStatus"] = "unreadable record; do not infer its contents"
+                let snapshot = CopilotPostEvidenceBuilder.build(post)
+                // Whole posts fit; only neighbors in long threads are shortened.
+                let textLimit = item.depth == 0 || !isLong ? AskCatbirdToolPostFormatter.textLimit : 200
+                row = AskCatbirdToolPostFormatter.dictionary(
+                    AskCatbirdToolPostFormatter.post(snapshot, view: post, textLimit: textLimit)
+                )
+                row["isReply"] = nil
+                if case .knownType(let record) = post.record, let body = record as? AppBskyFeedPost,
+                   let parent = body.reply?.parent.uri.uriString(), item.depth > 1 {
+                    // Depth and order place ancestors and direct replies; deeper replies
+                    // name their parent because sibling branches interleave.
+                    row["replyTo"] = parent
                 }
+                for source in snapshot.sources where !sources.contains(source) { sources.append(source) }
                 let source = CopilotSource(label: ToolFormatter.sourceLabel(post: post), uri: post.uri.uriString())
                 if !sources.contains(where: { $0.uri == source.uri }) { sources.append(source) }
             } else {
                 row["contentStatus"] = "unavailable or restricted; do not infer its contents"
             }
+            row["role"] = role
+            row["depth"] = item.depth
             rows.append(row)
         }
         let payload: [String: Any] = [
             "posts": rows,
             "omittedReturnedItems": max(ordered.count - selected.count, 0),
             "serverReportsAdditionalContext": serverHasMore,
-            "coverage": "All returned items are included when there are at most six; longer results contain focus and nearest context. Server request is bounded to two reply levels and three replies per branch. Hidden or restricted replies and deeper branches may be absent. This endpoint has no continuation cursor; fetch a returned post ID to inspect another branch. IDs are tool/navigation identities, never visible labels."
+            "coverage": "Ordered by position: negative depth is an ancestor (-1 the direct parent), 0 the focus post, positive depth a reply. Up to six posts; two reply levels, three replies per branch; hidden replies may be absent. Fetch a reply's id to read its branch. " + AskCatbirdToolPostFormatter.coverage
         ]
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys, .withoutEscapingSlashes])
         return Transcript(text: String(decoding: data, as: UTF8.self), sources: sources)
@@ -1705,11 +1666,7 @@ private struct PostSearchTool: Tool {
             )
         }
 
-        let snapshots = posts.prefix(limit).map { AskCatbirdPostFormatter.compact(CopilotPostEvidenceBuilder.build($0)) }
-        return CopilotPrompt.sourceJSON(AskCatbirdPostFormatter.SearchResult(
-            posts: snapshots,
-            coverage: "Bounded supplied post, attachment descriptions, link previews and quoted records only. Media bytes and linked pages were not inspected."
-        ))
+        return AskCatbirdToolPostFormatter.list(Array(posts.prefix(limit)))
     }
 }
 

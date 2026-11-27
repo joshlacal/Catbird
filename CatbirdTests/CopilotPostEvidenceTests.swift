@@ -41,21 +41,25 @@ struct CopilotPostEvidenceTests {
   }
 
   @Test
-  func boundedSearchMetadataKeepsTextAttachmentsAndAvailableQuotesTogether() throws {
+  func toolPostKeepsWholeTextAttachmentsAndQuotesWithoutStorageIdentities() throws {
     let quote = try quoted("quoted", text: "Quoted claim")
-    let snapshot = CopilotPostEvidenceBuilder.build(try post(text: String(repeating: "A", count: 300),
-      embed: .appBskyEmbedRecordWithMediaView(.init(record: quote, media: .appBskyEmbedImagesView(images(alt: "Blue cat"))))))
-    let search = AskCatbirdPostFormatter.compact(snapshot)
-    #expect(search.selectedPost.text?.count == 200)
-    #expect(search.selectedPost.textTruncated)
-    #expect(search.selectedPost.media.first?.altText == "Blue cat")
-    #expect(search.quotedPosts.first?.text == "Quoted claim")
-    #expect(search.selectedPost.quotedPostURI == uriString("quoted"))
-    #expect(search.selectedPost.media.first?.thumbnailURL == nil)
-    #expect(search.selectedPost.media.first?.imageURL == nil)
-    let text = CopilotPrompt.sourceJSON(AskCatbirdPostFormatter.SearchResult(posts: [search], coverage: "Supplied metadata"))
+    let fullText = String(repeating: "A", count: 300)
+    let view = try post(text: fullText,
+      embed: .appBskyEmbedRecordWithMediaView(.init(record: quote, media: .appBskyEmbedImagesView(images(alt: "Blue cat")))))
+    let toolPost = AskCatbirdToolPostFormatter.post(view)
+    #expect(toolPost.id == view.uri.uriString())
+    #expect(toolPost.text == fullText)
+    #expect(toolPost.textTruncated == nil)
+    #expect(toolPost.media == ["image: Blue cat"])
+    #expect(toolPost.quotedPosts?.first?.text == "Quoted claim")
+    #expect(toolPost.notes == nil)
+    let text = AskCatbirdToolPostFormatter.list([view])
     #expect(text.contains("Blue cat") && text.contains("Quoted claim"))
-    #expect(AskCatbirdPostFormatter.hasContent(search))
+    // CIDs, DIDs, image URLs and per-post boilerplate cost tokens without helping answers.
+    #expect(!text.contains("bafy") && !text.contains("authorDID") && !text.contains("example.test"))
+    #expect(!text.contains("Snapshot of supplied post"))
+    #expect(text.components(separatedBy: "were not inspected").count == 2)
+    #expect(AskCatbirdPostFormatter.hasContent(CopilotPostEvidenceBuilder.build(view)))
   }
 
   @Test

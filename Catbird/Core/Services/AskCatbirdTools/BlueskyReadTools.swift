@@ -57,11 +57,7 @@ private extension ToolContext {
     for post in posts {
       await recordSource(label: ToolFormatter.sourceLabel(post: post), uri: post.uri.uriString())
     }
-    let snapshots = posts.map { AskCatbirdPostFormatter.compact(CopilotPostEvidenceBuilder.build($0)) }
-    let body = CopilotPrompt.sourceJSON(AskCatbirdPostFormatter.SearchResult(
-      posts: snapshots,
-      coverage: "Bounded post text, attachment descriptions, link previews and quoted records only. Media bytes and linked pages were not inspected. Engagement counts are as of retrieval."
-    ))
+    let body = AskCatbirdToolPostFormatter.list(posts)
     return header.map { "\($0)\n\(body)" } ?? body
   }
 }
