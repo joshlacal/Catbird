@@ -940,11 +940,11 @@ struct ChatTabView: View {
         let recentMessages = messageRows.map { MLSMessageModel(row: $0, currentUserDID: userDID) }
 
         // A chat deleted for this account stays out of the list until someone writes in it again.
-        let latestWrittenAt = recentMessages.lazy
-          .filter { MLSDeletedForMe.bringsChatBack($0.parsedPayload()) }
-          .map(\.timestamp)
-          .max()
-        if deletedForMe.isHidden(convoID, latestMessageAt: latestWrittenAt) {
+        let isDeletedForMe = await deletedForMe.isHidden(convoID, newestFirst: recentMessages) { beforeSeq in
+          try await mlsCoordinator.listMessages(conversationId: convoID, beforeSeq: beforeSeq, limit: 100)
+            .map { MLSMessageModel(row: $0, currentUserDID: userDID) }
+        }
+        if isDeletedForMe {
           deletedForMeIDs.insert(convoID)
           continue
         }

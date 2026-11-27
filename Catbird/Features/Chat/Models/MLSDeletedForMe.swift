@@ -52,6 +52,42 @@ struct MLSDeletedForMe {
     return true
   }
 
+  /// Whether the chat is still hidden, searching past the preview window when needed.
+  ///
+  /// `newestFirst` is the page the list already loaded. When it holds no text or photo, older
+  /// pages from `olderThan` (messages before a sequence number, newest first) are searched until
+  /// they reach messages older than the deletion, so a text followed by many reactions or edits
+  /// still brings the chat back.
+  func isHidden(
+    _ conversationID: String,
+    newestFirst: [MLSMessageModel],
+    olderThan: (Int64) async throws -> [MLSMessageModel]
+  ) async -> Bool {
+    guard let deletedAt = load()[conversationID].map(Date.init(timeIntervalSince1970:)) else {
+      return false
+    }
+    var page = newestFirst
+    while !page.isEmpty {
+      if let latest = Self.latestRestoringMessageAt(in: page) {
+        return isHidden(conversationID, latestMessageAt: latest)
+      }
+      guard let oldest = page.min(by: { $0.sequenceNumber < $1.sequenceNumber }),
+        oldest.timestamp > deletedAt
+      else { break }
+      guard let older = try? await olderThan(oldest.sequenceNumber) else { break }
+      page = older
+    }
+    return isHidden(conversationID, latestMessageAt: nil)
+  }
+
+  /// The newest message in `messages` that brings a deleted chat back.
+  static func latestRestoringMessageAt(in messages: [MLSMessageModel]) -> Date? {
+    messages.lazy
+      .filter { bringsChatBack($0.parsedPayload()) }
+      .map(\.timestamp)
+      .max()
+  }
+
   /// Whether a message brings a deleted chat back: a new text or photo does; reactions, read
   /// receipts, typing, edits and membership changes do not.
   static func bringsChatBack(_ payload: MLSMessagePayload?) -> Bool {

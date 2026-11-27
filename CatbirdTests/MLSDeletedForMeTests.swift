@@ -67,6 +67,54 @@ struct MLSDeletedForMeTests {
     #expect(!otherAccount.isHidden(convo, latestMessageAt: nil))
   }
 
+  private func message(seq: Int64, at seconds: TimeInterval, _ payload: MLSMessagePayload) throws -> MLSMessageModel {
+    MLSMessageModel(
+      messageID: "m\(seq)",
+      conversationID: convo,
+      currentUserDID: account,
+      senderID: "did:plc:peerpeerpeerpeerpeerpeer",
+      plaintextJSON: try payload.encodeToJSON(),
+      epoch: 1,
+      sequenceNumber: seq,
+      timestamp: Date(timeIntervalSince1970: seconds),
+      isOwn: false
+    )
+  }
+
+  /// Newest-first pages of `messages`, like `listMessages(beforeSeq:limit:)`.
+  private func pages(_ messages: [MLSMessageModel], size: Int) -> (Int64) async throws -> [MLSMessageModel] {
+    { beforeSeq in
+      Array(messages.filter { $0.sequenceNumber < beforeSeq }.sorted { $0.sequenceNumber > $1.sequenceNumber }.prefix(size))
+    }
+  }
+
+  @Test("A text behind many reactions still brings the chat back")
+  func searchesPastPreviewWindow() async throws {
+    let defaults = freshDefaults()
+    store(defaults).hide(convo)
+    var all = [try message(seq: 1, at: 900, .text("before")), try message(seq: 2, at: 1_001, .text("hello again"))]
+    for seq in Int64(3)...30 {
+      all.append(try message(seq: seq, at: 1_001 + Double(seq), .reaction(messageId: "m2", emoji: "👍", action: .add)))
+    }
+    let newestFirst = all.sorted { $0.sequenceNumber > $1.sequenceNumber }
+    let hidden = await store(defaults).isHidden(convo, newestFirst: Array(newestFirst.prefix(20)), olderThan: pages(all, size: 5))
+    #expect(!hidden)
+    #expect(!store(defaults).isHidden(convo, latestMessageAt: nil))
+  }
+
+  @Test("The search stops at messages older than the deletion")
+  func searchStopsAtDeletion() async throws {
+    let defaults = freshDefaults()
+    store(defaults).hide(convo)
+    var all = [try message(seq: 1, at: 900, .text("before"))]
+    for seq in Int64(2)...25 {
+      all.append(try message(seq: seq, at: 1_000 + Double(seq), .reaction(messageId: "m1", emoji: "👍", action: .add)))
+    }
+    let newestFirst = all.sorted { $0.sequenceNumber > $1.sequenceNumber }
+    let hidden = await store(defaults).isHidden(convo, newestFirst: Array(newestFirst.prefix(20)), olderThan: pages(all, size: 5))
+    #expect(hidden)
+  }
+
   @Test("Only a new text or photo brings a chat back")
   func whichMessagesCount() {
     #expect(MLSDeletedForMe.bringsChatBack(.text("hello")))
