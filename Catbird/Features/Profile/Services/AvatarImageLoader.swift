@@ -104,6 +104,12 @@ final class AvatarImageLoader {
     return profile?.finalAvatarURL()
   }
 
+  /// Returns an already-decoded avatar from the memory cache without starting a load.
+  func cachedAvatar(did: String?, avatarURL: URL?, size: CGFloat = 24) -> PlatformImage? {
+    guard did != nil || avatarURL != nil else { return nil }
+    return cache.object(forKey: cacheKey(for: did, avatarURL: avatarURL, size: size))
+  }
+
   func loadAvatar(
     did: String?,
     client: ATProtoClient?,

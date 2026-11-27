@@ -133,6 +133,7 @@ actor MLSProfileEnricher {
     if !staleOrMissing.isEmpty {
       logger.info("Ensuring profiles for \(staleOrMissing.count) uncached/stale participants")
       await fetchProfilesInBatches(staleOrMissing, using: client, currentUserDID: currentUserDID)
+      await fillUnresolvedFromPersistedCache(staleOrMissing)
     }
 
     var resolved: [String: ProfileData] = [:]
@@ -168,6 +169,29 @@ actor MLSProfileEnricher {
   }
 
   // MARK: - Private Methods
+
+  /// When the network fetch left a participant unresolved (offline, a failed
+  /// request, an appview that omitted them), fall back to the profile last
+  /// persisted for notifications so a chat shows a known name instead of "?".
+  /// No fetch timestamp is recorded, so the next call still refetches.
+  private func fillUnresolvedFromPersistedCache(_ canonicalDIDs: [String]) async {
+    var unresolved: [String] = []
+    for did in canonicalDIDs where profileCache[did] == nil {
+      if let cached = await ProfileCacheDatabase.shared.read(did: did), profileCache[did] == nil {
+        profileCache[did] = ProfileData(
+          did: cached.did,
+          handle: cached.handle,
+          displayName: cached.displayName,
+          avatarURL: cached.avatarURL.flatMap(URL.init(string:))
+        )
+      } else if profileCache[did] == nil {
+        unresolved.append(did)
+      }
+    }
+    if !unresolved.isEmpty {
+      logger.notice("No profile available for \(unresolved.count) participant(s): \(unresolved.joined(separator: ","), privacy: .private)")
+    }
+  }
 
   private func extractUniqueDIDs(from conversations: [MLSConversationViewModel]) -> [String] {
     var uniqueDIDs = Set<String>()

@@ -412,6 +412,12 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       hasReceivedInitialMessages = true
       hasMoreMessages = window.hasMore
 
+      // Clear the unread count before anything slow below, so leaving the conversation
+      // quickly still leaves it read.
+      if maxSeq > 0 {
+        await markReadLocally(through: maxSeq, using: coordinator)
+      }
+
       // Hydrate sender names/avatars before the read-state round trips below,
       // which can take seconds on a slow delivery service.
       await enrichMissingProfilesIfNeeded(observationID: observationID)
@@ -431,6 +437,26 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       guard self.observationID == observationID, refreshRequest == request else { return }
       self.error = error
       logger.error("Failed to load MLS messages from SDK: \(error.localizedDescription)")
+    }
+  }
+
+  /// Lowers the conversation's stored unread count to what arrived after `seq`, then refreshes
+  /// the conversation list and tab badge when the count they show is stale.
+  private func markReadLocally(through seq: Int64, using coordinator: MLSClientCoordinator) async {
+    let remaining: Int64
+    do {
+      remaining = try await coordinator.markConversationRead(conversationId: conversationId, readThroughSeq: seq)
+    } catch {
+      logger.error("Failed to mark MLS conversation read: \(error.localizedDescription)")
+      return
+    }
+    guard let appState else { return }
+    let shown = appState.mlsConversations
+      .first { $0.id.caseInsensitiveCompare(conversationId) == .orderedSame }?
+      .unreadCount
+    let isStale = shown.map { Int64($0) != remaining } ?? (appState.mlsUnreadCount > 0)
+    if isStale {
+      await appState.loadMLSConversations()
     }
   }
 
