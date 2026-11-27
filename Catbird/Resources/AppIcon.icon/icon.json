@@ -23,7 +23,7 @@
         {
           "blend-mode" : "normal",
           "fill" : "automatic",
-          "glass" : true,
+          "glass" : false,
           "hidden" : false,
           "image-name" : "Catbird-3D-icon-transparent-2048.png",
           "name" : "Catbird-3D-icon-transparent-2048",
