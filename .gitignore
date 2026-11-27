@@ -278,3 +278,6 @@ PreviewSecrets.xcconfig
 Telemetry.local.xcconfig
 /_trash/
 
+
+# Icon Composer bundles keep their layer images inside the .icon package.
+!**/*.icon/Assets/*.png
