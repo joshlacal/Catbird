@@ -150,6 +150,37 @@ struct CopilotPostEvidenceTests {
   }
 
   @Test
+  func toolPostNamesQuotedPostsSoTheyCanBeFetched() throws {
+    let refs = AskCatbirdPostRefs()
+    let hydrated = AskCatbirdToolPostFormatter.post(
+      try post(embed: .appBskyEmbedRecordView(quoted("quoted", text: "Quoted claim"))), refs: refs)
+    #expect(hydrated.id == "p1")
+    #expect(hydrated.quotedPosts?.first?.id == "p2")
+    #expect(refs.uri(for: "p2") == uriString("quoted"))
+
+    let bare = try AppBskyEmbedRecord(record: .init(uri: uri("unhydrated"), cid: CIDString(cid())))
+    let unhydrated = AskCatbirdToolPostFormatter.post(try post(rawEmbed: .appBskyEmbedRecord(bare)))
+    #expect(unhydrated.quotedPosts?.first?.id == uriString("unhydrated"))
+    #expect(unhydrated.quotedPosts?.first?.status?.contains("not supplied") == true)
+  }
+
+  @Test
+  func toolPostKeepsLinkURLsWholeWhenResultsAreTrimmed() async throws {
+    let url = "https://example.test/" + String(repeating: "long-path/", count: 12) + "article"
+    let link = AppBskyEmbedExternal(external: .init(
+      uri: URI(uriString: url), title: "Article title", description: "Preview only"
+    ))
+    let view = try post(text: String(repeating: "A", count: 300), rawEmbed: .appBskyEmbedExternal(link))
+    let toolPost = AskCatbirdToolPostFormatter.post(view)
+    #expect(toolPost.media == ["link: Article title — Preview only"])
+    #expect(toolPost.links == [url])
+    let bounded = try await CopilotToolResult.bounded(
+      AskCatbirdToolPostFormatter.list([view]), maximumTokens: 700, tokenCount: { $0.utf8.count })
+    #expect(bounded.wasTruncated)
+    #expect(bounded.text.contains(url))
+  }
+
+  @Test
   func unrecognizedRecordIsNotRepresentedAsEmptyAuthoredText() throws {
     let original = try post()
     let unreadable = AppBskyFeedDefs.PostView(

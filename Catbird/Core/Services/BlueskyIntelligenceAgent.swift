@@ -1529,7 +1529,7 @@ enum AskCatbirdThreadFormatter {
                 // Whole posts fit; only neighbors in long threads are shortened.
                 let textLimit = item.depth == 0 || !isLong ? AskCatbirdToolPostFormatter.textLimit : 200
                 row = AskCatbirdToolPostFormatter.dictionary(
-                    AskCatbirdToolPostFormatter.post(snapshot, view: post, textLimit: textLimit, id: id)
+                    AskCatbirdToolPostFormatter.post(snapshot, view: post, textLimit: textLimit, refs: refs)
                 )
                 row["isReply"] = nil
                 if case .knownType(let record) = post.record, let body = record as? AppBskyFeedPost,

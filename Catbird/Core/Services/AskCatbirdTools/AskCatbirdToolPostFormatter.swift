@@ -21,10 +21,13 @@ enum AskCatbirdToolPostFormatter {
   """
 
   struct Quoted: Encodable, Equatable {
+    /// Lets the model fetch the quoted post or its thread.
+    var id: String?
     var author: String?
     var text: String?
     var textTruncated: Bool?
     var media: [String]?
+    var links: [String]?
     var status: String?
   }
 
@@ -41,6 +44,8 @@ enum AskCatbirdToolPostFormatter {
     var replies: Int?
     var quotes: Int?
     var media: [String]?
+    /// Link URLs, kept apart from media descriptions so result trimming never cuts them.
+    var links: [String]?
     var quotedPosts: [Quoted]?
     var notes: [String]?
     var contentStatus: String?
@@ -59,23 +64,24 @@ enum AskCatbirdToolPostFormatter {
 
   /// JSON for a list of posts with one shared coverage statement.
   static func list(_ posts: [AppBskyFeedDefs.PostView], refs: AskCatbirdPostRefs? = nil, now: Date = Date()) -> String {
-    let items = posts.map { view in
-      post(view, id: refs?.ref(for: view.uri.uriString()), now: now)
-    }
+    let items = posts.map { post($0, refs: refs, now: now) }
     return CopilotPrompt.sourceJSON(List(posts: items, coverage: coverage))
   }
 
-  static func post(_ view: AppBskyFeedDefs.PostView, textLimit: Int = textLimit, id: String? = nil, now: Date = Date()) -> Post {
-    post(CopilotPostEvidenceBuilder.build(view), view: view, textLimit: textLimit, id: id, now: now)
+  static func post(
+    _ view: AppBskyFeedDefs.PostView, textLimit: Int = textLimit, refs: AskCatbirdPostRefs? = nil, now: Date = Date()
+  ) -> Post {
+    post(CopilotPostEvidenceBuilder.build(view), view: view, textLimit: textLimit, refs: refs, now: now)
   }
 
-  /// `id` names the post for the model; it defaults to the post's AT URI.
+  /// Posts are named by short id when `refs` is given, otherwise by AT URI.
   static func post(
     _ evidence: CopilotPostEvidence, view: AppBskyFeedDefs.PostView, textLimit: Int = textLimit,
-    id: String? = nil, now: Date = Date()
+    refs: AskCatbirdPostRefs? = nil, now: Date = Date()
   ) -> Post {
     let selected = evidence.selectedPost
-    var result = Post(id: id ?? selected.uri)
+    func name(_ uri: String) -> String { refs?.ref(for: uri) ?? uri }
+    var result = Post(id: name(selected.uri))
     result.author = selected.authorHandle.map { "@" + $0 }
     result.authorName = selected.authorName.flatMap { $0.isEmpty ? nil : $0 }
     if case .knownType(let record) = view.record, let body = record as? AppBskyFeedPost {
@@ -91,11 +97,16 @@ enum AskCatbirdToolPostFormatter {
     result.replies = positive(view.replyCount)
     result.quotes = positive(view.quoteCount)
     result.media = describe(selected.media)
+    result.links = links(selected.media)
     result.notes = notes(selected.coverage + evidence.coverage)
     if selected.contentStatus != .available {
       result.contentStatus = "\(selected.contentStatus.rawValue); do not infer its contents"
     }
-    let quoted = evidence.quotedPosts.map(quote)
+    var quoted = evidence.quotedPosts.map { quote($0, id: name($0.uri)) }
+    if quoted.isEmpty, let uri = selected.quotedPostURI {
+      // An unhydrated quote still names the post, so the model can fetch it.
+      quoted = [Quoted(id: name(uri), status: "contents not supplied; fetch it to read")]
+    }
     result.quotedPosts = quoted.isEmpty ? nil : quoted
     return result
   }
@@ -109,18 +120,24 @@ enum AskCatbirdToolPostFormatter {
     return object
   }
 
-  private static func quote(_ post: CopilotPostEvidence.Post) -> Quoted {
+  private static func quote(_ post: CopilotPostEvidence.Post, id: String) -> Quoted {
     guard post.contentStatus == .available else {
-      return Quoted(author: post.authorHandle.map { "@" + $0 },
+      return Quoted(id: id, author: post.authorHandle.map { "@" + $0 },
                     status: "\(post.contentStatus.rawValue); contents unknown")
     }
-    var quoted = Quoted(author: post.authorHandle.map { "@" + $0 })
+    var quoted = Quoted(id: id, author: post.authorHandle.map { "@" + $0 })
     if let text = post.text {
       quoted.text = String(text.prefix(quotedTextLimit))
       quoted.textTruncated = post.textTruncated || text.count > quotedTextLimit ? true : nil
     }
     quoted.media = describe(post.media)
+    quoted.links = links(post.media)
     return quoted
+  }
+
+  private static func links(_ media: [CopilotPostEvidence.Media]) -> [String]? {
+    let links = media.compactMap { $0.kind == .externalLink ? $0.uri : nil }
+    return links.isEmpty ? nil : links
   }
 
   private static func describe(_ media: [CopilotPostEvidence.Media]) -> [String]? {
@@ -134,8 +151,7 @@ enum AskCatbirdToolPostFormatter {
       case .video: return short(item.altText).map { "video: \($0)" } ?? "video (no description)"
       case .externalLink:
         let label = [short(item.title), short(item.description)].compactMap { $0 }.joined(separator: " — ")
-        let link = item.uri.map { " <\($0)>" } ?? ""
-        return "link: " + (label.isEmpty ? "untitled" : label) + link
+        return "link: " + (label.isEmpty ? "untitled" : label)
       }
     }
     return lines.isEmpty ? nil : lines

@@ -84,7 +84,7 @@ enum CopilotToolResult {
       return array.prefix(arrayLimit).map { reduced($0, key: key, stringLimit: stringLimit, arrayLimit: arrayLimit) }
     }
     if let string = object as? String {
-      let identities = ["id", "uri", "cid", "authorDID", "replyTo", "replyToURI", "root", "rootURI", "quotedPostURI", "kind", "role", "contentStatus"]
+      let identities = ["id", "uri", "cid", "authorDID", "replyTo", "replyToURI", "root", "rootURI", "quotedPostURI", "kind", "role", "contentStatus", "links"]
       guard !identities.contains(key), string.count > stringLimit else { return string }
       return String(string.prefix(stringLimit)) + "…"
     }
