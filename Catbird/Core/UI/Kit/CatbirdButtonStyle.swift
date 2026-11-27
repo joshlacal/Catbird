@@ -115,13 +115,22 @@ private struct CatbirdButtonBody: View {
 
   private var increased: Bool { theme.isHighContrast || contrast == .increased }
 
+  private var destructiveForeground: Color {
+    // Tinted destructive pill washes the background with danger@0.08–0.14, so the text uses
+    // a slightly deeper red in Light (#B42318, ~6.4:1) and brighter coral in Dark (#FF6961, ~5.5:1)
+    // to clear WCAG AA (>= 4.5:1) across Light, Dim, and True Black.
+    theme.isDark
+      ? Color(.sRGB, red: 1.0, green: 0.412, blue: 0.380, opacity: 1.0)
+      : Color(.sRGB, red: 0.706, green: 0.137, blue: 0.094, opacity: 1.0)
+  }
+
   private var foreground: AnyShapeStyle {
     switch kind {
     case .primary, .brand, .glassProminent: return AnyShapeStyle(theme.onAccent)
     case .tonal, .quiet: return AnyShapeStyle(theme.accentText)
     case .outline, .glass: return AnyShapeStyle(theme.text(.primary))
     case .muted: return AnyShapeStyle(theme.text(.secondary))
-    case .destructive: return AnyShapeStyle(theme.semantic(.danger))
+    case .destructive: return AnyShapeStyle(destructiveForeground)
     }
   }
 
@@ -176,10 +185,17 @@ private struct CatbirdButtonBody: View {
 
   @ViewBuilder private var background: some View {
     let shape = Capsule(style: .continuous)
-    let tonal = increased ? 0.22 : 0.14
+    // Light mode uses a lighter tonal wash (0.08 / 0.10 high-contrast) so `accentText`
+    // clears WCAG AA (>= 4.65:1) cleanly across all 7 palettes without anti-alias dips.
+    let tonal = theme.isDark ? (increased ? 0.22 : 0.14) : (increased ? 0.10 : 0.08)
     switch kind {
     case .primary: shape.fill(theme.accentChrome)
-    case .brand: shape.fill(BrandGradient.current(theme: theme))
+    case .brand:
+      if BrandGradient.isSolid(for: theme.accentOption, scheme: theme.colorScheme) {
+        shape.fill(theme.accentChrome)
+      } else {
+        shape.fill(BrandGradient.current(theme: theme))
+      }
     case .tonal: shape.fill(theme.accentChrome.opacity(tonal))
     case .destructive: shape.fill(theme.semantic(.danger).opacity(tonal))
     case .outline, .muted, .quiet, .glass, .glassProminent: Color.clear

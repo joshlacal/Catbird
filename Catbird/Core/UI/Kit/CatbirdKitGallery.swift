@@ -209,7 +209,7 @@ private struct CatbirdKitGalleryContent: View {
 
   private var galleryScroll: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: Space.x3l) {
+      VStack(alignment: .leading, spacing: Space.xxl) {
         if showsControls {
           controlsSection
         }
@@ -351,14 +351,27 @@ private struct CatbirdKitGalleryContent: View {
   private var typographySection: some View {
     section("Typography") {
       VStack(alignment: .leading, spacing: Space.sm) {
-        Text(verbatim: "Display 125% · 800").appFont(AppTextRole.display)
-        Text(verbatim: "Title 1 · Bold").appFont(AppTextRole.title1)
-        Text(verbatim: "Headline · Semibold").appFont(AppTextRole.headline)
-        Text(verbatim: "Subheadline · Weight Override (.semibold)")
+        Text(verbatim: "Display · 800")
+          .appFont(AppTextRole.display)
+          .fixedSize(horizontal: false, vertical: true)
+        Text(verbatim: "Title 1 · Bold")
+          .appFont(AppTextRole.title1)
+          .fixedSize(horizontal: false, vertical: true)
+        Text(verbatim: "Headline · Semibold")
+          .appFont(AppTextRole.headline)
+          .fixedSize(horizontal: false, vertical: true)
+        Text(verbatim: "Subheadline · Semibold")
           .appFont(AppTextRole.subheadline.weight(.semibold))
-        Text(verbatim: "Body · Regular copy scales cleanly").appFont(AppTextRole.body)
-        Text(verbatim: "Monospaced · did:plc:catbird").appFont(AppTextRole.footnote.monospaced())
-        Text(verbatim: "Tabular digits · 12,345 · 98.7%").appFont(AppTextRole.caption.monospacedDigits())
+          .fixedSize(horizontal: false, vertical: true)
+        Text(verbatim: "Body · Scales cleanly")
+          .appFont(AppTextRole.body)
+          .fixedSize(horizontal: false, vertical: true)
+        Text(verbatim: "Monospaced · did:plc:catbird")
+          .appFont(AppTextRole.footnote.monospaced())
+          .fixedSize(horizontal: false, vertical: true)
+        Text(verbatim: "Tabular digits · 12,345 · 98.7%")
+          .appFont(AppTextRole.caption.monospacedDigits())
+          .fixedSize(horizontal: false, vertical: true)
       }
       .foregroundStyle(theme.text(.primary))
       .padding(Space.md)

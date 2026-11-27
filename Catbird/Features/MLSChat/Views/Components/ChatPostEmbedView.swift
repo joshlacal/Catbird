@@ -13,6 +13,7 @@ struct ChatPostEmbedView: View {
 
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.catbirdTheme) private var theme
 
   @State private var fetchedPost: AppBskyFeedDefs.PostView?
   @State private var isLoading = false
@@ -339,7 +340,7 @@ struct ChatPostEmbedView: View {
         Task { await fetchPost() }
       }
       .designCaption()
-      .foregroundColor(Color("AccentTextColor"))
+      .foregroundStyle(theme.accentText)
     }
     .chatEmbedCardStyle(colorScheme: colorScheme, isError: true)
   }
@@ -351,7 +352,7 @@ struct ChatPostEmbedView: View {
     VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
       Label("Bluesky Post", systemImage: "quote.bubble")
         .designCaption()
-        .foregroundColor(Color("AccentTextColor"))
+        .foregroundStyle(theme.accentText)
 
       if let text = postEmbed.text {
         Text(text)

@@ -14,6 +14,7 @@ on:
       - "CatbirdTests/DesignConsistencySnapshotTests.swift"
       - "CatbirdTests/Support/CatbirdSnapshotOracle.swift"
       - "CatbirdUITests/CatbirdDesignCatalogUITests.swift"
+      - "scripts/visual-qa/**"
       - ".github/workflows/ios-visual-qa.yml"
   workflow_dispatch:
     inputs:
@@ -204,6 +205,9 @@ jobs:
           CATBIRD_VISUAL_BASELINE_DIR: ${{ env.VISUAL_QA_DIR }}/baselines
           TEST_RUNNER_CATBIRD_VISUAL_OUT_DIR: ${{ env.VISUAL_QA_DIR }}/candidates
           TEST_RUNNER_CATBIRD_VISUAL_BASELINE_DIR: ${{ env.VISUAL_QA_DIR }}/baselines
+          # On PR runs, sweep Kit (all 6 trap profiles) + Feed (3 profiles) so Tier-2 completes in ~2m
+          # while exercising full iOS compositor + native performAccessibilityAudit; workflow_dispatch sweeps all 12.
+          TEST_RUNNER_CATBIRD_UITEST_SURFACES: ${{ github.event_name == 'pull_request' && 'kit,feed' || '' }}
         run: |
           set -euo pipefail
           set +e
@@ -239,8 +243,13 @@ jobs:
           PR_LABEL="${{ github.event.pull_request.number && format('PR #{0}', github.event.pull_request.number) || github.ref_name }}"
           TITLE="Catbird iOS Visual QA Screen Wall (${PR_LABEL})"
 
+          # Tier-1 (`DesignConsistencySnapshotTests`) and Tier-2 (`CatbirdDesignCatalogUITests`)
+          # enforce hard 0-violation assertions on clean surfaces (`kit` / `widgets`). Only pass
+          # `--fail-on-violations` to the Screen Wall builder when explicitly requested via
+          # `workflow_dispatch`, so grandfathered legacy Tier-B surface counts are surfaced in the
+          # PR Screen Wall & comment without blocking unrelated PRs.
           FAIL_FLAGS=()
-          if [[ "${{ inputs.fail_on_violations }}" != "false" ]]; then
+          if [[ "${{ inputs.fail_on_violations }}" == "true" ]]; then
             FAIL_FLAGS+=(--fail-on-violations)
           fi
           if [[ "${{ inputs.fail_on_delta }}" == "true" ]]; then

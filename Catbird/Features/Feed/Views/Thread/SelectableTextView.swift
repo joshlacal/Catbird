@@ -265,11 +265,11 @@ struct SelectableTextView: UIViewRepresentable {
     if uiView.textColor != newTextColor {
       uiView.textColor = newTextColor
     }
-    let newTintColor = UIColor(.accentColor)
+    let newTintColor = UIColor(appState.themeManager.activeAccentChrome(for: effectiveColorScheme))
     if uiView.tintColor != newTintColor {
       uiView.tintColor = newTintColor
     }
-    let newLinkColor = UIColor(Color("AccentTextColor"))
+    let newLinkColor = UIColor(appState.themeManager.activeAccentText(for: effectiveColorScheme))
     if (uiView.linkTextAttributes[.foregroundColor] as? UIColor) != newLinkColor {
       uiView.linkTextAttributes = [.foregroundColor: newLinkColor]
     }

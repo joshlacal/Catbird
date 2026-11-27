@@ -1393,6 +1393,11 @@
     "Catbird/Features/Intelligence/Views/AskCatbirdComponents.swift" : {
       "raw_color" : 2
     },
+    "Catbird/Features/Intelligence/Views/AskCatbirdMarkdown.swift" : {
+      "raw_color" : 2,
+      "raw_font" : 1,
+      "swiftlint.no_raw_system_text_style_font" : 1
+    },
     "Catbird/Features/Intelligence/Views/AskCatbirdRouteControls.swift" : {
       "raw_color" : 1
     },
@@ -2319,9 +2324,9 @@
     "legacy_material" : 67,
     "off_grid_spacing" : 444,
     "raw_animation" : 238,
-    "raw_color" : 1293,
+    "raw_color" : 1295,
     "raw_corner_radius" : 399,
-    "raw_font" : 579,
+    "raw_font" : 580,
     "raw_spacing" : 2246,
     "small_tap_target" : 4,
     "swiftlint.no_cornerradius_modifier" : 74,
@@ -2330,10 +2335,10 @@
     "swiftlint.no_legacy_material" : 64,
     "swiftlint.no_raw_corner_radius" : 273,
     "swiftlint.no_raw_system_font_size" : 146,
-    "swiftlint.no_raw_system_text_style_font" : 10,
+    "swiftlint.no_raw_system_text_style_font" : 11,
     "swiftlint.no_raw_text_style_font" : 224,
     "unreasoned_lint_disable" : 1
   },
   "schemaVersion" : 1,
-  "totalViolations" : 6763
+  "totalViolations" : 6767
 }

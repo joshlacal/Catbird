@@ -305,14 +305,27 @@ enum BrandGradient {
   static let startPoint = UnitPoint.topLeading
   static let endPoint = UnitPoint.bottomTrailing
 
+  /// True when the palette's gradient start and partner are identical in `scheme`
+  /// (common in Dark mode), so callers can render a solid fill without 1-LSB gradient dithering.
+  static func isSolid(for option: AccentColorOption, scheme: ColorScheme) -> Bool {
+    let p = palette(for: option)
+    let startHex = (scheme == .dark ? p.accentDark : p.accentLight).uppercased()
+    let partnerHex = p.gradientPartner.uppercased()
+    return startHex == partnerHex
+  }
+
   /// Start and end colours for an accent palette in sRGB.
   static func colors(for option: AccentColorOption, scheme: ColorScheme) -> (start: Color, end: Color) {
     let p = palette(for: option)
     let startHex = scheme == .dark ? p.accentDark : p.accentLight
-    let start = color(hex: startHex) ?? .accentColor
+    let startSRGB = CatbirdSRGBColor(hex: startHex) ?? .catbirdFallbackAccent
+    let start = startSRGB.swiftUIColor
     let partner = color(hex: p.gradientPartner) ?? start
-    // Pull the end stop halfway back toward the accent so foreground labels keep contrast.
-    let end = start.mix(with: partner, by: 0.5)
+    // Light-ink palettes (`#FFFFFF` onAccent, e.g. twilight/midnight light) use a tighter 25%
+    // blend toward the lighter partner so both ends stay >= 4.65:1; dark-ink palettes (`#0B0D12`)
+    // gain contrast toward the lighter partner at 50% and keep a clean, distinct gradient stop.
+    let blend = CatbirdSRGBColor.onAccent(for: startSRGB) == .pureWhite ? 0.25 : 0.5
+    let end = start.mix(with: partner, by: blend)
     return (start, end)
   }
 
