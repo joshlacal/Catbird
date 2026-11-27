@@ -1128,6 +1128,8 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
           #if DEBUG
           if UserDefaults.standard.bool(forKey: "CatbirdKitGallery") {
             CatbirdKitGallery()
+          } else if UserDefaults.standard.bool(forKey: "BirdSpinnerPlayground") {
+            BirdSpinnerPlayground()
           } else if ConversationKindUIFixture.isRequested {
             ConversationKindUIFixture()
           } else if isEncryptedRequestUIFixture {
@@ -1796,24 +1798,21 @@ private extension CatbirdApp {
     return authenticated  // Show content only if biometric passed
   }
 
-  /// Picks up exactly where the launch screen leaves off: the same 250pt
-  /// `LaunchIcon`, centered on the system background, with progress below it,
-  /// so a cold launch doesn't jump to a smaller icon.
+  /// Picks up where the static launch screen leaves off: the same 250pt
+  /// bird, centered on the system background, now as the live 3D spinner,
+  /// with a caption below it.
   struct LoadingView: View {
     private static let launchIconSize: CGFloat = 250
 
     var body: some View {
-      Image("LaunchIcon")
-        .accessibilityHidden(true)
+      BirdSpinner(size: Self.launchIconSize)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay {
-          VStack(spacing: 12) {
-            ProgressView()
-            Text("Loading…")
-              .font(.subheadline)
-              .foregroundStyle(.secondary)
-          }
-          .offset(y: Self.launchIconSize / 2 + 48)
+          Text("Loading…")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .accessibilityHidden(true)
+            .offset(y: Self.launchIconSize / 2 + 32)
         }
         .background(Color.systemBackground)
     }
@@ -3016,11 +3015,8 @@ struct BiometricAuthenticationOverlay: View {
         .platformIgnoresSafeArea()
       
       VStack(spacing: 30) {
-        // App icon
-        Image("CatbirdIcon")
-          .resizable()
-          .frame(width: 80, height: 80)
-          .cornerRadius(16)
+        BirdSpinner(size: 96)
+          .accessibilityHidden(true)
         
         Text("Catbird Locked")
           .font(.largeTitle)
