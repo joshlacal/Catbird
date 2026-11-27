@@ -107,9 +107,33 @@ private var isMessagesNavigationUIFixture: Bool {
   #endif
 }
 
+private var isCatbirdKitGallery: Bool {
+  #if DEBUG
+  UserDefaults.standard.bool(forKey: "CatbirdKitGallery")
+  #else
+  false
+  #endif
+}
+
+private var isCatbirdCatalog: Bool {
+  #if DEBUG
+  CatbirdCatalogLaunchConfig.isRequested
+  #else
+  false
+  #endif
+}
+
+private var isFixtureGallery: Bool {
+  #if DEBUG
+  ProcessInfo.processInfo.arguments.contains("--fixture-gallery")
+  #else
+  false
+  #endif
+}
+
 /// Any presentation fixture: skips account bootstrap, MLS lifecycle, and URL handling.
 private var isPresentationUIFixture: Bool {
-  isConversationKindUIFixture || isEncryptedRequestUIFixture || isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture || isSettingsUIFixture || isOnboardingIntelUIFixture || isSceneRuntimeUIFixture || isInlineReplyUIFixture || isMessagesViewportUIFixture || isSearchTabReselectionUIFixture || isMessagesNavigationUIFixture || isModerationUIFixture || isFeedPerformanceFixture
+  isCatbirdKitGallery || isCatbirdCatalog || isFixtureGallery || isConversationKindUIFixture || isEncryptedRequestUIFixture || isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture || isSettingsUIFixture || isOnboardingIntelUIFixture || isSceneRuntimeUIFixture || isInlineReplyUIFixture || isMessagesViewportUIFixture || isSearchTabReselectionUIFixture || isMessagesNavigationUIFixture || isModerationUIFixture || isFeedPerformanceFixture
 }
 
 private var isOnboardingIntelUIFixture: Bool {
@@ -891,7 +915,7 @@ struct CatbirdApp: App {
 
   // MARK: - Initialization
   init() {
-    if !shouldDeferSupportTipStartupForLocalTesting {
+    if !shouldDeferSupportTipStartupForLocalTesting && !isCatbirdCatalog && !isCatbirdKitGallery && !isFixtureGallery {
       SupportTipStore.shared.start()
     }
     if isPresentationUIFixture { return }
@@ -1126,8 +1150,12 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
       ) { scene in
         Group {
           #if DEBUG
-          if UserDefaults.standard.bool(forKey: "CatbirdKitGallery") {
+          if isCatbirdCatalog {
+            CatbirdCatalogHost()
+          } else if isCatbirdKitGallery {
             CatbirdKitGallery()
+          } else if isFixtureGallery {
+            FixtureGalleryView()
           } else if UserDefaults.standard.bool(forKey: "BirdSpinnerPlayground") {
             BirdSpinnerPlayground()
           } else if ConversationKindUIFixture.isRequested {
@@ -1227,6 +1255,15 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
 
 private extension CatbirdApp {
   func handleSceneURL(_ url: URL, in scene: SceneWindowState) {
+  #if DEBUG
+  if isCatbirdCatalog,
+     let scheme = url.scheme?.lowercased(),
+     (scheme == "blue.catbird" || scheme == "catbird"),
+     url.host?.lowercased() == "catalog" {
+    NotificationCenter.default.post(name: .catbirdCatalogRouteChanged, object: url)
+    return
+  }
+  #endif
   guard !isPresentationUIFixture else { return }
   logger.info(
     "Received URL for scheme=\(url.scheme ?? "none", privacy: .public) host=\(url.host ?? "none", privacy: .public) path=\(url.path, privacy: .public)"
