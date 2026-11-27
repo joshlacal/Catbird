@@ -157,6 +157,7 @@ extension Font {
 
 extension View {
     /// Applies a custom text style with SF Pro font
+    @available(*, deprecated, message: "Use .appFont(AppTextRole.*)")
     func textStyle(
         size: CGFloat,
         weight: Font.Weight = .regular,
@@ -366,6 +367,7 @@ struct FontManagerCustomFontModifier: ViewModifier {
 
 extension View {
     /// Applies the headline modifier with default values
+    @available(*, deprecated, message: "Use .appFont(AppTextRole.*)")
     func headlineStyle(
         size: CGFloat = Typography.Size.headline,
         weight: Font.Weight = Typography.Weight.semibold,
@@ -375,6 +377,7 @@ extension View {
     }
     
     /// Applies the body text modifier with default values - optimized for readability
+    @available(*, deprecated, message: "Use .appFont(AppTextRole.*)")
     func bodyStyle(
         size: CGFloat = Typography.Size.body,
         weight: Font.Weight = Typography.Weight.regular,
@@ -384,6 +387,7 @@ extension View {
     }
     
     /// Applies the caption modifier with default color
+    @available(*, deprecated, message: "Use .appFont(AppTextRole.*)")
     func captionStyle(color: Color = .secondary) -> some View {
         self.modifier(CaptionModifier(color: color))
     }
@@ -469,24 +473,28 @@ extension View {
     
     /// Enhanced app body that uses design tokens for consistent typography
     /// while preserving FontManager scaling and accessibility features
+    @available(*, deprecated, message: "Use .appFont(AppTextRole.*)")
     func enhancedAppBody() -> some View {
         self.modifier(AppFontModifier(role: AppTextRole.body))
             .tracking(Typography.LetterSpacing.normal)
     }
     
     /// Enhanced app headline with design token typography principles
+    @available(*, deprecated, message: "Use .appFont(AppTextRole.*)")
     func enhancedAppHeadline() -> some View {
         self.modifier(AppFontModifier(role: AppTextRole.headline))
             .tracking(Typography.LetterSpacing.tight)
     }
     
     /// Enhanced app subheadline with consistent letter spacing
+    @available(*, deprecated, message: "Use .appFont(AppTextRole.*)")
     func enhancedAppSubheadline() -> some View {
         self.modifier(AppFontModifier(role: AppTextRole.subheadline))
             .tracking(Typography.LetterSpacing.normal)
     }
     
     /// Enhanced app caption with proper letter spacing
+    @available(*, deprecated, message: "Use .appFont(AppTextRole.*)")
     func enhancedAppCaption() -> some View {
         self.modifier(AppFontModifier(role: AppTextRole.caption))
             .tracking(Typography.LetterSpacing.wide)
@@ -496,6 +504,7 @@ extension View {
     
     /// Quick typography using design tokens - USE SPARINGLY
     /// Only for decorative text that doesn't need accessibility scaling
+    @available(*, deprecated, message: "Use .appFont(AppTextRole.*)")
     func tokenText(
         size: CGFloat,
         weight: Font.Weight = .regular,
@@ -509,6 +518,7 @@ extension View {
     }
     
     /// Fixed body text - USE ONLY for decorative elements
+    @available(*, deprecated, message: "Use .appFont(AppTextRole.*)")
     func tokenBody() -> some View {
         self.tokenText(
             size: Typography.Size.body,
@@ -584,14 +594,30 @@ extension Font {
         
         // Use UIFontMetrics to scale our custom base font with Dynamic Type
         let metrics = UIFontMetrics(forTextStyle: uiTextStyle)
-        
+
+        #if DEBUG
+        let overrideTraits: UITraitCollection? = FontManager.overrideContentSizeCategory.map {
+            UITraitCollection(preferredContentSizeCategory: $0)
+        }
+        #else
+        let overrideTraits: UITraitCollection? = nil
+        #endif
+
         // Apply maximum content size category constraint if provided
         if let maxCategory = maxContentSizeCategory {
             let maxUICategory = maxCategory.uiContentSizeCategory
-            let scaledFont = metrics.scaledFont(for: customBaseFont, maximumPointSize: UIFont.preferredFont(forTextStyle: uiTextStyle, compatibleWith: UITraitCollection(preferredContentSizeCategory: maxUICategory)).pointSize)
+            let maxPointSize = UIFont.preferredFont(
+                forTextStyle: uiTextStyle,
+                compatibleWith: UITraitCollection(preferredContentSizeCategory: maxUICategory)
+            ).pointSize
+            let scaledFont = metrics.scaledFont(
+                for: customBaseFont,
+                maximumPointSize: maxPointSize,
+                compatibleWith: overrideTraits
+            )
             return Font(scaledFont)
         } else {
-            let scaledFont = metrics.scaledFont(for: customBaseFont)
+            let scaledFont = metrics.scaledFont(for: customBaseFont, compatibleWith: overrideTraits)
             return Font(scaledFont)
         }
         #endif
@@ -759,20 +785,19 @@ struct ComprehensiveAccessibilityModifier: ViewModifier {
                     .padding(.bottom, 8)
                 
                 Text(verbatim: "Standard SF Pro Headline")
-                    .headlineStyle()
+                    .appFont(AppTextRole.headline)
                 
                 Text(verbatim: "Custom SF Pro Display")
-                    .font(.sfProDisplay(size: 24, weight: Typography.Weight.bold))
-                    .tracking(Typography.LetterSpacing.tight)
+                    .appFont(AppTextRole.display)
                 
                 Text(verbatim: "SF Pro Rounded Style")
-                    .customScaledFont(size: 20, weight: .semibold, design: .rounded)
+                    .appFont(AppTextRole.title3.design(.rounded))
                 
                 Text(verbatim: "Caption Style Example")
-                    .captionStyle()
+                    .appFont(AppTextRole.caption)
                 
-                Text(verbatim: "Body Text with Custom Line Height")
-                    .bodyStyle(lineHeight: Typography.LineHeight.relaxed)
+                Text(verbatim: "Body Text with App Scaling")
+                    .appFont(AppTextRole.body)
             }
             .padding()
             #if os(iOS)
@@ -956,6 +981,12 @@ extension UIFont {
         ])
         let font = UIFont(descriptor: descriptor, size: 0)
         guard let textStyle else { return font }
+        #if DEBUG
+        if let overrideCategory = FontManager.overrideContentSizeCategory {
+            let traits = UITraitCollection(preferredContentSizeCategory: overrideCategory)
+            return UIFontMetrics(forTextStyle: textStyle).scaledFont(for: font, compatibleWith: traits)
+        }
+        #endif
         return UIFontMetrics(forTextStyle: textStyle).scaledFont(for: font)
     }
 }

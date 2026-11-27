@@ -99,6 +99,39 @@ enum AvatarSize {
 
 // MARK: - Motion
 
+/// Semantic motion intents aligned with `docs/brand/05-motion.md`.
+enum MotionIntent: CaseIterable, Sendable {
+  case instant
+  case enter
+  case exit
+  case emphasis
+  case gesture
+
+  /// Native animation curve respecting Reduce Motion (`docs/brand/05-motion.md §Reduce Motion`:
+  /// springs flatten to gentle non-overshooting linear/easeOut crossfades rather than bouncing).
+  func animation(reduceMotion: Bool) -> Animation {
+    if reduceMotion {
+      switch self {
+      case .instant, .gesture:
+        return .linear(duration: 0.15)
+      case .enter:
+        return .easeOut(duration: 0.22)
+      case .exit:
+        return .easeOut(duration: 0.18)
+      case .emphasis:
+        return .easeOut(duration: 0.20)
+      }
+    }
+    switch self {
+    case .instant: return Motion.instant
+    case .enter: return Motion.enter
+    case .exit: return Motion.exit
+    case .emphasis: return Motion.emphasis
+    case .gesture: return Motion.gesture
+    }
+  }
+}
+
 /// Motion intents.
 ///
 /// Source: `Brand.motion.<intent>.iosSwiftUI`. Those bindings are strings
@@ -116,66 +149,133 @@ enum Motion {
   static let emphasis: Animation = .spring(response: 0.4, dampingFraction: 0.65)
   /// Interactive spring for drag-tracking.
   static let gesture: Animation = .interactiveSpring()
+  /// Gentle non-overshooting fallback curve used when Reduce Motion flattens springs.
+  static let reducedCrossfade: Animation = .easeOut(duration: 0.15)
 
-  /// Returns `nil` (no animation) when Reduce Motion is on.
-  static func resolved(_ animation: Animation, reduceMotion: Bool) -> Animation? {
-    reduceMotion ? nil : animation
+  /// Resolve an animation under Reduce Motion.
+  /// Per `docs/brand/05-motion.md`, springs flatten to a gentle crossfade (`reducedCrossfade`)
+  /// by default; pass `reducedFallback: nil` when motion should be omitted completely.
+  static func resolved(
+    _ animation: Animation,
+    reduceMotion: Bool,
+    reducedFallback: Animation? = Motion.reducedCrossfade
+  ) -> Animation? {
+    reduceMotion ? reducedFallback : animation
   }
 
-  /// `withAnimation` that is skipped under Reduce Motion.
+  /// Resolve a semantic motion intent under Reduce Motion.
+  static func resolved(_ intent: MotionIntent, reduceMotion: Bool) -> Animation {
+    intent.animation(reduceMotion: reduceMotion)
+  }
+
+  /// `withAnimation` that honors Reduce Motion semantics.
   static func withAnimation<Result>(
-    _ animation: Animation, reduceMotion: Bool, _ body: () throws -> Result
+    _ animation: Animation,
+    reduceMotion: Bool,
+    reducedFallback: Animation? = Motion.reducedCrossfade,
+    _ body: () throws -> Result
   ) rethrows -> Result {
-    try SwiftUI.withAnimation(resolved(animation, reduceMotion: reduceMotion), body)
+    try SwiftUI.withAnimation(
+      resolved(animation, reduceMotion: reduceMotion, reducedFallback: reducedFallback),
+      body
+    )
+  }
+
+  /// `withAnimation` for a semantic motion intent.
+  static func withAnimation<Result>(
+    _ intent: MotionIntent,
+    reduceMotion: Bool,
+    _ body: () throws -> Result
+  ) rethrows -> Result {
+    try SwiftUI.withAnimation(intent.animation(reduceMotion: reduceMotion), body)
   }
 }
 
 private struct CatbirdAnimationModifier<V: Equatable>: ViewModifier {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   let animation: Animation
+  let reducedFallback: Animation?
   let value: V
 
   func body(content: Content) -> some View {
-    content.animation(Motion.resolved(animation, reduceMotion: reduceMotion), value: value)
+    content.animation(
+      Motion.resolved(animation, reduceMotion: reduceMotion, reducedFallback: reducedFallback),
+      value: value
+    )
+  }
+}
+
+private struct CatbirdMotionIntentModifier<V: Equatable>: ViewModifier {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  let intent: MotionIntent
+  let value: V
+
+  func body(content: Content) -> some View {
+    content.animation(intent.animation(reduceMotion: reduceMotion), value: value)
   }
 }
 
 extension View {
-  /// `.animation(_:value:)` that is skipped under Reduce Motion.
-  func catbirdAnimation<V: Equatable>(_ animation: Animation = Motion.enter, value: V) -> some View {
-    modifier(CatbirdAnimationModifier(animation: animation, value: value))
+  /// `.animation(_:value:)` that respects Reduce Motion (flattening springs to a gentle crossfade by default).
+  func catbirdAnimation<V: Equatable>(
+    _ animation: Animation = Motion.enter,
+    reducedFallback: Animation? = Motion.reducedCrossfade,
+    value: V
+  ) -> some View {
+    modifier(
+      CatbirdAnimationModifier(animation: animation, reducedFallback: reducedFallback, value: value)
+    )
+  }
+
+  /// `.animation(_:value:)` for a semantic `MotionIntent` that flattens springs under Reduce Motion.
+  func catbirdAnimation<V: Equatable>(_ intent: MotionIntent, value: V) -> some View {
+    modifier(CatbirdMotionIntentModifier(intent: intent, value: value))
   }
 }
 
 // MARK: - Elevation
 
-/// Surface elevation. Subtle shadows only; the feed is flat.
+/// Surface elevation. Subtle shadows in Light/Dim; suppressed on OLED True Black per `docs/brand/06-materials.md`.
 enum Elevation: CaseIterable, Sendable {
   case flat
   case raised
   case floating
 
-  fileprivate var shadow: (opacity: Double, radius: CGFloat, y: CGFloat) {
+  fileprivate var metrics: (opacityFactor: Double, radius: CGFloat, y: CGFloat) {
     switch self {
     case .flat: return (0, 0, 0)
-    case .raised: return (0.06, 4, 1)
-    case .floating: return (0.14, 16, 6)
+    case .raised: return (0.45, 4, 1)
+    case .floating: return (0.90, 16, 6)
     }
   }
 }
 
+private struct CatbirdElevationModifier: ViewModifier {
+  @Environment(\.catbirdTheme) private var theme
+  let elevation: Elevation
+
+  func body(content: Content) -> some View {
+    let m = elevation.metrics
+    let color: Color =
+      (elevation == .flat || theme.isTrueBlack)
+      ? .clear
+      : theme.shadowColor().opacity(m.opacityFactor)
+    content.shadow(color: color, radius: m.radius, x: 0, y: m.y)
+  }
+}
+
 extension View {
-  /// Apply a token elevation shadow.
+  /// Apply a theme-aware token elevation shadow (suppressed in True Black OLED mode).
   func catbirdElevation(_ elevation: Elevation) -> some View {
-    let s = elevation.shadow
-    return shadow(color: .black.opacity(s.opacity), radius: s.radius, x: 0, y: s.y)
+    modifier(CatbirdElevationModifier(elevation: elevation))
   }
 }
 
 // MARK: - Brand gradient
 
 /// 135° gradient from the active accent toward its palette `gradientPartner`
-/// (docs/brand/02-color.md), the end stop mixed 50% back to the accent for label contrast.
+/// (`docs/brand/02-color.md`), parsed in sRGB to match `docs/brand/contrast-audit.md`,
+/// with the end stop mixed 50% back to the accent for label contrast.
 /// Use sparingly: hero buttons, brand moments (`CatbirdButtonKind.brand`).
 enum BrandGradient {
   private static func palette(for option: AccentColorOption) -> Palette {
@@ -196,7 +296,7 @@ enum BrandGradient {
     let s = hex.trimmingCharacters(in: CharacterSet(charactersIn: "# "))
     guard s.count == 6, let v = UInt32(s, radix: 16) else { return nil }
     return Color(
-      .displayP3,
+      .sRGB,
       red: Double((v >> 16) & 0xff) / 255,
       green: Double((v >> 8) & 0xff) / 255,
       blue: Double(v & 0xff) / 255)
@@ -205,44 +305,44 @@ enum BrandGradient {
   static let startPoint = UnitPoint.topLeading
   static let endPoint = UnitPoint.bottomTrailing
 
-  /// Start and end colours for an accent palette.
+  /// Start and end colours for an accent palette in sRGB.
   static func colors(for option: AccentColorOption, scheme: ColorScheme) -> (start: Color, end: Color) {
     let p = palette(for: option)
-    // The default palette follows the asset-catalog accent (same colour `.tint` resolves to),
-    // so a brand gradient starts from exactly the colour solid primary buttons use.
-    let start: Color =
-      option == .catbird
-      ? Color.accentColor
-      : (color(hex: scheme == .dark ? p.accentDark : p.accentLight) ?? .accentColor)
+    let startHex = scheme == .dark ? p.accentDark : p.accentLight
+    let start = color(hex: startHex) ?? .accentColor
     let partner = color(hex: p.gradientPartner) ?? start
-    // Pull the end stop halfway back toward the accent so white labels keep >= 3:1 contrast.
+    // Pull the end stop halfway back toward the accent so foreground labels keep contrast.
     let end = start.mix(with: partner, by: 0.5)
     return (start, end)
+  }
+
+  /// Gradient for an explicit resolved `CatbirdThemeColors`.
+  static func current(theme: CatbirdThemeColors) -> LinearGradient {
+    let c = colors(for: theme.accentOption, scheme: theme.colorScheme)
+    return LinearGradient(colors: [c.start, c.end], startPoint: startPoint, endPoint: endPoint)
   }
 
   /// Gradient for the active theme accent.
   static func current(themeManager: ThemeManager?, scheme: ColorScheme = .light) -> LinearGradient {
     guard let themeManager else { return fallback }
-    let c = colors(for: themeManager.currentAccentColor, scheme: scheme)
+    let effective = themeManager.effectiveColorScheme(for: scheme)
+    let c = colors(for: themeManager.currentAccentColor, scheme: effective)
     return LinearGradient(colors: [c.start, c.end], startPoint: startPoint, endPoint: endPoint)
   }
 
   /// Environment-free fallback: accent colour to a lighter tint of itself.
   static var fallback: LinearGradient {
-    LinearGradient(
-      colors: [Color.accentColor, Color.accentColor.mix(with: .white, by: 0.15)],
-      startPoint: startPoint, endPoint: endPoint)
+    let c = colors(for: .catbird, scheme: .light)
+    return LinearGradient(colors: [c.start, c.end], startPoint: startPoint, endPoint: endPoint)
   }
 }
 
-/// Fills its frame with the brand gradient for the active theme (reads the
-/// theme from the environment; falls back to accent when absent).
+/// Fills its frame with the brand gradient for the active theme.
 struct BrandGradientFill: View {
-  @Environment(\.themeManager) private var themeManager
-  @Environment(\.colorScheme) private var scheme
+  @Environment(\.catbirdTheme) private var theme
 
   var body: some View {
-    Rectangle().fill(BrandGradient.current(themeManager: themeManager, scheme: scheme))
+    Rectangle().fill(BrandGradient.current(theme: theme))
   }
 }
 
@@ -250,7 +350,7 @@ struct BrandGradientFill: View {
   VStack(alignment: .leading, spacing: Space.md) {
     ForEach(Radius.allCases, id: \.self) { r in
       r.shape.fill(Color.accentColor.opacity(0.2)).frame(height: 32)
-        .overlay(Text("Radius \(Int(r.value))").font(.caption))
+        .overlay(Text("Radius \(Int(r.value))").appFont(AppTextRole.caption))
     }
     BrandGradientFill().frame(height: 48).catbirdClip(.lg)
   }
