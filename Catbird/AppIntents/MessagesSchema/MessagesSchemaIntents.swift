@@ -511,6 +511,10 @@ struct CatbirdSetMessageReadStatusSchemaIntent {
     if isRead {
       let rows = try await coordinator.listMessages(conversationId: canonicalID, limit: 100)
       if let targetRow = rows.first(where: { $0.messageId == message.id }) ?? rows.first {
+        try await coordinator.markConversationRead(
+          conversationId: canonicalID,
+          readThroughSeq: targetRow.seq
+        )
         try await coordinator.acknowledgeEntriesUpTo(
           conversationId: canonicalID,
           upToSeq: targetRow.seq
