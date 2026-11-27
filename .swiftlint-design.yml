@@ -1,0 +1,126 @@
+# Strict design-system SwiftLint configuration for Catbird.
+#
+# This config intentionally runs ONLY design-system custom rules (no generic
+# style/file-length rules whose line-count churn poisons ratcheting, and NO
+# `lenient: true`). Enforced via `./scripts/design_lint.sh` and CI alongside
+# the SwiftSyntax AST linter (`tools/design-lint`) and the monotonic
+# per-(file, rule) budget (`.design-lint-budget.json`).
+
+only_rules:
+  - custom_rules
+
+included:
+  - Catbird
+  - CatbirdFeedWidget
+  - CatbirdNotificationWidget
+  - NotificationServiceExtension
+  - SharedDraftImporter
+
+excluded:
+  - .git
+  - Pods
+  - build
+  - DerivedData
+  - _trash
+  - tools
+  - Catbird/Core/UI/Kit
+  - Packages/CatbirdDesignSystem
+
+reporter: "xcode"
+
+custom_rules:
+  no_raw_corner_radius:
+    name: "No raw corner radius"
+    regex: 'RoundedRectangle\(cornerRadius:\s*[0-9]|cornerRadius:\s*[0-9]|\.rect\(cornerRadius:|\.layer\.cornerRadius\s*='
+    included: 'Catbird/(App|Core|Features)/|(CatbirdFeedWidget|CatbirdNotificationWidget|NotificationServiceExtension|SharedDraftImporter)/'
+    excluded: 'Core/UI/Kit/|Packages/CatbirdDesignSystem/|_trash/|Core/UI/DesignTokens\.swift$'
+    match_kinds:
+      - identifier
+      - keyword
+      - number
+    message: "Use Radius tokens (Radius.x.shape / .catbirdClip(.x) in Core/UI/Kit/CatbirdTokens.swift), not literal or UIKit raw radii."
+    severity: error
+
+  no_cornerradius_modifier:
+    name: "No .cornerRadius()"
+    regex: '\.cornerRadius(XS|SM|MD|LG|XL)?\('
+    included: 'Catbird/(App|Core|Features)/|(CatbirdFeedWidget|CatbirdNotificationWidget|NotificationServiceExtension|SharedDraftImporter)/'
+    excluded: 'Core/UI/Kit/|Packages/CatbirdDesignSystem/|_trash/|Core/UI/DesignTokens\.swift$'
+    match_kinds:
+      - identifier
+      - keyword
+      - number
+    message: ".cornerRadius() is non-continuous / legacy; use .catbirdClip(.x) or .catbirdCard(...)."
+    severity: error
+
+  no_raw_system_font_size:
+    name: "No .font(.system(size:))"
+    regex: '\.font\(\.system\(size:|\bFont\.system\(size:'
+    included: 'Catbird/(App|Core|Features)/|(CatbirdFeedWidget|CatbirdNotificationWidget|NotificationServiceExtension|SharedDraftImporter)/'
+    excluded: 'Core/UI/Kit/|Packages/CatbirdDesignSystem/|_trash/|Core/State/FontManager\.swift$|Core/Services/FontManager\.swift$|Core/Extensions/Typography\.swift$|Core/UI/Typography\.swift$|Core/UI/AppUIFont\.swift$|Core/UI/DesignTokens\.swift$'
+    match_kinds:
+      - identifier
+      - keyword
+      - number
+    message: "Use .appFont(AppTextRole.x) (or AppUIFont in UIKit) instead of fixed system font sizes."
+    severity: error
+
+  no_raw_system_text_style_font:
+    name: "No .font(.system(.textStyle))"
+    regex: '\.font\(\.system\(\.(largeTitle|title|title2|title3|headline|subheadline|body|callout|footnote|caption|caption2)\b'
+    included: 'Catbird/(App|Core|Features)/|(CatbirdFeedWidget|CatbirdNotificationWidget|NotificationServiceExtension|SharedDraftImporter)/'
+    excluded: 'Core/UI/Kit/|Packages/CatbirdDesignSystem/|_trash/|Core/State/FontManager\.swift$|Core/Services/FontManager\.swift$|Core/Extensions/Typography\.swift$|Core/UI/Typography\.swift$|Core/UI/AppUIFont\.swift$'
+    match_kinds:
+      - identifier
+      - keyword
+      - number
+    message: "Use .appFont(AppTextRole.x) instead of .font(.system(.textStyle)) so user font settings apply."
+    severity: error
+
+  no_raw_text_style_font:
+    name: "No raw text-style fonts"
+    regex: '\.font\(\.(largeTitle|title|title2|title3|headline|subheadline|body|callout|footnote|caption|caption2)\b'
+    included: 'Catbird/(App|Core|Features)/|(CatbirdFeedWidget|CatbirdNotificationWidget|NotificationServiceExtension|SharedDraftImporter)/'
+    excluded: 'Core/UI/Kit/|Packages/CatbirdDesignSystem/|_trash/|Core/State/FontManager\.swift$|Core/Services/FontManager\.swift$|Core/Extensions/Typography\.swift$|Core/UI/Typography\.swift$|Core/UI/AppUIFont\.swift$'
+    match_kinds:
+      - identifier
+      - keyword
+      - number
+    message: "Use .appFont(AppTextRole.x) so the user's font settings apply."
+    severity: error
+
+  no_hardcoded_blue:
+    name: "No hardcoded blue"
+    regex: '\bColor\.blue\b|\bUIColor\.systemBlue\b|\.(foregroundStyle|foregroundColor|tint|fill|background|stroke)\(\.blue\b'
+    included: 'Catbird/(App|Core|Features)/|(CatbirdFeedWidget|CatbirdNotificationWidget|NotificationServiceExtension|SharedDraftImporter)/'
+    excluded: 'Core/UI/Kit/|Packages/CatbirdDesignSystem/|_trash/|Core/UI/ThemeColors\.swift$|Core/UI/DesignTokens\.swift$'
+    match_kinds:
+      - identifier
+      - keyword
+      - number
+    message: "Use CatbirdTheme accent / Color.accentColor (or CatbirdButtonStyle / CatbirdChip / CatbirdBadge tones) instead of hardcoded blue."
+    severity: error
+
+  no_legacy_design_tokens:
+    name: "No legacy DesignTokens"
+    regex: '\bDesignTokens\.'
+    included: 'Catbird/(App|Core|Features)/|(CatbirdFeedWidget|CatbirdNotificationWidget|NotificationServiceExtension|SharedDraftImporter)/'
+    excluded: 'Core/UI/Kit/|Packages/CatbirdDesignSystem/|_trash/|Core/UI/DesignTokens\.swift$'
+    match_kinds:
+      - identifier
+      - keyword
+      - number
+    message: "DesignTokens (3pt grid) is legacy; use CatbirdTokens (Space, Radius, ControlHeight, AvatarSize, Motion) instead."
+    severity: error
+
+  no_legacy_material:
+    name: "No legacy Material backgrounds"
+    regex: '\.(ultraThinMaterial|thinMaterial|regularMaterial|thickMaterial|ultraThickMaterial|bar)\b'
+    included: 'Catbird/(App|Core|Features)/|(CatbirdFeedWidget|CatbirdNotificationWidget|NotificationServiceExtension|SharedDraftImporter)/'
+    excluded: 'Core/UI/Kit/|Packages/CatbirdDesignSystem/|_trash/'
+    match_kinds:
+      - identifier
+      - keyword
+      - number
+    message: "Legacy Material breaks iOS 26 Liquid Glass / True Black parity; use .catbirdGlass(...) or themed surfaces."
+    severity: error

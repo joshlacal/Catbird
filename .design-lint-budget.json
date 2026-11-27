@@ -1,0 +1,2457 @@
+{
+  "files" : {
+    "Catbird/App/CatbirdApp.swift" : {
+      "legacy_design_tokens" : 1,
+      "off_grid_spacing" : 2,
+      "raw_animation" : 1,
+      "raw_color" : 21,
+      "raw_corner_radius" : 4,
+      "raw_font" : 20,
+      "raw_spacing" : 10,
+      "swiftlint.no_cornerradius_modifier" : 4,
+      "swiftlint.no_hardcoded_blue" : 2,
+      "swiftlint.no_raw_system_font_size" : 1,
+      "swiftlint.no_raw_text_style_font" : 15
+    },
+    "Catbird/App/ContentView.swift" : {
+      "raw_spacing" : 1
+    },
+    "Catbird/App/FeedPerformanceFixture.swift" : {
+      "raw_color" : 4,
+      "raw_font" : 1
+    },
+    "Catbird/App/InlineReplyValidationFixture.swift" : {
+      "raw_font" : 2,
+      "raw_spacing" : 1,
+      "swiftlint.no_raw_text_style_font" : 2
+    },
+    "Catbird/App/MessagesNavigationFixture.swift" : {
+      "legacy_design_tokens" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 3,
+      "swiftlint.no_raw_text_style_font" : 1
+    },
+    "Catbird/App/MessagesViewportValidationFixture.swift" : {
+      "raw_color" : 9,
+      "raw_font" : 1
+    },
+    "Catbird/App/ModerationUIFixture.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_color" : 5,
+      "raw_font" : 3,
+      "raw_spacing" : 2,
+      "swiftlint.no_raw_system_font_size" : 2
+    },
+    "Catbird/App/SceneRuntimeFixture.swift" : {
+      "raw_color" : 1,
+      "raw_font" : 2,
+      "raw_spacing" : 2,
+      "swiftlint.no_raw_text_style_font" : 2
+    },
+    "Catbird/App/SearchTabReselectionFixture.swift" : {
+      "legacy_design_tokens" : 1,
+      "raw_font" : 1,
+      "swiftlint.no_raw_text_style_font" : 1
+    },
+    "Catbird/Core/CatalystToolbar/BadgedSegmentedControl.swift" : {
+      "raw_color" : 2,
+      "raw_font" : 1
+    },
+    "Catbird/Core/Extensions/Bundle+Language.swift" : {
+      "raw_animation" : 1
+    },
+    "Catbird/Core/Extensions/CrossPlatformUI.swift" : {
+      "raw_corner_radius" : 1,
+      "raw_font" : 3
+    },
+    "Catbird/Core/Extensions/PlatformColors.swift" : {
+      "swiftlint.no_hardcoded_blue" : 1
+    },
+    "Catbird/Core/Extensions/Typography.swift" : {
+      "raw_color" : 1,
+      "raw_corner_radius" : 3,
+      "raw_spacing" : 5,
+      "swiftlint.no_cornerradius_modifier" : 3
+    },
+    "Catbird/Core/Extensions/View+Extensions.swift" : {
+      "raw_animation" : 2,
+      "raw_color" : 2
+    },
+    "Catbird/Core/Navigation/ExternalURLIntentPresenter.swift" : {
+      "legacy_design_tokens" : 6,
+      "off_grid_spacing" : 2,
+      "raw_color" : 6,
+      "raw_font" : 24,
+      "raw_spacing" : 7,
+      "swiftlint.no_raw_system_font_size" : 5,
+      "swiftlint.no_raw_text_style_font" : 12
+    },
+    "Catbird/Core/Navigation/VideoFeedZoomSource.swift" : {
+      "raw_corner_radius" : 1
+    },
+    "Catbird/Core/Onboarding/Intelligence/Views/CommunityCardTileView.swift" : {
+      "off_grid_spacing" : 9,
+      "raw_animation" : 1,
+      "raw_color" : 16,
+      "raw_corner_radius" : 2,
+      "raw_font" : 17,
+      "raw_spacing" : 11,
+      "swiftlint.no_raw_corner_radius" : 2,
+      "swiftlint.no_raw_text_style_font" : 17
+    },
+    "Catbird/Core/Onboarding/Intelligence/Views/SceneExplorerBeatView.swift" : {
+      "off_grid_spacing" : 14,
+      "raw_color" : 5,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 21,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Core/Onboarding/Intelligence/Views/SceneIntelligenceOnboardingView.swift" : {
+      "off_grid_spacing" : 5,
+      "raw_animation" : 1,
+      "raw_color" : 2,
+      "raw_corner_radius" : 1,
+      "raw_spacing" : 17,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Core/Onboarding/Intelligence/Views/ScenePeekMembersSection.swift" : {
+      "off_grid_spacing" : 3,
+      "raw_color" : 1,
+      "raw_corner_radius" : 1,
+      "raw_spacing" : 3,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Core/Onboarding/Intelligence/Views/ScenePeekSheet.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_color" : 1,
+      "raw_spacing" : 10
+    },
+    "Catbird/Core/Onboarding/Intelligence/Views/StartingLineupBeatView.swift" : {
+      "off_grid_spacing" : 15,
+      "raw_color" : 6,
+      "raw_corner_radius" : 5,
+      "raw_spacing" : 24,
+      "swiftlint.no_raw_corner_radius" : 5
+    },
+    "Catbird/Core/Onboarding/Intelligence/Views/TasteCalibrationBeatView.swift" : {
+      "off_grid_spacing" : 14,
+      "raw_color" : 4,
+      "raw_corner_radius" : 3,
+      "raw_spacing" : 25,
+      "swiftlint.no_raw_corner_radius" : 3
+    },
+    "Catbird/Core/Onboarding/Intelligence/Views/TimelinePreviewBeatView.swift" : {
+      "off_grid_spacing" : 6,
+      "raw_color" : 2,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 12,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Core/Onboarding/NuxAnnouncementView.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_color" : 5,
+      "raw_font" : 1,
+      "raw_spacing" : 6,
+      "swiftlint.no_raw_system_font_size" : 1
+    },
+    "Catbird/Core/Onboarding/NuxNudge.swift" : {
+      "raw_color" : 2
+    },
+    "Catbird/Core/Onboarding/OnboardingAvatarStep.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_animation" : 1,
+      "raw_color" : 13,
+      "raw_corner_radius" : 2,
+      "raw_font" : 5,
+      "raw_spacing" : 20,
+      "swiftlint.no_raw_corner_radius" : 2,
+      "swiftlint.no_raw_system_font_size" : 4
+    },
+    "Catbird/Core/Onboarding/OnboardingSuggestedAccountsStep.swift" : {
+      "legacy_material" : 1,
+      "off_grid_spacing" : 1,
+      "raw_color" : 3,
+      "raw_spacing" : 20,
+      "swiftlint.no_legacy_material" : 1
+    },
+    "Catbird/Core/Onboarding/WelcomeOnboardingView.swift" : {
+      "legacy_material" : 1,
+      "off_grid_spacing" : 2,
+      "raw_animation" : 4,
+      "raw_color" : 6,
+      "raw_corner_radius" : 1,
+      "raw_spacing" : 27,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Core/Preview/PreviewModifiers.swift" : {
+      "raw_font" : 4,
+      "raw_spacing" : 3,
+      "swiftlint.no_raw_system_font_size" : 1,
+      "swiftlint.no_raw_text_style_font" : 3
+    },
+    "Catbird/Core/State/AppStateManager.swift" : {
+      "raw_animation" : 4
+    },
+    "Catbird/Core/State/ThemeManager.swift" : {
+      "raw_color" : 4
+    },
+    "Catbird/Core/UI/AdaptiveGlassEffect.swift" : {
+      "legacy_material" : 6,
+      "raw_color" : 7,
+      "raw_corner_radius" : 1,
+      "swiftlint.no_hardcoded_blue" : 1,
+      "swiftlint.no_legacy_material" : 6,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Core/UI/AsyncProfileImage.swift" : {
+      "raw_animation" : 1,
+      "raw_color" : 6,
+      "raw_spacing" : 1
+    },
+    "Catbird/Core/UI/Drag/BigDefaultButtonDropDelegate.swift" : {
+      "raw_animation" : 2
+    },
+    "Catbird/Core/UI/Drag/DefaultFeedDropDelegate.swift" : {
+      "raw_animation" : 2
+    },
+    "Catbird/Core/UI/Drag/FeedDropDelegate.swift" : {
+      "raw_animation" : 1
+    },
+    "Catbird/Core/UI/EmbeddedAuthorNameView.swift" : {
+      "raw_font" : 2,
+      "raw_spacing" : 1,
+      "swiftlint.no_raw_text_style_font" : 2
+    },
+    "Catbird/Core/UI/ErrorStateView.swift" : {
+      "legacy_design_tokens" : 3,
+      "raw_color" : 2,
+      "raw_corner_radius" : 1,
+      "raw_spacing" : 11,
+      "swiftlint.no_cornerradius_modifier" : 1
+    },
+    "Catbird/Core/UI/ExpandableAltTextCaption.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_animation" : 2,
+      "raw_corner_radius" : 1,
+      "raw_spacing" : 1,
+      "swiftlint.no_cornerradius_modifier" : 1
+    },
+    "Catbird/Core/UI/FAB.swift" : {
+      "raw_color" : 3,
+      "raw_spacing" : 7,
+      "small_tap_target" : 3
+    },
+    "Catbird/Core/UI/FlexibleHeaderGeometry.swift" : {
+      "raw_corner_radius" : 1
+    },
+    "Catbird/Core/UI/LabelChipFlow.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_color" : 2,
+      "raw_spacing" : 1
+    },
+    "Catbird/Core/UI/MacOSSidebarProfileHeader.swift" : {
+      "legacy_material" : 1,
+      "off_grid_spacing" : 1,
+      "raw_color" : 4,
+      "raw_corner_radius" : 2,
+      "raw_font" : 3,
+      "raw_spacing" : 1,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_text_style_font" : 2
+    },
+    "Catbird/Core/UI/MacOSUnifiedSidebar.swift" : {
+      "off_grid_spacing" : 4,
+      "raw_color" : 4,
+      "raw_corner_radius" : 1,
+      "raw_font" : 4,
+      "raw_spacing" : 3,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_text_style_font" : 2
+    },
+    "Catbird/Core/UI/MediaBadgeLabel.swift" : {
+      "raw_color" : 2
+    },
+    "Catbird/Core/UI/NetworkStatusIndicator.swift" : {
+      "raw_color" : 4,
+      "raw_spacing" : 5
+    },
+    "Catbird/Core/UI/PlatformAgeAccessView.swift" : {
+      "legacy_design_tokens" : 1,
+      "raw_font" : 4,
+      "raw_spacing" : 3,
+      "swiftlint.no_raw_text_style_font" : 4
+    },
+    "Catbird/Core/UI/PlatformAgeSafetyToolsView.swift" : {
+      "raw_color" : 1,
+      "raw_font" : 1,
+      "swiftlint.no_raw_text_style_font" : 1
+    },
+    "Catbird/Core/UI/ResponsiveContentView.swift" : {
+      "raw_color" : 8,
+      "raw_spacing" : 1,
+      "swiftlint.no_hardcoded_blue" : 1
+    },
+    "Catbird/Core/UI/SearchBar.swift" : {
+      "raw_corner_radius" : 1,
+      "raw_spacing" : 1,
+      "swiftlint.no_cornerradius_modifier" : 1
+    },
+    "Catbird/Core/UI/ThemedViewModifiers.swift" : {
+      "legacy_material" : 7,
+      "raw_corner_radius" : 4,
+      "raw_spacing" : 1,
+      "swiftlint.no_hardcoded_blue" : 1,
+      "swiftlint.no_legacy_material" : 7,
+      "swiftlint.no_raw_corner_radius" : 4
+    },
+    "Catbird/Core/UI/ThreadSeparatorView.swift" : {
+      "raw_spacing" : 2
+    },
+    "Catbird/Core/UI/ToastNotification.swift" : {
+      "legacy_material" : 1,
+      "off_grid_spacing" : 1,
+      "raw_animation" : 3,
+      "raw_color" : 4,
+      "raw_spacing" : 4,
+      "swiftlint.no_legacy_material" : 1
+    },
+    "Catbird/Core/UI/ValidatingTextField.swift" : {
+      "raw_color" : 4,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 2,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Core/UI/VerificationBadgeView.swift" : {
+      "raw_color" : 2,
+      "raw_font" : 4,
+      "raw_spacing" : 5,
+      "swiftlint.no_hardcoded_blue" : 2,
+      "swiftlint.no_raw_text_style_font" : 4
+    },
+    "Catbird/Core/Utilities/MotionManager.swift" : {
+      "raw_animation" : 3
+    },
+    "Catbird/Features/Auth/Views/AccountSwitcherView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_animation" : 1,
+      "raw_color" : 5,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 11,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Auth/Views/CloudAnimationView.swift" : {
+      "raw_animation" : 1,
+      "raw_color" : 3
+    },
+    "Catbird/Features/Auth/Views/CommunityStandardsAgreementView.swift" : {
+      "raw_spacing" : 2
+    },
+    "Catbird/Features/Auth/Views/InviteFriendsView.swift" : {
+      "off_grid_spacing" : 7,
+      "raw_animation" : 1,
+      "raw_color" : 31,
+      "raw_corner_radius" : 2,
+      "raw_font" : 2,
+      "raw_spacing" : 19,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Auth/Views/InviteScannerView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 14,
+      "raw_corner_radius" : 2,
+      "raw_font" : 3,
+      "raw_spacing" : 23,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Auth/Views/LoginView.swift" : {
+      "legacy_design_tokens" : 2,
+      "legacy_material" : 1,
+      "off_grid_spacing" : 2,
+      "raw_animation" : 6,
+      "raw_color" : 17,
+      "raw_corner_radius" : 1,
+      "raw_font" : 2,
+      "raw_spacing" : 23,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Auth/Views/ParticleEffectView.swift" : {
+      "raw_color" : 3
+    },
+    "Catbird/Features/Auth/Views/SignupQueuedView.swift" : {
+      "raw_color" : 5,
+      "raw_corner_radius" : 1,
+      "raw_font" : 3,
+      "raw_spacing" : 19,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_system_font_size" : 2
+    },
+    "Catbird/Features/Auth/Views/SkyView.swift" : {
+      "unreasoned_lint_disable" : 1
+    },
+    "Catbird/Features/Auth/Views/StarterPackLandingView.swift" : {
+      "raw_color" : 6,
+      "raw_corner_radius" : 4,
+      "raw_spacing" : 35,
+      "swiftlint.no_raw_corner_radius" : 4
+    },
+    "Catbird/Features/Auth/Views/TextureOverlays.swift" : {
+      "raw_color" : 1
+    },
+    "Catbird/Features/Chat/Extensions/EmojiPickerExtension.swift" : {
+      "raw_animation" : 1,
+      "raw_color" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 3,
+      "small_tap_target" : 1,
+      "swiftlint.no_raw_system_font_size" : 1
+    },
+    "Catbird/Features/Chat/Models/MessageRequestsStore.swift" : {
+      "raw_animation" : 4
+    },
+    "Catbird/Features/Chat/Views/BlockedConversationFooter.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 1,
+      "raw_spacing" : 5
+    },
+    "Catbird/Features/Chat/Views/ChatFAB.swift" : {
+      "raw_color" : 2
+    },
+    "Catbird/Features/Chat/Views/ChatModerationView.swift" : {
+      "raw_color" : 4,
+      "raw_corner_radius" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 2,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Chat/Views/ChatProfileAvatarView.swift" : {
+      "raw_color" : 4,
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Chat/Views/ChatProfileRowView.swift" : {
+      "raw_spacing" : 6
+    },
+    "Catbird/Features/Chat/Views/ChatReportFormView.swift" : {
+      "raw_color" : 1,
+      "raw_font" : 2,
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Chat/Views/ChatSettingsView.swift" : {
+      "raw_spacing" : 3
+    },
+    "Catbird/Features/Chat/Views/ChatTabView.swift" : {
+      "legacy_design_tokens" : 1,
+      "raw_spacing" : 10
+    },
+    "Catbird/Features/Chat/Views/ChatToolbarMenus.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 2,
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Chat/Views/Components/ChatMessageComposerView.swift" : {
+      "legacy_design_tokens" : 16,
+      "legacy_material" : 1,
+      "off_grid_spacing" : 1,
+      "raw_color" : 3,
+      "raw_corner_radius" : 1,
+      "raw_font" : 6,
+      "raw_spacing" : 5,
+      "swiftlint.no_legacy_design_tokens" : 12,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_system_font_size" : 1,
+      "swiftlint.no_raw_text_style_font" : 2
+    },
+    "Catbird/Features/Chat/Views/Components/MessageReactionsView.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_animation" : 1,
+      "raw_color" : 6,
+      "raw_corner_radius" : 3,
+      "raw_spacing" : 5,
+      "swiftlint.no_raw_corner_radius" : 3
+    },
+    "Catbird/Features/Chat/Views/Components/RequestRow.swift" : {
+      "legacy_design_tokens" : 23,
+      "legacy_material" : 1,
+      "raw_color" : 3,
+      "raw_font" : 3,
+      "swiftlint.no_legacy_design_tokens" : 15,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_system_font_size" : 2
+    },
+    "Catbird/Features/Chat/Views/ContactSearchList.swift" : {
+      "legacy_design_tokens" : 10,
+      "raw_animation" : 3,
+      "raw_color" : 1,
+      "raw_spacing" : 2,
+      "swiftlint.no_legacy_design_tokens" : 4
+    },
+    "Catbird/Features/Chat/Views/ConversationInvitationsView.swift" : {
+      "raw_color" : 2,
+      "raw_spacing" : 4
+    },
+    "Catbird/Features/Chat/Views/ConversationKindChooserView.swift" : {
+      "off_grid_spacing" : 3,
+      "raw_color" : 1,
+      "raw_spacing" : 3
+    },
+    "Catbird/Features/Chat/Views/ConversationListView.swift" : {
+      "legacy_design_tokens" : 9,
+      "swiftlint.no_legacy_design_tokens" : 4
+    },
+    "Catbird/Features/Chat/Views/ConversationManagementView.swift" : {
+      "off_grid_spacing" : 3,
+      "raw_animation" : 1,
+      "raw_color" : 3,
+      "raw_corner_radius" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 11,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_system_font_size" : 1
+    },
+    "Catbird/Features/Chat/Views/ConversationRow.swift" : {
+      "legacy_design_tokens" : 15,
+      "off_grid_spacing" : 1,
+      "raw_color" : 1,
+      "raw_font" : 2,
+      "swiftlint.no_legacy_design_tokens" : 7
+    },
+    "Catbird/Features/Chat/Views/ConversationView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_animation" : 1,
+      "raw_corner_radius" : 1,
+      "raw_spacing" : 10,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Chat/Views/GroupAdministrationViews.swift" : {
+      "raw_animation" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 2
+    },
+    "Catbird/Features/Chat/Views/GroupConfigView.swift" : {
+      "legacy_design_tokens" : 14,
+      "raw_color" : 2,
+      "raw_corner_radius" : 1,
+      "raw_font" : 4,
+      "raw_spacing" : 7,
+      "swiftlint.no_cornerradius_modifier" : 1,
+      "swiftlint.no_legacy_design_tokens" : 5,
+      "swiftlint.no_raw_system_font_size" : 3
+    },
+    "Catbird/Features/Chat/Views/MLSDirectDraftConversationView.swift" : {
+      "legacy_material" : 1,
+      "off_grid_spacing" : 2,
+      "raw_color" : 3,
+      "raw_corner_radius" : 2,
+      "raw_font" : 8,
+      "raw_spacing" : 12,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_corner_radius" : 2,
+      "swiftlint.no_raw_system_font_size" : 1,
+      "swiftlint.no_raw_text_style_font" : 7
+    },
+    "Catbird/Features/Chat/Views/MLSIntroSheet.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_font" : 1,
+      "raw_spacing" : 5,
+      "swiftlint.no_raw_system_font_size" : 1
+    },
+    "Catbird/Features/Chat/Views/MLSOptInGateView.swift" : {
+      "raw_font" : 2,
+      "raw_spacing" : 3,
+      "swiftlint.no_raw_system_font_size" : 1
+    },
+    "Catbird/Features/Chat/Views/MessageRequestsView.swift" : {
+      "legacy_design_tokens" : 35,
+      "raw_animation" : 2,
+      "raw_color" : 1,
+      "raw_corner_radius" : 1,
+      "raw_font" : 2,
+      "raw_spacing" : 1,
+      "swiftlint.no_legacy_design_tokens" : 19,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Chat/Views/NewConversationView.swift" : {
+      "legacy_design_tokens" : 10,
+      "legacy_material" : 2,
+      "raw_animation" : 6,
+      "raw_color" : 7,
+      "raw_corner_radius" : 1,
+      "raw_font" : 5,
+      "raw_spacing" : 4,
+      "swiftlint.no_cornerradius_modifier" : 1,
+      "swiftlint.no_legacy_design_tokens" : 5,
+      "swiftlint.no_legacy_material" : 2,
+      "swiftlint.no_raw_system_font_size" : 1
+    },
+    "Catbird/Features/Chat/Views/ReportConversationView.swift" : {
+      "raw_color" : 6,
+      "raw_corner_radius" : 2,
+      "raw_font" : 3,
+      "raw_spacing" : 10,
+      "swiftlint.no_raw_corner_radius" : 2,
+      "swiftlint.no_raw_system_font_size" : 1
+    },
+    "Catbird/Features/Chat/Views/macOS/MacOSBlueskyConversationView.swift" : {
+      "raw_font" : 1,
+      "raw_spacing" : 1,
+      "swiftlint.no_raw_system_font_size" : 1
+    },
+    "Catbird/Features/Chat/Views/macOS/MacOSChatSidebar.swift" : {
+      "raw_spacing" : 4
+    },
+    "Catbird/Features/Chat/Views/macOS/MacOSMLSConversationView.swift" : {
+      "legacy_material" : 1,
+      "off_grid_spacing" : 1,
+      "raw_color" : 3,
+      "raw_corner_radius" : 1,
+      "raw_font" : 2,
+      "raw_spacing" : 7,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_system_font_size" : 2
+    },
+    "Catbird/Features/Chat/Views/macOS/MacOSUnifiedConversationRow.swift" : {
+      "off_grid_spacing" : 4,
+      "raw_color" : 12,
+      "raw_font" : 2,
+      "raw_spacing" : 7,
+      "swiftlint.no_raw_system_font_size" : 2
+    },
+    "Catbird/Features/Circles/Views/CircleAudiencePicker.swift" : {
+      "off_grid_spacing" : 3
+    },
+    "Catbird/Features/Circles/Views/CircleDetailView.swift" : {
+      "raw_spacing" : 5
+    },
+    "Catbird/Features/Circles/Views/CircleFeedItemRow.swift" : {
+      "raw_spacing" : 4
+    },
+    "Catbird/Features/Circles/Views/CircleManagementView.swift" : {
+      "raw_color" : 7,
+      "raw_font" : 2,
+      "raw_spacing" : 8
+    },
+    "Catbird/Features/Circles/Views/CircleMediaView.swift" : {
+      "raw_color" : 2,
+      "raw_corner_radius" : 3
+    },
+    "Catbird/Features/Circles/Views/CircleMemberPickerView.swift" : {
+      "raw_color" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 5
+    },
+    "Catbird/Features/Circles/Views/CircleNotificationsSection.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 5,
+      "raw_font" : 4,
+      "raw_spacing" : 15
+    },
+    "Catbird/Features/Circles/Views/CircleReportView.swift" : {
+      "raw_color" : 1,
+      "raw_font" : 1
+    },
+    "Catbird/Features/Circles/Views/CirclesFeedView.swift" : {
+      "raw_spacing" : 2
+    },
+    "Catbird/Features/Circles/Views/CreateCircleView.swift" : {
+      "raw_color" : 4,
+      "raw_font" : 2,
+      "raw_spacing" : 5
+    },
+    "Catbird/Features/Feed/Services/PostHeightCalculator.swift" : {
+      "raw_font" : 2
+    },
+    "Catbird/Features/Feed/Services/ShareToChatActivity.swift" : {
+      "legacy_material" : 5,
+      "off_grid_spacing" : 5,
+      "raw_animation" : 12,
+      "raw_color" : 7,
+      "raw_corner_radius" : 5,
+      "raw_font" : 22,
+      "raw_spacing" : 34,
+      "swiftlint.no_legacy_material" : 5,
+      "swiftlint.no_raw_corner_radius" : 5,
+      "swiftlint.no_raw_system_font_size" : 2,
+      "swiftlint.no_raw_text_style_font" : 17
+    },
+    "Catbird/Features/Feed/Views/AdvancedTextEffects.swift" : {
+      "raw_animation" : 8,
+      "raw_color" : 3,
+      "raw_font" : 1,
+      "raw_spacing" : 3
+    },
+    "Catbird/Features/Feed/Views/BluemojiVisualTestView.swift" : {
+      "raw_font" : 7,
+      "raw_spacing" : 1,
+      "swiftlint.no_raw_system_font_size" : 1,
+      "swiftlint.no_raw_text_style_font" : 5
+    },
+    "Catbird/Features/Feed/Views/BookmarksView.swift" : {
+      "raw_animation" : 2,
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/ActionButtons/ActionButtonsView.swift" : {
+      "raw_font" : 1,
+      "raw_spacing" : 2
+    },
+    "Catbird/Features/Feed/Views/Components/ActionButtons/FeedActionBar.swift" : {
+      "raw_animation" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/ContentLabelView.swift" : {
+      "raw_animation" : 2,
+      "raw_spacing" : 3
+    },
+    "Catbird/Features/Feed/Views/Components/ExternalEmbedView.swift" : {
+      "off_grid_spacing" : 15,
+      "raw_animation" : 2,
+      "raw_color" : 33,
+      "raw_corner_radius" : 18,
+      "raw_spacing" : 19,
+      "swiftlint.no_cornerradius_modifier" : 8,
+      "swiftlint.no_raw_corner_radius" : 10
+    },
+    "Catbird/Features/Feed/Views/Components/ExternalMediaWebView.swift" : {
+      "raw_animation" : 2,
+      "raw_color" : 12,
+      "raw_corner_radius" : 3,
+      "raw_font" : 6,
+      "raw_spacing" : 6,
+      "swiftlint.no_cornerradius_modifier" : 1,
+      "swiftlint.no_raw_corner_radius" : 2,
+      "swiftlint.no_raw_text_style_font" : 6
+    },
+    "Catbird/Features/Feed/Views/Components/FeedContinuityIndicators.swift" : {
+      "raw_animation" : 2,
+      "raw_color" : 15,
+      "raw_corner_radius" : 2,
+      "raw_font" : 9,
+      "raw_spacing" : 12,
+      "swiftlint.no_cornerradius_modifier" : 2,
+      "swiftlint.no_raw_system_font_size" : 9
+    },
+    "Catbird/Features/Feed/Views/Components/GalleryEmbedView.swift" : {
+      "off_grid_spacing" : 3,
+      "raw_color" : 5,
+      "raw_corner_radius" : 8
+    },
+    "Catbird/Features/Feed/Views/Components/ImagePreviewContextMenu.swift" : {
+      "raw_color" : 2
+    },
+    "Catbird/Features/Feed/Views/Components/LabelerView.swift" : {
+      "raw_color" : 2,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 23,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Feed/Views/Components/LinkCardWebPreview.swift" : {
+      "raw_corner_radius" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 2,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_text_style_font" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/NewPostsIndicator.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_animation" : 3,
+      "raw_color" : 8,
+      "raw_font" : 3,
+      "raw_spacing" : 3,
+      "swiftlint.no_raw_text_style_font" : 3
+    },
+    "Catbird/Features/Feed/Views/Components/NewPostsIndicatorController.swift" : {
+      "raw_animation" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Audio/AudioVisualizerPreview.swift" : {
+      "raw_animation" : 1,
+      "raw_color" : 20,
+      "raw_corner_radius" : 6,
+      "raw_font" : 20,
+      "raw_spacing" : 23,
+      "swiftlint.no_raw_corner_radius" : 6,
+      "swiftlint.no_raw_text_style_font" : 14
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Audio/MetalWaveformView.swift" : {
+      "raw_color" : 11,
+      "raw_corner_radius" : 3,
+      "raw_font" : 2,
+      "raw_spacing" : 1,
+      "swiftlint.no_cornerradius_modifier" : 3,
+      "swiftlint.no_raw_corner_radius" : 3,
+      "swiftlint.no_raw_text_style_font" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Audio/PostComposerAudioRecordingView.swift" : {
+      "off_grid_spacing" : 3,
+      "raw_animation" : 6,
+      "raw_color" : 1,
+      "raw_corner_radius" : 1,
+      "raw_font" : 22,
+      "raw_spacing" : 13,
+      "swiftlint.no_raw_system_font_size" : 1,
+      "swiftlint.no_raw_text_style_font" : 12
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Audio/WaveformView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_animation" : 5,
+      "raw_color" : 2,
+      "raw_corner_radius" : 2,
+      "raw_font" : 3,
+      "raw_spacing" : 2,
+      "swiftlint.no_raw_corner_radius" : 2,
+      "swiftlint.no_raw_text_style_font" : 3
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Components/CharacterLimitIndicator.swift" : {
+      "legacy_material" : 1,
+      "raw_animation" : 3,
+      "raw_color" : 3,
+      "raw_font" : 4,
+      "raw_spacing" : 5,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_system_font_size" : 4
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Components/ComposeURLCardView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 3,
+      "raw_spacing" : 3
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Components/ComposerAccessoryBar.swift" : {
+      "legacy_material" : 2,
+      "off_grid_spacing" : 4,
+      "raw_animation" : 1,
+      "raw_corner_radius" : 1,
+      "raw_font" : 3,
+      "raw_spacing" : 8,
+      "swiftlint.no_legacy_material" : 2,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_system_font_size" : 3
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Components/ComposerChipsStrip.swift" : {
+      "legacy_material" : 3,
+      "off_grid_spacing" : 8,
+      "raw_color" : 1,
+      "raw_spacing" : 3,
+      "swiftlint.no_legacy_material" : 3
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Components/EnhancedRichTextEditor.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_color" : 3,
+      "raw_corner_radius" : 2,
+      "raw_font" : 19,
+      "raw_spacing" : 20,
+      "small_tap_target" : 6,
+      "swiftlint.no_hardcoded_blue" : 2,
+      "swiftlint.no_raw_corner_radius" : 2,
+      "swiftlint.no_raw_system_font_size" : 14
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Components/LinkEditingOverlay.swift" : {
+      "legacy_material" : 1,
+      "off_grid_spacing" : 1,
+      "raw_animation" : 4,
+      "raw_color" : 3,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 2,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Components/OutlineTagsView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_animation" : 6,
+      "raw_color" : 5,
+      "raw_corner_radius" : 4,
+      "raw_spacing" : 5,
+      "swiftlint.no_cornerradius_modifier" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Components/ReplyingToView.swift" : {
+      "raw_font" : 1,
+      "raw_spacing" : 2
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Components/ThreadPostEditorView.swift" : {
+      "raw_color" : 1,
+      "raw_spacing" : 5
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Components/UserMentionSuggestionView.swift" : {
+      "raw_color" : 4,
+      "raw_corner_radius" : 5,
+      "raw_font" : 1,
+      "raw_spacing" : 6,
+      "swiftlint.no_raw_corner_radius" : 5,
+      "swiftlint.no_raw_system_font_size" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/DraftsListView.swift" : {
+      "off_grid_spacing" : 3,
+      "raw_color" : 5,
+      "raw_corner_radius" : 1,
+      "raw_font" : 4,
+      "raw_spacing" : 8,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_text_style_font" : 4
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/EnhancedTextEditor.swift" : {
+      "legacy_material" : 4,
+      "off_grid_spacing" : 4,
+      "raw_animation" : 1,
+      "raw_color" : 11,
+      "raw_corner_radius" : 4,
+      "raw_font" : 1,
+      "raw_spacing" : 13,
+      "swiftlint.no_cornerradius_modifier" : 2,
+      "swiftlint.no_legacy_material" : 4,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/GifPickerView.swift" : {
+      "raw_corner_radius" : 6,
+      "raw_font" : 1,
+      "raw_spacing" : 18,
+      "swiftlint.no_cornerradius_modifier" : 2,
+      "swiftlint.no_raw_corner_radius" : 4,
+      "swiftlint.no_raw_system_font_size" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/GifVideoView.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_color" : 3,
+      "raw_corner_radius" : 5,
+      "raw_spacing" : 1,
+      "swiftlint.no_cornerradius_modifier" : 3,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Media/AltTextEditorView.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_color" : 2,
+      "raw_corner_radius" : 4,
+      "raw_spacing" : 9,
+      "swiftlint.no_cornerradius_modifier" : 4
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Media/MediaGalleryView.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_color" : 1,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 3,
+      "swiftlint.no_cornerradius_modifier" : 2
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Media/MediaItemView.swift" : {
+      "legacy_material" : 1,
+      "off_grid_spacing" : 2,
+      "raw_color" : 8,
+      "raw_corner_radius" : 1,
+      "raw_spacing" : 8,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Media/OCRTextSelectionView.swift" : {
+      "raw_color" : 4,
+      "raw_corner_radius" : 6,
+      "raw_spacing" : 14,
+      "swiftlint.no_cornerradius_modifier" : 4,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Media/PhotoEditorSheet.swift" : {
+      "legacy_material" : 1,
+      "raw_color" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 8,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_text_style_font" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Media/VideoCaptionEditorView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 3,
+      "raw_corner_radius" : 1,
+      "raw_font" : 7,
+      "raw_spacing" : 4,
+      "swiftlint.no_cornerradius_modifier" : 1,
+      "swiftlint.no_raw_system_text_style_font" : 1,
+      "swiftlint.no_raw_text_style_font" : 5
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Media/VideoPickerView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 11,
+      "raw_corner_radius" : 3,
+      "raw_spacing" : 9,
+      "swiftlint.no_cornerradius_modifier" : 2,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/PostComposerCore.swift" : {
+      "raw_font" : 3
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/PostComposerTextProcessing.swift" : {
+      "raw_color" : 1,
+      "raw_font" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/PostComposerViewUIKit/PostComposerViewUIKit+MediaAttachments.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_corner_radius" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 11,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/PostComposerViewUIKit/PostComposerViewUIKit+MentionOverlay.swift" : {
+      "raw_font" : 1,
+      "raw_spacing" : 5,
+      "swiftlint.no_raw_system_font_size" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/PostComposerViewUIKit/PostComposerViewUIKit+Metadata.swift" : {
+      "off_grid_spacing" : 7,
+      "raw_color" : 8,
+      "raw_corner_radius" : 6,
+      "raw_font" : 11,
+      "raw_spacing" : 20,
+      "swiftlint.no_cornerradius_modifier" : 3,
+      "swiftlint.no_raw_corner_radius" : 3,
+      "swiftlint.no_raw_system_font_size" : 11
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/PostComposerViewUIKit/PostComposerViewUIKit+Sheets.swift" : {
+      "raw_spacing" : 2
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/PostComposerViewUIKit/PostComposerViewUIKit+Thread.swift" : {
+      "off_grid_spacing" : 8,
+      "raw_animation" : 3,
+      "raw_color" : 7,
+      "raw_corner_radius" : 7,
+      "raw_font" : 12,
+      "raw_spacing" : 43,
+      "swiftlint.no_cornerradius_modifier" : 6,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_system_font_size" : 12
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/PostComposerViewUIKit/PostComposerViewUIKit+Toolbar.swift" : {
+      "raw_color" : 1,
+      "raw_corner_radius" : 1,
+      "raw_spacing" : 5,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/PostComposerViewUIKit/PostComposerViewUIKit.swift" : {
+      "legacy_design_tokens" : 5,
+      "raw_animation" : 3,
+      "raw_color" : 5,
+      "raw_font" : 1,
+      "raw_spacing" : 12,
+      "swiftlint.no_legacy_design_tokens" : 3,
+      "swiftlint.no_raw_text_style_font" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/PostComposerViewUIKit/ReplySourcePostView.swift" : {
+      "legacy_design_tokens" : 1,
+      "off_grid_spacing" : 2,
+      "raw_color" : 1,
+      "raw_spacing" : 3,
+      "swiftlint.no_legacy_design_tokens" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/PostComposerViewUIKit/ReplySourceUnavailableView.swift" : {
+      "raw_spacing" : 8
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/PostInteractionSettingsView.swift" : {
+      "raw_color" : 2,
+      "raw_font" : 3,
+      "raw_spacing" : 2,
+      "swiftlint.no_raw_text_style_font" : 3
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/RichTextEditor.swift" : {
+      "raw_font" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/SimpleGifView.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_color" : 3,
+      "raw_corner_radius" : 4,
+      "raw_spacing" : 1,
+      "swiftlint.no_cornerradius_modifier" : 2,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/TabViewBottomAccessoryWrapper.swift" : {
+      "raw_font" : 12,
+      "raw_spacing" : 8,
+      "swiftlint.no_raw_system_font_size" : 11,
+      "swiftlint.no_raw_text_style_font" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Utils/LinkAnimationEnhancer.swift" : {
+      "legacy_material" : 2,
+      "raw_animation" : 15,
+      "raw_color" : 10,
+      "raw_corner_radius" : 7,
+      "raw_font" : 3,
+      "raw_spacing" : 2,
+      "swiftlint.no_legacy_material" : 2,
+      "swiftlint.no_raw_corner_radius" : 7,
+      "swiftlint.no_raw_text_style_font" : 2
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Utils/LinkCreationIntegration.swift" : {
+      "raw_animation" : 5
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Utils/LinkStatePersistence.swift" : {
+      "raw_font" : 2
+    },
+    "Catbird/Features/Feed/Views/Components/PostComposer/Utils/RichTextFacetUtils.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_animation" : 1,
+      "raw_color" : 17,
+      "raw_corner_radius" : 8,
+      "raw_spacing" : 20,
+      "swiftlint.no_cornerradius_modifier" : 1,
+      "swiftlint.no_hardcoded_blue" : 2,
+      "swiftlint.no_raw_corner_radius" : 7
+    },
+    "Catbird/Features/Feed/Views/Components/PostEmbed.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 6,
+      "raw_corner_radius" : 6,
+      "raw_spacing" : 4,
+      "swiftlint.no_raw_corner_radius" : 3
+    },
+    "Catbird/Features/Feed/Views/Components/PostNotFoundView.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_color" : 1,
+      "raw_corner_radius" : 1,
+      "raw_spacing" : 2,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Feed/Views/Components/RecordEmbedView.swift" : {
+      "off_grid_spacing" : 16,
+      "raw_color" : 2,
+      "raw_corner_radius" : 6,
+      "raw_spacing" : 19,
+      "swiftlint.no_raw_corner_radius" : 6
+    },
+    "Catbird/Features/Feed/Views/Components/StandardSiteEmbedView.swift" : {
+      "off_grid_spacing" : 3,
+      "raw_color" : 6,
+      "raw_corner_radius" : 3,
+      "raw_spacing" : 11,
+      "swiftlint.no_raw_corner_radius" : 3
+    },
+    "Catbird/Features/Feed/Views/FeedBannerArtwork.swift" : {
+      "raw_color" : 1
+    },
+    "Catbird/Features/Feed/Views/FeedContent/FeedCollectionViewBridge.swift" : {
+      "raw_font" : 2,
+      "raw_spacing" : 1,
+      "swiftlint.no_raw_text_style_font" : 2
+    },
+    "Catbird/Features/Feed/Views/FeedContent/FeedCollectionViewControllerIntegrated.swift" : {
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Feed/Views/FeedContent/FeedPostRow.swift" : {
+      "legacy_design_tokens" : 2,
+      "raw_color" : 2,
+      "raw_spacing" : 5
+    },
+    "Catbird/Features/Feed/Views/FeedContent/PostListCollectionController.swift" : {
+      "raw_animation" : 1,
+      "raw_spacing" : 3
+    },
+    "Catbird/Features/Feed/Views/FeedContent/PostListPinnedHeaderView.swift" : {
+      "legacy_material" : 1,
+      "raw_animation" : 1
+    },
+    "Catbird/Features/Feed/Views/FeedDiscoveryBrowser.swift" : {
+      "off_grid_spacing" : 3,
+      "raw_spacing" : 16
+    },
+    "Catbird/Features/Feed/Views/FeedDiscoveryComponents.swift" : {
+      "legacy_design_tokens" : 2,
+      "off_grid_spacing" : 1,
+      "raw_color" : 1,
+      "raw_corner_radius" : 1,
+      "raw_spacing" : 3
+    },
+    "Catbird/Features/Feed/Views/FeedDiscoveryHeaderView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 4,
+      "raw_corner_radius" : 2,
+      "raw_font" : 1,
+      "raw_spacing" : 6,
+      "swiftlint.no_raw_corner_radius" : 2,
+      "swiftlint.no_raw_system_font_size" : 1
+    },
+    "Catbird/Features/Feed/Views/FeedDiscoveryStorefrontView.swift" : {
+      "off_grid_spacing" : 9,
+      "raw_animation" : 2,
+      "raw_color" : 1,
+      "raw_corner_radius" : 1,
+      "raw_font" : 2,
+      "raw_spacing" : 24,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_text_style_font" : 2
+    },
+    "Catbird/Features/Feed/Views/FeedFilterSettingsView.swift" : {
+      "raw_color" : 1,
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Feed/Views/FeedProductPageComponents.swift" : {
+      "off_grid_spacing" : 12,
+      "raw_color" : 2,
+      "raw_font" : 13,
+      "raw_spacing" : 7,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_text_style_font" : 13
+    },
+    "Catbird/Features/Feed/Views/FeedProductPageView.swift" : {
+      "off_grid_spacing" : 6,
+      "raw_color" : 2,
+      "raw_font" : 3,
+      "raw_spacing" : 17,
+      "small_tap_target" : 2,
+      "swiftlint.no_raw_text_style_font" : 3
+    },
+    "Catbird/Features/Feed/Views/FeedRemovalBadgeOverlay.swift" : {
+      "raw_animation" : 1,
+      "raw_color" : 2,
+      "raw_font" : 1,
+      "swiftlint.no_raw_system_font_size" : 1
+    },
+    "Catbird/Features/Feed/Views/FeedScreen.swift" : {
+      "raw_spacing" : 2
+    },
+    "Catbird/Features/Feed/Views/FeedShelfListView.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_spacing" : 9
+    },
+    "Catbird/Features/Feed/Views/FeedStorefrontComponents.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_color" : 4,
+      "raw_corner_radius" : 2,
+      "raw_font" : 2,
+      "raw_spacing" : 9,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_system_font_size" : 1,
+      "swiftlint.no_raw_text_style_font" : 1
+    },
+    "Catbird/Features/Feed/Views/FeedView.swift" : {
+      "raw_animation" : 1
+    },
+    "Catbird/Features/Feed/Views/FeedsLaunchpad/FeedsLaunchpadGlass.swift" : {
+      "legacy_material" : 3,
+      "raw_animation" : 1,
+      "raw_color" : 2,
+      "raw_corner_radius" : 6,
+      "swiftlint.no_legacy_material" : 3,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Feed/Views/FeedsStartPage.swift" : {
+      "legacy_design_tokens" : 26,
+      "legacy_material" : 5,
+      "off_grid_spacing" : 5,
+      "raw_animation" : 12,
+      "raw_color" : 23,
+      "raw_corner_radius" : 20,
+      "raw_font" : 3,
+      "raw_spacing" : 14,
+      "swiftlint.no_legacy_design_tokens" : 26,
+      "swiftlint.no_legacy_material" : 5,
+      "swiftlint.no_raw_corner_radius" : 16,
+      "swiftlint.no_raw_system_font_size" : 2
+    },
+    "Catbird/Features/Feed/Views/Interstitials/Native/TrendingInterstitialCell.swift" : {
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Feed/Views/Interstitials/Native/TrendingInterstitialStyle.swift" : {
+      "raw_color" : 2
+    },
+    "Catbird/Features/Feed/Views/Interstitials/Native/TrendingTopicCardView.swift" : {
+      "raw_color" : 1,
+      "raw_corner_radius" : 2,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Feed/Views/Interstitials/Native/TrendingVideoCardView.swift" : {
+      "legacy_design_tokens" : 3,
+      "raw_color" : 2,
+      "raw_corner_radius" : 1,
+      "swiftlint.no_legacy_design_tokens" : 3,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Feed/Views/Moderation/ModerationGateViews.swift" : {
+      "legacy_design_tokens" : 1,
+      "off_grid_spacing" : 4,
+      "raw_color" : 6,
+      "raw_corner_radius" : 4,
+      "raw_spacing" : 12,
+      "swiftlint.no_raw_corner_radius" : 4
+    },
+    "Catbird/Features/Feed/Views/MuteWordsSettingsView.swift" : {
+      "legacy_design_tokens" : 40,
+      "raw_color" : 5,
+      "raw_corner_radius" : 2,
+      "raw_font" : 1,
+      "swiftlint.no_cornerradius_modifier" : 2,
+      "swiftlint.no_legacy_design_tokens" : 12,
+      "swiftlint.no_raw_text_style_font" : 1
+    },
+    "Catbird/Features/Feed/Views/NativeRow/FeedPostAvatarView.swift" : {
+      "raw_color" : 1,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Feed/Views/NativeRow/FeedRowTypography.swift" : {
+      "raw_font" : 1
+    },
+    "Catbird/Features/Feed/Views/Post.swift" : {
+      "legacy_design_tokens" : 1,
+      "off_grid_spacing" : 7,
+      "raw_color" : 4,
+      "raw_corner_radius" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 6,
+      "swiftlint.no_legacy_design_tokens" : 1,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_text_style_font" : 1
+    },
+    "Catbird/Features/Feed/Views/Post/EnhancedFeedPost.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Feed/Views/Post/FeedPost.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_spacing" : 2
+    },
+    "Catbird/Features/Feed/Views/PostHeaderView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 2,
+      "raw_corner_radius" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 3,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_text_style_font" : 1
+    },
+    "Catbird/Features/Feed/Views/PostView.swift" : {
+      "legacy_design_tokens" : 16,
+      "off_grid_spacing" : 1,
+      "raw_color" : 5,
+      "raw_font" : 8,
+      "raw_spacing" : 2,
+      "swiftlint.no_legacy_design_tokens" : 15,
+      "swiftlint.no_raw_text_style_font" : 8
+    },
+    "Catbird/Features/Feed/Views/QuickFilterSheet.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_color" : 2,
+      "raw_corner_radius" : 2,
+      "raw_font" : 8,
+      "raw_spacing" : 8,
+      "swiftlint.no_raw_corner_radius" : 2,
+      "swiftlint.no_raw_text_style_font" : 7
+    },
+    "Catbird/Features/Feed/Views/RecordWithMediaView.swift" : {
+      "raw_corner_radius" : 3,
+      "raw_spacing" : 1,
+      "swiftlint.no_raw_corner_radius" : 3
+    },
+    "Catbird/Features/Feed/Views/ReplyHeaderView.swift" : {
+      "raw_color" : 3
+    },
+    "Catbird/Features/Feed/Views/RepostHeaderView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 1,
+      "swiftlint.no_raw_text_style_font" : 1
+    },
+    "Catbird/Features/Feed/Views/SocialActionsUIFixture.swift" : {
+      "raw_font" : 4,
+      "raw_spacing" : 1,
+      "swiftlint.no_raw_text_style_font" : 3
+    },
+    "Catbird/Features/Feed/Views/TappableTextView.swift" : {
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Feed/Views/Thread/LikesView.swift" : {
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Feed/Views/Thread/LoadFailureViews.swift" : {
+      "raw_spacing" : 2
+    },
+    "Catbird/Features/Feed/Views/Thread/OptimizedScrollPreservationSystem.swift" : {
+      "raw_animation" : 1
+    },
+    "Catbird/Features/Feed/Views/Thread/PostQuoteRowView.swift" : {
+      "raw_color" : 1,
+      "raw_spacing" : 3
+    },
+    "Catbird/Features/Feed/Views/Thread/PostStatsView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 1,
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Feed/Views/Thread/RepostsView.swift" : {
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Feed/Views/Thread/SelectableTextView.swift" : {
+      "raw_font" : 2
+    },
+    "Catbird/Features/Feed/Views/Thread/ThreadComposePrompt.swift" : {
+      "legacy_material" : 1,
+      "off_grid_spacing" : 1,
+      "raw_font" : 2,
+      "raw_spacing" : 5,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_text_style_font" : 2
+    },
+    "Catbird/Features/Feed/Views/Thread/ThreadPostNumberView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 1,
+      "swiftlint.no_raw_text_style_font" : 1
+    },
+    "Catbird/Features/Feed/Views/Thread/ThreadRowView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 2,
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Feed/Views/Thread/ThreadUtilityCells.swift" : {
+      "raw_color" : 1,
+      "raw_font" : 1
+    },
+    "Catbird/Features/Feed/Views/Thread/ThreadView.swift" : {
+      "raw_animation" : 1,
+      "raw_color" : 3,
+      "raw_corner_radius" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 1,
+      "swiftlint.no_cornerradius_modifier" : 1,
+      "swiftlint.no_raw_text_style_font" : 1
+    },
+    "Catbird/Features/Feed/Views/Thread/ThreadViewMainPostView.swift" : {
+      "off_grid_spacing" : 16,
+      "raw_color" : 3,
+      "raw_corner_radius" : 1,
+      "raw_font" : 2,
+      "raw_spacing" : 8,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_text_style_font" : 2
+    },
+    "Catbird/Features/Feed/Views/Thread/UIKitThreadView.swift" : {
+      "raw_font" : 1
+    },
+    "Catbird/Features/Feed/Views/TopicFeedView.swift" : {
+      "raw_font" : 2,
+      "raw_spacing" : 5,
+      "swiftlint.no_raw_system_font_size" : 2
+    },
+    "Catbird/Features/Feed/Views/VideoFeedUIFixture.swift" : {
+      "raw_color" : 5,
+      "raw_font" : 6,
+      "raw_spacing" : 2,
+      "swiftlint.no_raw_text_style_font" : 4
+    },
+    "Catbird/Features/Feed/Views/VideoFeedView.swift" : {
+      "legacy_design_tokens" : 1,
+      "off_grid_spacing" : 5,
+      "raw_color" : 36,
+      "raw_corner_radius" : 3,
+      "raw_font" : 25,
+      "raw_spacing" : 27,
+      "swiftlint.no_raw_corner_radius" : 3,
+      "swiftlint.no_raw_system_font_size" : 4,
+      "swiftlint.no_raw_text_style_font" : 16
+    },
+    "Catbird/Features/Feed/Views/ViewImageGridView.swift" : {
+      "off_grid_spacing" : 4,
+      "raw_animation" : 2,
+      "raw_color" : 22,
+      "raw_corner_radius" : 15,
+      "raw_font" : 4,
+      "raw_spacing" : 6,
+      "swiftlint.no_cornerradius_modifier" : 1,
+      "swiftlint.no_raw_corner_radius" : 17,
+      "swiftlint.no_raw_text_style_font" : 3
+    },
+    "Catbird/Features/Intelligence/Views/AskCatbirdComponents.swift" : {
+      "raw_color" : 2
+    },
+    "Catbird/Features/Intelligence/Views/AskCatbirdRouteControls.swift" : {
+      "raw_color" : 1
+    },
+    "Catbird/Features/Lists/Views/AddToListSheet.swift" : {
+      "legacy_material" : 1,
+      "raw_color" : 3,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 8,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Lists/Views/CreateListView.swift" : {
+      "legacy_material" : 1,
+      "raw_color" : 5,
+      "raw_corner_radius" : 4,
+      "raw_font" : 1,
+      "raw_spacing" : 6,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_corner_radius" : 4
+    },
+    "Catbird/Features/Lists/Views/EditListView.swift" : {
+      "raw_color" : 5,
+      "raw_corner_radius" : 4,
+      "raw_spacing" : 7,
+      "swiftlint.no_raw_corner_radius" : 4
+    },
+    "Catbird/Features/Lists/Views/ListDetailView.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_animation" : 2,
+      "raw_spacing" : 12
+    },
+    "Catbird/Features/Lists/Views/ListDiscoveryView.swift" : {
+      "legacy_material" : 1,
+      "raw_color" : 2,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 9,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Lists/Views/ListFeedView.swift" : {
+      "legacy_material" : 1,
+      "raw_color" : 3,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 12,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Lists/Views/ListMemberManagementView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_animation" : 3,
+      "raw_color" : 3,
+      "raw_spacing" : 7
+    },
+    "Catbird/Features/Lists/Views/ListSummaryComponents.swift" : {
+      "off_grid_spacing" : 5,
+      "raw_color" : 6,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 4
+    },
+    "Catbird/Features/Lists/Views/ListsManagerView.swift" : {
+      "raw_color" : 1
+    },
+    "Catbird/Features/Live/Views/LiveEventBanner.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_animation" : 5,
+      "raw_color" : 14,
+      "raw_spacing" : 4,
+      "swiftlint.no_hardcoded_blue" : 1
+    },
+    "Catbird/Features/Live/Views/LiveStatusEditorSheet.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 3,
+      "raw_font" : 2,
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/MLSChat/LabyrinthSettingsAndRestoreView.swift" : {
+      "legacy_material" : 1,
+      "off_grid_spacing" : 6,
+      "raw_animation" : 2,
+      "raw_color" : 14,
+      "raw_font" : 1,
+      "raw_spacing" : 7,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_text_style_font" : 1
+    },
+    "Catbird/Features/MLSChat/MLSConversationDetailView.swift" : {
+      "legacy_material" : 1,
+      "raw_color" : 2,
+      "raw_spacing" : 6,
+      "swiftlint.no_legacy_material" : 1
+    },
+    "Catbird/Features/MLSChat/MLSSpacesRequiredGateView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 1,
+      "raw_font" : 9,
+      "raw_spacing" : 9,
+      "swiftlint.no_raw_system_font_size" : 1,
+      "swiftlint.no_raw_text_style_font" : 6
+    },
+    "Catbird/Features/MLSChat/Models/MLSCleanSlateModels.swift" : {
+      "legacy_design_tokens" : 15,
+      "legacy_material" : 1,
+      "off_grid_spacing" : 2,
+      "raw_animation" : 1,
+      "raw_color" : 12,
+      "raw_corner_radius" : 2,
+      "raw_font" : 6,
+      "raw_spacing" : 11,
+      "swiftlint.no_cornerradius_modifier" : 1,
+      "swiftlint.no_legacy_design_tokens" : 7,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_system_font_size" : 6
+    },
+    "Catbird/Features/MLSChat/Views/Components/ChatPostEmbedView.swift" : {
+      "legacy_design_tokens" : 20,
+      "raw_color" : 9,
+      "raw_corner_radius" : 1,
+      "raw_font" : 4,
+      "raw_spacing" : 8,
+      "swiftlint.no_legacy_design_tokens" : 7,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_system_font_size" : 3
+    },
+    "Catbird/Features/MLSChat/Views/Components/ChatRequestActionBar.swift" : {
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/MLSChat/Views/Components/InfoRow.swift" : {
+      "legacy_design_tokens" : 2
+    },
+    "Catbird/Features/MLSChat/Views/Components/MLSFullscreenImageView.swift" : {
+      "raw_animation" : 2,
+      "raw_color" : 5,
+      "raw_spacing" : 2
+    },
+    "Catbird/Features/MLSChat/Views/Components/MLSGroupAvatarView.swift" : {
+      "raw_color" : 8,
+      "raw_font" : 3,
+      "raw_spacing" : 1,
+      "swiftlint.no_raw_system_font_size" : 3
+    },
+    "Catbird/Features/MLSChat/Views/Components/MLSGroupInvitationCard.swift" : {
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/MLSChat/Views/Components/MLSImageView.swift" : {
+      "raw_animation" : 1,
+      "raw_color" : 1,
+      "raw_corner_radius" : 10,
+      "raw_spacing" : 4
+    },
+    "Catbird/Features/MLSChat/Views/Components/MLSMessageComposerView.swift" : {
+      "legacy_design_tokens" : 47,
+      "off_grid_spacing" : 6,
+      "raw_color" : 13,
+      "raw_corner_radius" : 4,
+      "raw_font" : 15,
+      "raw_spacing" : 7,
+      "swiftlint.no_legacy_design_tokens" : 28,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_system_font_size" : 10
+    },
+    "Catbird/Features/MLSChat/Views/Components/MLSPostPickerView.swift" : {
+      "legacy_design_tokens" : 11,
+      "raw_color" : 1,
+      "raw_font" : 3,
+      "swiftlint.no_legacy_design_tokens" : 3,
+      "swiftlint.no_raw_system_font_size" : 3
+    },
+    "Catbird/Features/MLSChat/Views/Components/MLSSystemMessageView.swift" : {
+      "legacy_design_tokens" : 2,
+      "swiftlint.no_legacy_design_tokens" : 2
+    },
+    "Catbird/Features/MLSChat/Views/Components/SensitiveContentModalView.swift" : {
+      "raw_color" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 3,
+      "swiftlint.no_raw_system_font_size" : 1
+    },
+    "Catbird/Features/MLSChat/Views/Components/VoiceMessagePlayerView.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_animation" : 1,
+      "raw_color" : 6,
+      "raw_corner_radius" : 1,
+      "raw_font" : 2,
+      "raw_spacing" : 3,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_system_font_size" : 2
+    },
+    "Catbird/Features/MLSChat/Views/Components/VoiceRecordingOverlay.swift" : {
+      "raw_animation" : 1,
+      "raw_color" : 5,
+      "raw_spacing" : 4
+    },
+    "Catbird/Features/MLSChat/Views/MLSConversationRowView.swift" : {
+      "legacy_design_tokens" : 8,
+      "raw_color" : 5,
+      "raw_font" : 7,
+      "swiftlint.no_legacy_design_tokens" : 4,
+      "swiftlint.no_raw_system_font_size" : 5
+    },
+    "Catbird/Features/MLSChat/Views/MLSReactionDetailsSheet.swift" : {
+      "raw_color" : 7,
+      "raw_spacing" : 4
+    },
+    "Catbird/Features/MLSChat/Views/MLSRequestPresentation.swift" : {
+      "raw_color" : 1,
+      "raw_corner_radius" : 1,
+      "raw_spacing" : 3,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Media/Services/AudioVisualizerService.swift" : {
+      "raw_color" : 24,
+      "raw_font" : 4,
+      "swiftlint.no_hardcoded_blue" : 2
+    },
+    "Catbird/Features/Media/Views/FullscreenVideoPlayerView.swift" : {
+      "legacy_material" : 1,
+      "raw_color" : 2,
+      "raw_spacing" : 2,
+      "swiftlint.no_legacy_material" : 1
+    },
+    "Catbird/Features/Media/Views/ModernVideoPlayerView.swift" : {
+      "legacy_design_tokens" : 1,
+      "legacy_material" : 3,
+      "off_grid_spacing" : 1,
+      "raw_animation" : 3,
+      "raw_color" : 11,
+      "raw_corner_radius" : 5,
+      "raw_font" : 2,
+      "raw_spacing" : 3,
+      "swiftlint.no_legacy_material" : 3,
+      "swiftlint.no_raw_corner_radius" : 5,
+      "swiftlint.no_raw_text_style_font" : 2
+    },
+    "Catbird/Features/Media/Views/iOS18EnhancedVideoPlayer.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_animation" : 2,
+      "raw_color" : 19,
+      "raw_font" : 7,
+      "raw_spacing" : 6,
+      "swiftlint.no_raw_text_style_font" : 5
+    },
+    "Catbird/Features/Moderation/BlockedContentCard.swift" : {
+      "off_grid_spacing" : 4,
+      "raw_spacing" : 5
+    },
+    "Catbird/Features/Moderation/Views/AccountDeactivatedView.swift" : {
+      "raw_color" : 1,
+      "raw_font" : 3,
+      "raw_spacing" : 10
+    },
+    "Catbird/Features/Moderation/Views/AccountTakedownView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 6,
+      "raw_font" : 5,
+      "raw_spacing" : 19
+    },
+    "Catbird/Features/Moderation/Views/BlockAccountView.swift" : {
+      "raw_color" : 8,
+      "raw_font" : 1,
+      "raw_spacing" : 18
+    },
+    "Catbird/Features/Moderation/Views/DefaultPostInteractionSettingsView.swift" : {
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Moderation/Views/LabelsOnMeView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_animation" : 1,
+      "raw_color" : 2,
+      "raw_spacing" : 2
+    },
+    "Catbird/Features/Moderation/Views/ReportFormView.swift" : {
+      "raw_color" : 1,
+      "raw_font" : 4,
+      "raw_spacing" : 17
+    },
+    "Catbird/Features/Notifications/Views/ActivitySubscriptionsView.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_color" : 4,
+      "raw_corner_radius" : 1,
+      "raw_spacing" : 5,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Notifications/Views/NotificationsActivityListView.swift" : {
+      "raw_spacing" : 2
+    },
+    "Catbird/Features/Notifications/Views/NotificationsView.swift" : {
+      "legacy_design_tokens" : 9,
+      "off_grid_spacing" : 8,
+      "raw_animation" : 1,
+      "raw_color" : 5,
+      "raw_corner_radius" : 3,
+      "raw_font" : 5,
+      "raw_spacing" : 15,
+      "swiftlint.no_legacy_design_tokens" : 7,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Profile/Services/AvatarImageLoader.swift" : {
+      "raw_color" : 2,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Profile/Views/Components/ContextualSuggestedFollowsSheet.swift" : {
+      "raw_font" : 1,
+      "raw_spacing" : 7,
+      "swiftlint.no_raw_system_font_size" : 1
+    },
+    "Catbird/Features/Profile/Views/Components/FollowedByView.swift" : {
+      "legacy_design_tokens" : 4,
+      "raw_color" : 1,
+      "raw_spacing" : 1,
+      "swiftlint.no_legacy_design_tokens" : 4
+    },
+    "Catbird/Features/Profile/Views/Components/LabelerInfoTab.swift" : {
+      "raw_color" : 1,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 5,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Profile/Views/Components/LiveStatusBadge.swift" : {
+      "legacy_design_tokens" : 4,
+      "off_grid_spacing" : 1,
+      "raw_color" : 2,
+      "raw_spacing" : 2,
+      "swiftlint.no_legacy_design_tokens" : 3
+    },
+    "Catbird/Features/Profile/Views/Components/NewskieBadge.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_color" : 7,
+      "raw_corner_radius" : 1,
+      "raw_font" : 2,
+      "raw_spacing" : 8,
+      "swiftlint.no_cornerradius_modifier" : 1,
+      "swiftlint.no_raw_system_font_size" : 2
+    },
+    "Catbird/Features/Profile/Views/EditProfileView.swift" : {
+      "raw_color" : 8,
+      "raw_corner_radius" : 4,
+      "raw_font" : 1,
+      "raw_spacing" : 12,
+      "swiftlint.no_raw_corner_radius" : 4
+    },
+    "Catbird/Features/Profile/Views/FeedRowView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 2,
+      "raw_spacing" : 3
+    },
+    "Catbird/Features/Profile/Views/FollowsBadgeView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 1,
+      "raw_corner_radius" : 1,
+      "raw_spacing" : 1,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Profile/Views/ListView.swift" : {
+      "raw_color" : 5,
+      "raw_corner_radius" : 3,
+      "raw_spacing" : 7,
+      "swiftlint.no_raw_corner_radius" : 3
+    },
+    "Catbird/Features/Profile/Views/MoreView.swift" : {
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 7,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Profile/Views/ProfileSectionView.swift" : {
+      "raw_spacing" : 8
+    },
+    "Catbird/Features/Profile/Views/Unified/ProfileBannerHeader.swift" : {
+      "raw_color" : 7
+    },
+    "Catbird/Features/Profile/Views/Unified/ProfileHeader.swift" : {
+      "off_grid_spacing" : 11,
+      "raw_color" : 15,
+      "raw_font" : 4,
+      "raw_spacing" : 17,
+      "small_tap_target" : 2,
+      "swiftlint.no_raw_system_font_size" : 3
+    },
+    "Catbird/Features/Profile/Views/Unified/ProfileImageViewerView.swift" : {
+      "raw_color" : 2
+    },
+    "Catbird/Features/Profile/Views/Unified/UnifiedProfileContentView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 1,
+      "raw_corner_radius" : 1,
+      "raw_spacing" : 32,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Profile/Views/Unified/UnifiedProfileView.swift" : {
+      "raw_animation" : 1,
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Profile/Views/VerificationInfoSheet.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 10,
+      "swiftlint.no_hardcoded_blue" : 1,
+      "swiftlint.no_raw_system_font_size" : 1
+    },
+    "Catbird/Features/RepositoryBrowser/Views/ConnectionsView.swift" : {
+      "raw_color" : 11,
+      "raw_corner_radius" : 1,
+      "raw_font" : 5,
+      "raw_spacing" : 26,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_system_text_style_font" : 1
+    },
+    "Catbird/Features/RepositoryBrowser/Views/RepositoryBrowserView.swift" : {
+      "raw_color" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 15
+    },
+    "Catbird/Features/RepositoryBrowser/Views/RepositoryDetailView.swift" : {
+      "raw_color" : 4,
+      "raw_font" : 2,
+      "raw_spacing" : 16,
+      "swiftlint.no_raw_system_text_style_font" : 2
+    },
+    "Catbird/Features/RepositoryBrowser/Views/RepositoryDiagnosticsView.swift" : {
+      "raw_color" : 1,
+      "raw_spacing" : 14
+    },
+    "Catbird/Features/RepositoryBrowser/Views/RepositoryMediaGalleryView.swift" : {
+      "raw_color" : 13,
+      "raw_corner_radius" : 1,
+      "raw_font" : 6,
+      "raw_spacing" : 34,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_system_text_style_font" : 1
+    },
+    "Catbird/Features/RepositoryBrowser/Views/TimelineView.swift" : {
+      "raw_color" : 10,
+      "raw_corner_radius" : 1,
+      "raw_font" : 6,
+      "raw_spacing" : 24,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_system_text_style_font" : 3
+    },
+    "Catbird/Features/RepositoryBrowser/Views/UniversalSearchView.swift" : {
+      "raw_color" : 4,
+      "raw_font" : 1,
+      "raw_spacing" : 27
+    },
+    "Catbird/Features/Search/Views/Components/DetectedQueryLanguagesAdmonition.swift" : {
+      "legacy_design_tokens" : 5,
+      "off_grid_spacing" : 1,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 2,
+      "swiftlint.no_legacy_design_tokens" : 5
+    },
+    "Catbird/Features/Search/Views/Components/EnhancedFeedRowView.swift" : {
+      "raw_color" : 5,
+      "raw_spacing" : 6
+    },
+    "Catbird/Features/Search/Views/Components/EnhancedResultsSection.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 2,
+      "raw_corner_radius" : 1,
+      "raw_spacing" : 5,
+      "swiftlint.no_cornerradius_modifier" : 1
+    },
+    "Catbird/Features/Search/Views/Components/LoadingViews.swift" : {
+      "raw_animation" : 1,
+      "raw_color" : 12,
+      "raw_corner_radius" : 4,
+      "raw_spacing" : 4,
+      "swiftlint.no_raw_corner_radius" : 4
+    },
+    "Catbird/Features/Search/Views/Components/ProfileImageView.swift" : {
+      "raw_color" : 2
+    },
+    "Catbird/Features/Search/Views/Components/ProfileRowView.swift" : {
+      "legacy_design_tokens" : 6,
+      "off_grid_spacing" : 3,
+      "raw_color" : 1,
+      "raw_spacing" : 4,
+      "swiftlint.no_legacy_design_tokens" : 6
+    },
+    "Catbird/Features/Search/Views/Components/SaveSearchSheet.swift" : {
+      "raw_spacing" : 2
+    },
+    "Catbird/Features/Search/Views/Components/SearchFilterBar.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_color" : 3,
+      "raw_spacing" : 4
+    },
+    "Catbird/Features/Search/Views/Components/SearchLoadingSkeletonView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_animation" : 1,
+      "raw_color" : 9,
+      "raw_corner_radius" : 4,
+      "raw_spacing" : 9,
+      "swiftlint.no_raw_corner_radius" : 4
+    },
+    "Catbird/Features/Search/Views/Components/SearchSuggestionRows.swift" : {
+      "off_grid_spacing" : 3,
+      "raw_spacing" : 4
+    },
+    "Catbird/Features/Search/Views/Components/StarterPackCardView.swift" : {
+      "raw_spacing" : 9
+    },
+    "Catbird/Features/Search/Views/Components/StarterPackRowView.swift" : {
+      "raw_spacing" : 6
+    },
+    "Catbird/Features/Search/Views/Components/TrendingTopicArtwork.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 4,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Search/Views/Components/TrendingTopicHeading.swift" : {
+      "legacy_design_tokens" : 2,
+      "raw_color" : 1,
+      "raw_font" : 1,
+      "swiftlint.no_legacy_design_tokens" : 2,
+      "swiftlint.no_raw_system_font_size" : 1
+    },
+    "Catbird/Features/Search/Views/FilterViews/SearchFiltersSheet.swift" : {
+      "raw_color" : 8,
+      "raw_spacing" : 8
+    },
+    "Catbird/Features/Search/Views/HashtagView.swift" : {
+      "raw_spacing" : 5
+    },
+    "Catbird/Features/Search/Views/MainViews/DiscoveryView.swift" : {
+      "legacy_design_tokens" : 8,
+      "off_grid_spacing" : 1,
+      "raw_animation" : 1,
+      "raw_color" : 1,
+      "raw_corner_radius" : 3,
+      "raw_font" : 1,
+      "raw_spacing" : 35,
+      "swiftlint.no_cornerradius_modifier" : 3,
+      "swiftlint.no_legacy_design_tokens" : 8,
+      "swiftlint.no_raw_system_font_size" : 1
+    },
+    "Catbird/Features/Search/Views/MainViews/ResultsView.swift" : {
+      "raw_spacing" : 12
+    },
+    "Catbird/Features/Search/Views/MainViews/TypeaheadView.swift" : {
+      "raw_animation" : 1
+    },
+    "Catbird/Features/Search/Views/RefinedSearchView.swift" : {
+      "legacy_material" : 1,
+      "off_grid_spacing" : 4,
+      "raw_animation" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 8,
+      "swiftlint.no_legacy_material" : 1
+    },
+    "Catbird/Features/Search/Views/RowViews/SearchResultsSection.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_animation" : 1,
+      "raw_color" : 4,
+      "raw_spacing" : 19
+    },
+    "Catbird/Features/Search/Views/Sections/ExploreInterestsCard.swift" : {
+      "legacy_design_tokens" : 4,
+      "off_grid_spacing" : 2,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 3,
+      "swiftlint.no_legacy_design_tokens" : 4
+    },
+    "Catbird/Features/Search/Views/Sections/RecentProfilesSection.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_spacing" : 4
+    },
+    "Catbird/Features/Search/Views/Sections/RecentSearchesSection.swift" : {
+      "raw_animation" : 2,
+      "raw_spacing" : 7
+    },
+    "Catbird/Features/Search/Views/Sections/SavedSearchesSection.swift" : {
+      "off_grid_spacing" : 3,
+      "raw_animation" : 2,
+      "raw_color" : 4,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 13,
+      "swiftlint.no_cornerradius_modifier" : 1,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Search/Views/Sections/SuggestedProfilesSection.swift" : {
+      "legacy_design_tokens" : 6,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 7,
+      "swiftlint.no_cornerradius_modifier" : 2,
+      "swiftlint.no_legacy_design_tokens" : 6
+    },
+    "Catbird/Features/Search/Views/Sections/SuggestedProfilesSheet.swift" : {
+      "legacy_material" : 1,
+      "off_grid_spacing" : 4,
+      "raw_color" : 1,
+      "raw_corner_radius" : 3,
+      "raw_font" : 2,
+      "raw_spacing" : 13,
+      "swiftlint.no_cornerradius_modifier" : 2,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_system_font_size" : 2
+    },
+    "Catbird/Features/Search/Views/Sections/TrendingTopicsSection.swift" : {
+      "legacy_design_tokens" : 16,
+      "raw_color" : 1,
+      "raw_spacing" : 6,
+      "swiftlint.no_legacy_design_tokens" : 16
+    },
+    "Catbird/Features/Search/Views/Sections/TrendingVideosSection.swift" : {
+      "legacy_design_tokens" : 10,
+      "raw_color" : 5,
+      "raw_corner_radius" : 1,
+      "raw_spacing" : 3,
+      "swiftlint.no_legacy_design_tokens" : 10,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Search/Views/StarterPackView.swift" : {
+      "off_grid_spacing" : 3,
+      "raw_color" : 9,
+      "raw_corner_radius" : 3,
+      "raw_font" : 8,
+      "raw_spacing" : 28,
+      "swiftlint.no_cornerradius_modifier" : 1,
+      "swiftlint.no_raw_corner_radius" : 2,
+      "swiftlint.no_raw_system_font_size" : 3
+    },
+    "Catbird/Features/Settings/DeviceApproval/DeviceApprovalCard.swift" : {
+      "legacy_design_tokens" : 2,
+      "off_grid_spacing" : 3,
+      "raw_color" : 4,
+      "raw_corner_radius" : 1,
+      "raw_font" : 5,
+      "swiftlint.no_hardcoded_blue" : 1,
+      "swiftlint.no_raw_corner_radius" : 1,
+      "swiftlint.no_raw_text_style_font" : 5
+    },
+    "Catbird/Features/Settings/DeviceManagementView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 5,
+      "raw_font" : 2,
+      "raw_spacing" : 6,
+      "swiftlint.no_raw_text_style_font" : 2
+    },
+    "Catbird/Features/Settings/Views/AboutSettingsView.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_color" : 2,
+      "raw_spacing" : 6
+    },
+    "Catbird/Features/Settings/Views/AccountDeletionSheet.swift" : {
+      "raw_color" : 2,
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Settings/Views/AccountSecuritySettingsView.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_font" : 1,
+      "raw_spacing" : 1,
+      "swiftlint.no_raw_text_style_font" : 1
+    },
+    "Catbird/Features/Settings/Views/AccountSettingsHelpers.swift" : {
+      "raw_color" : 4,
+      "raw_font" : 5,
+      "raw_spacing" : 14
+    },
+    "Catbird/Features/Settings/Views/AccountSettingsView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 1,
+      "raw_font" : 3,
+      "raw_spacing" : 5
+    },
+    "Catbird/Features/Settings/Views/ActivityPrivacySettingsView.swift" : {
+      "raw_spacing" : 2
+    },
+    "Catbird/Features/Settings/Views/AdvancedSettingsView.swift" : {
+      "raw_color" : 1,
+      "raw_spacing" : 10
+    },
+    "Catbird/Features/Settings/Views/AppIconSettingsView.swift" : {
+      "raw_color" : 2,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 1,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Settings/Views/AppearanceSettingsView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 4,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 10,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Settings/Views/AutomationLabelSettingsView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 2,
+      "raw_spacing" : 3
+    },
+    "Catbird/Features/Settings/Views/ConcentricLiquidGlassDrawer.swift" : {
+      "legacy_material" : 1,
+      "raw_color" : 2,
+      "raw_corner_radius" : 3,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_corner_radius" : 3
+    },
+    "Catbird/Features/Settings/Views/DataBackupSettingsView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 1,
+      "raw_spacing" : 6
+    },
+    "Catbird/Features/Settings/Views/ExternalMediaPreferencesView.swift" : {
+      "raw_spacing" : 5
+    },
+    "Catbird/Features/Settings/Views/FeedLibrarySettingsView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 2,
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Settings/Views/FeedReadingSettingsViews.swift" : {
+      "raw_color" : 1
+    },
+    "Catbird/Features/Settings/Views/IntelligenceOnboardingHubView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Settings/Views/InterestPickerSheet.swift" : {
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Settings/Views/InterestsSettingsView.swift" : {
+      "raw_color" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 10
+    },
+    "Catbird/Features/Settings/Views/LabelerSettingsView.swift" : {
+      "raw_spacing" : 3
+    },
+    "Catbird/Features/Settings/Views/LanguageSettingsView.swift" : {
+      "raw_animation" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 5
+    },
+    "Catbird/Features/Settings/Views/MLSChatDiagnosticsView.swift" : {
+      "off_grid_spacing" : 6,
+      "raw_animation" : 2,
+      "raw_color" : 11,
+      "raw_font" : 2,
+      "raw_spacing" : 10,
+      "swiftlint.no_raw_system_font_size" : 1,
+      "swiftlint.no_raw_system_text_style_font" : 1
+    },
+    "Catbird/Features/Settings/Views/MLSChatSettingsView.swift" : {
+      "legacy_material" : 1,
+      "raw_color" : 1,
+      "raw_spacing" : 2,
+      "swiftlint.no_legacy_material" : 1
+    },
+    "Catbird/Features/Settings/Views/ModeratedAccountsSettingsView.swift" : {
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Settings/Views/ModerationSettingsView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 7,
+      "raw_font" : 1,
+      "raw_spacing" : 15
+    },
+    "Catbird/Features/Settings/Views/NotificationSettingsView.swift" : {
+      "raw_spacing" : 1
+    },
+    "Catbird/Features/Settings/Views/OpenSourceLicensesView.swift" : {
+      "raw_spacing" : 2
+    },
+    "Catbird/Features/Settings/Views/OriginalsOnlyAccountsView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_spacing" : 6
+    },
+    "Catbird/Features/Settings/Views/PrivacySecuritySettingsView.swift" : {
+      "raw_color" : 5,
+      "raw_font" : 5,
+      "raw_spacing" : 8
+    },
+    "Catbird/Features/Settings/Views/SettingsComponents.swift" : {
+      "legacy_design_tokens" : 3,
+      "raw_color" : 1,
+      "raw_corner_radius" : 1,
+      "swiftlint.no_legacy_design_tokens" : 3
+    },
+    "Catbird/Features/Settings/Views/SettingsView.swift" : {
+      "legacy_design_tokens" : 2,
+      "swiftlint.no_legacy_design_tokens" : 2
+    },
+    "Catbird/Features/Settings/Views/SideDrawer.swift" : {
+      "legacy_material" : 1,
+      "raw_animation" : 6,
+      "raw_color" : 3,
+      "raw_spacing" : 3
+    },
+    "Catbird/Features/Settings/Views/SystemLogView.swift" : {
+      "raw_color" : 1,
+      "raw_font" : 1,
+      "raw_spacing" : 10,
+      "swiftlint.no_raw_system_text_style_font" : 1
+    },
+    "Catbird/Features/Settings/Views/TextReadabilitySettingsView.swift" : {
+      "raw_spacing" : 4
+    },
+    "Catbird/Features/StarterPack/Views/StarterPackDetailsStep.swift" : {
+      "raw_spacing" : 4
+    },
+    "Catbird/Features/StarterPack/Views/StarterPackFeedsStep.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_color" : 7,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 11,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/StarterPack/Views/StarterPackProfilesStep.swift" : {
+      "off_grid_spacing" : 3,
+      "raw_color" : 3,
+      "raw_spacing" : 12
+    },
+    "Catbird/Features/StarterPack/Views/StarterPackQRCodeCard.swift" : {
+      "raw_color" : 7,
+      "raw_font" : 1,
+      "raw_spacing" : 11
+    },
+    "Catbird/Features/StarterPack/Views/StarterPackShareView.swift" : {
+      "raw_animation" : 2,
+      "raw_font" : 3,
+      "raw_spacing" : 8
+    },
+    "Catbird/Features/StarterPack/Views/StarterPackWizardView.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_animation" : 2,
+      "raw_color" : 4,
+      "raw_spacing" : 7
+    },
+    "Catbird/Features/Streamplace/Views/StreamplaceVideoCard.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_color" : 5,
+      "raw_spacing" : 4
+    },
+    "Catbird/Features/Streamplace/Views/StreamplaceVideoListView.swift" : {
+      "raw_spacing" : 5
+    },
+    "Catbird/Features/Streamplace/Views/StreamplaceVideoPlayerView.swift" : {
+      "raw_color" : 1
+    },
+    "Catbird/Features/Tiles/Views/TileCardView.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_color" : 6,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 2,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/Tiles/Views/TileEmbedView.swift" : {
+      "legacy_material" : 1,
+      "raw_animation" : 2,
+      "raw_corner_radius" : 1,
+      "raw_spacing" : 2,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/Tiles/Views/TileLiveView.swift" : {
+      "legacy_material" : 1,
+      "off_grid_spacing" : 2,
+      "raw_color" : 4,
+      "raw_spacing" : 3,
+      "swiftlint.no_legacy_material" : 1
+    },
+    "Catbird/Features/UnifiedChat/Views/Components/HistoryBoundaryView.swift" : {
+      "off_grid_spacing" : 2,
+      "raw_spacing" : 2
+    },
+    "Catbird/Features/UnifiedChat/Views/Components/UnifiedEmbedView.swift" : {
+      "raw_color" : 20,
+      "raw_corner_radius" : 5,
+      "raw_font" : 1,
+      "raw_spacing" : 4,
+      "swiftlint.no_raw_system_font_size" : 1
+    },
+    "Catbird/Features/UnifiedChat/Views/Components/UnifiedInputBar.swift" : {
+      "legacy_material" : 1,
+      "off_grid_spacing" : 1,
+      "raw_animation" : 2,
+      "raw_color" : 8,
+      "raw_corner_radius" : 3,
+      "raw_spacing" : 8,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_corner_radius" : 3
+    },
+    "Catbird/Features/UnifiedChat/Views/Components/UnifiedMessageBubble.swift" : {
+      "legacy_material" : 1,
+      "off_grid_spacing" : 3,
+      "raw_animation" : 3,
+      "raw_color" : 25,
+      "raw_corner_radius" : 4,
+      "raw_spacing" : 19,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/UnifiedChat/Views/Components/UnifiedMessageReactions.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_animation" : 2,
+      "raw_color" : 4,
+      "raw_corner_radius" : 2,
+      "raw_spacing" : 7,
+      "swiftlint.no_raw_corner_radius" : 2
+    },
+    "Catbird/Features/UnifiedChat/Views/Components/UnifiedSystemMessageView.swift" : {
+      "off_grid_spacing" : 3,
+      "raw_color" : 1,
+      "raw_font" : 3,
+      "raw_spacing" : 4
+    },
+    "Catbird/Features/UnifiedChat/Views/UnifiedChatView.swift" : {
+      "legacy_material" : 1,
+      "raw_color" : 1,
+      "raw_spacing" : 3,
+      "swiftlint.no_legacy_material" : 1
+    },
+    "Catbird/Features/UnifiedChat/Views/iOS/ChatCollectionViewController.swift" : {
+      "off_grid_spacing" : 1,
+      "raw_animation" : 8,
+      "raw_color" : 5,
+      "raw_corner_radius" : 1,
+      "raw_font" : 2,
+      "raw_spacing" : 6,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "Catbird/Features/UnifiedChat/Views/iOS/ComposerInputAccessoryView.swift" : {
+      "raw_spacing" : 2
+    },
+    "Catbird/Features/UnifiedChat/Views/iOS/UIKitMLSComposerView.swift" : {
+      "legacy_material" : 1,
+      "raw_animation" : 7,
+      "raw_color" : 1,
+      "raw_corner_radius" : 5,
+      "swiftlint.no_raw_corner_radius" : 5
+    },
+    "Catbird/Features/UnifiedChat/Views/macOS/ChatListView.swift" : {
+      "legacy_material" : 1,
+      "off_grid_spacing" : 1,
+      "raw_animation" : 2,
+      "raw_color" : 4,
+      "raw_corner_radius" : 1,
+      "raw_spacing" : 16,
+      "swiftlint.no_legacy_material" : 1,
+      "swiftlint.no_raw_corner_radius" : 1
+    },
+    "CatbirdFeedWidget/CatbirdFeedWidget.swift" : {
+      "raw_font" : 17,
+      "swiftlint.no_raw_system_font_size" : 13,
+      "swiftlint.no_raw_text_style_font" : 4
+    },
+    "CatbirdFeedWidget/Compose/ComposeWidget.swift" : {
+      "raw_color" : 1,
+      "raw_font" : 2,
+      "swiftlint.no_hardcoded_blue" : 1,
+      "swiftlint.no_raw_system_font_size" : 2
+    },
+    "CatbirdFeedWidget/LockScreen/LockScreenWidgets.swift" : {
+      "raw_color" : 2,
+      "raw_font" : 3,
+      "swiftlint.no_raw_system_font_size" : 3
+    },
+    "CatbirdFeedWidget/Shared/WidgetDesignSystem.swift" : {
+      "raw_color" : 1,
+      "raw_font" : 11,
+      "raw_spacing" : 1,
+      "swiftlint.no_raw_system_font_size" : 11
+    },
+    "CatbirdNotificationWidget/CatbirdNotificationWidget.swift" : {
+      "legacy_material" : 2,
+      "off_grid_spacing" : 1,
+      "raw_color" : 5,
+      "raw_corner_radius" : 2,
+      "raw_font" : 15,
+      "raw_spacing" : 5,
+      "swiftlint.no_legacy_material" : 2,
+      "swiftlint.no_raw_corner_radius" : 2,
+      "swiftlint.no_raw_system_font_size" : 5,
+      "swiftlint.no_raw_system_text_style_font" : 9,
+      "swiftlint.no_raw_text_style_font" : 1
+    }
+  },
+  "ruleTotals" : {
+    "legacy_design_tokens" : 433,
+    "legacy_material" : 79,
+    "off_grid_spacing" : 464,
+    "raw_animation" : 245,
+    "raw_color" : 1331,
+    "raw_corner_radius" : 415,
+    "raw_font" : 675,
+    "raw_spacing" : 2346,
+    "small_tap_target" : 14,
+    "swiftlint.no_cornerradius_modifier" : 75,
+    "swiftlint.no_hardcoded_blue" : 18,
+    "swiftlint.no_legacy_design_tokens" : 259,
+    "swiftlint.no_legacy_material" : 76,
+    "swiftlint.no_raw_corner_radius" : 288,
+    "swiftlint.no_raw_system_font_size" : 200,
+    "swiftlint.no_raw_system_text_style_font" : 19,
+    "swiftlint.no_raw_text_style_font" : 255,
+    "unreasoned_lint_disable" : 1
+  },
+  "schemaVersion" : 1,
+  "totalViolations" : 7193
+}
