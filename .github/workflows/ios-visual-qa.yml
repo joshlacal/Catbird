@@ -1,0 +1,363 @@
+name: iOS Visual QA Screen Wall
+
+on:
+  pull_request:
+    paths:
+      - "Catbird/Core/UI/**"
+      - "Catbird/Features/**/Views/**"
+      - "Catbird/Core/State/ThemeManager.swift"
+      - "Catbird/Core/State/FontManager.swift"
+      - "Catbird/Core/Preview/**"
+      - "Catbird/Resources/Preview Content/**"
+      - "CatbirdFeedWidget/**"
+      - "CatbirdNotificationWidget/**"
+      - "CatbirdTests/DesignConsistencySnapshotTests.swift"
+      - "CatbirdTests/Support/CatbirdSnapshotOracle.swift"
+      - "CatbirdUITests/CatbirdDesignCatalogUITests.swift"
+      - ".github/workflows/ios-visual-qa.yml"
+  workflow_dispatch:
+    inputs:
+      fail_on_violations:
+        description: "Fail the workflow if CatbirdDesignInspector or performAccessibilityAudit reports violations"
+        required: false
+        type: boolean
+        default: true
+      fail_on_delta:
+        description: "Fail the workflow if any screen exceeds the 0.1% pixel delta threshold"
+        required: false
+        type: boolean
+        default: false
+      run_ui_tests:
+        description: "Run Tier-2 CatbirdDesignCatalogUITests (single-launch catalog + performAccessibilityAudit)"
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: ios-visual-qa-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  visual-qa:
+    runs-on: xcode-27
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+        working-directory: Catbird
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+      CATBIRD_MLS_LOCAL_INTEGRATION: "1"
+      VISUAL_QA_DIR: ${{ github.workspace }}/visual-qa
+      BASELINE_BRANCH: visual-baselines
+      DELTA_THRESHOLD: "0.001"
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout Catbird
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: Catbird
+          persist-credentials: false
+
+      - name: Read immutable sibling revisions
+        id: dependencies
+        run: python3 scripts/verify_ios_ci_dependencies.py manifest >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pinned Petrel
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: joshlacal/Petrel
+          ref: ${{ steps.dependencies.outputs.petrel_revision }}
+          path: Petrel
+          persist-credentials: false
+
+      - name: Checkout pinned PetrelCatbird
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: joshlacal/PetrelCatbird
+          ref: ${{ steps.dependencies.outputs.petrelcatbird_revision }}
+          path: PetrelCatbird
+          persist-credentials: false
+
+      - name: Checkout pinned CatbirdMLSCore
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: joshlacal/CatbirdMLSCore
+          ref: ${{ steps.dependencies.outputs.catbirdmlscore_revision }}
+          path: CatbirdMLSCore
+          persist-credentials: false
+
+      - name: Verify Xcode and pinned source provenance
+        run: |
+          set -euo pipefail
+          mkdir -p "$VISUAL_QA_DIR"/{candidates,baselines,wall,logs}
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version | tee "$VISUAL_QA_DIR/logs/xcode-version.txt"
+          grep -Fx 'Xcode 27.1' "$VISUAL_QA_DIR/logs/xcode-version.txt"
+          grep -Fx 'Build version 27A9275' "$VISUAL_QA_DIR/logs/xcode-version.txt"
+          python3 scripts/verify_ios_ci_dependencies.py checkouts --reports "$VISUAL_QA_DIR/logs"
+
+      - name: Fetch visual baselines (graceful bootstrap)
+        run: |
+          set -euo pipefail
+          mkdir -p "$VISUAL_QA_DIR/baselines"
+          if git ls-remote --exit-code --heads origin "$BASELINE_BRANCH" >/dev/null 2>&1; then
+            echo "Fetching baselines from origin/$BASELINE_BRANCH"
+            git fetch --depth=1 origin "$BASELINE_BRANCH"
+            git archive "FETCH_HEAD" | tar -x -C "$VISUAL_QA_DIR/baselines"
+            # Flatten nested baselines/ subdirectory if present on the orphan branch
+            if [[ -d "$VISUAL_QA_DIR/baselines/baselines" ]]; then
+              shopt -s nullglob
+              for f in "$VISUAL_QA_DIR/baselines/baselines"/*.png; do
+                mv -f "$f" "$VISUAL_QA_DIR/baselines/$(basename "$f")"
+              done
+              shopt -u nullglob
+            fi
+            count="$(find "$VISUAL_QA_DIR/baselines" -maxdepth 1 -name '*.png' | wc -l | tr -d ' ')"
+            echo "Loaded $count baseline PNG(s) from $BASELINE_BRANCH"
+          else
+            echo "Baseline branch '$BASELINE_BRANCH' does not exist yet; running in bootstrap mode."
+          fi
+
+      - name: Install the Xcode Metal compiler component
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Resolve and verify Swift packages
+        run: |
+          set -euo pipefail
+          xcodebuild -resolvePackageDependencies -project Catbird.xcodeproj -scheme Catbird \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -onlyUsePackageVersionsFromResolvedFile \
+            2>&1 | tee "$VISUAL_QA_DIR/logs/resolve.log"
+          python3 scripts/verify_ios_ci_dependencies.py resolved \
+            --reports "$VISUAL_QA_DIR/logs" --source-packages "$RUNNER_TEMP/SourcePackages"
+
+      - name: Select deterministic iOS 27.0 iPhone simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          xcrun simctl list devices available -j > "$VISUAL_QA_DIR/logs/simulators.json"
+          simulator_id="$(jq -r '
+            [.devices | to_entries[]
+              | select(.key == "com.apple.CoreSimulator.SimRuntime.iOS-27-0")
+              | .value[]
+              | select(.isAvailable and (.name | startswith("iPhone")))]
+            | (map(select(.name == "iPhone 17 Pro")) + .)
+            | first | .udid // empty' "$VISUAL_QA_DIR/logs/simulators.json")"
+          if [[ -z "$simulator_id" ]]; then
+            echo "No available iOS 27.0 iPhone simulator found" >&2
+            exit 1
+          fi
+          destination="platform=iOS Simulator,id=${simulator_id}"
+          echo "destination=$destination" >> "$GITHUB_OUTPUT"
+          echo "Using destination: $destination"
+
+      - name: Build Catbird for visual QA testing
+        run: |
+          set -euo pipefail
+          xcodebuild build-for-testing \
+            -project Catbird.xcodeproj \
+            -scheme Catbird \
+            -destination "${{ steps.sim.outputs.destination }}" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution -skipPackageUpdates \
+            -jobs 3 \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=YES \
+            DEBUG_INFORMATION_FORMAT=dwarf \
+            2>&1 | tee "$VISUAL_QA_DIR/logs/build-for-testing.log"
+
+      - name: Run Tier-1 DesignConsistencySnapshotTests
+        id: tier1
+        env:
+          CATBIRD_VISUAL_OUT_DIR: ${{ env.VISUAL_QA_DIR }}/candidates
+          CATBIRD_VISUAL_BASELINE_DIR: ${{ env.VISUAL_QA_DIR }}/baselines
+          TEST_RUNNER_CATBIRD_VISUAL_OUT_DIR: ${{ env.VISUAL_QA_DIR }}/candidates
+          TEST_RUNNER_CATBIRD_VISUAL_BASELINE_DIR: ${{ env.VISUAL_QA_DIR }}/baselines
+        run: |
+          set -euo pipefail
+          set +e
+          xcodebuild test-without-building \
+            -project Catbird.xcodeproj \
+            -scheme Catbird \
+            -destination "${{ steps.sim.outputs.destination }}" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -resultBundlePath "$VISUAL_QA_DIR/logs/tier1-snapshots.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:CatbirdTests/DesignConsistencySnapshotTests \
+            2>&1 | tee "$VISUAL_QA_DIR/logs/tier1-snapshots.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          echo "Tier-1 snapshot suite exited with status $status"
+
+      - name: Run Tier-2 CatbirdDesignCatalogUITests (performAccessibilityAudit)
+        id: tier2
+        if: ${{ inputs.run_ui_tests != false }}
+        env:
+          CATBIRD_VISUAL_OUT_DIR: ${{ env.VISUAL_QA_DIR }}/candidates
+          CATBIRD_VISUAL_BASELINE_DIR: ${{ env.VISUAL_QA_DIR }}/baselines
+          TEST_RUNNER_CATBIRD_VISUAL_OUT_DIR: ${{ env.VISUAL_QA_DIR }}/candidates
+          TEST_RUNNER_CATBIRD_VISUAL_BASELINE_DIR: ${{ env.VISUAL_QA_DIR }}/baselines
+        run: |
+          set -euo pipefail
+          set +e
+          xcodebuild test-without-building \
+            -project Catbird.xcodeproj \
+            -scheme Catbird \
+            -destination "${{ steps.sim.outputs.destination }}" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -resultBundlePath "$VISUAL_QA_DIR/logs/tier2-catalog-ui.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:CatbirdUITests/CatbirdDesignCatalogUITests \
+            2>&1 | tee "$VISUAL_QA_DIR/logs/tier2-catalog-ui.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          echo "Tier-2 catalog UI suite exited with status $status"
+
+      - name: Build Screen Wall, Diff Strip & Interactive HTML Viewer
+        id: wall
+        run: |
+          set -euo pipefail
+          BUILDER=""
+          for candidate_script in \
+            "scripts/visual-qa/build_screen_wall.py" \
+            "../scripts/visual-qa/build_screen_wall.py" \
+            "${{ github.workspace }}/scripts/visual-qa/build_screen_wall.py"; do
+            if [[ -f "$candidate_script" ]]; then
+              BUILDER="$candidate_script"
+              break
+            fi
+          done
+
+          PR_LABEL="${{ github.event.pull_request.number && format('PR #{0}', github.event.pull_request.number) || github.ref_name }}"
+          TITLE="Catbird iOS Visual QA Screen Wall (${PR_LABEL})"
+
+          FAIL_FLAGS=()
+          if [[ "${{ inputs.fail_on_violations }}" != "false" ]]; then
+            FAIL_FLAGS+=(--fail-on-violations)
+          fi
+          if [[ "${{ inputs.fail_on_delta }}" == "true" ]]; then
+            FAIL_FLAGS+=(--fail-on-delta)
+          fi
+
+          if [[ -n "$BUILDER" ]]; then
+            echo "Running screen wall builder: $BUILDER"
+            set +e
+            python3 "$BUILDER" \
+              --candidate "$VISUAL_QA_DIR/candidates" \
+              --baseline "$VISUAL_QA_DIR/baselines" \
+              --out "$VISUAL_QA_DIR/wall" \
+              --delta-threshold "$DELTA_THRESHOLD" \
+              --title "$TITLE" \
+              "${FAIL_FLAGS[@]}"
+            wall_status=$?
+            set -e
+            echo "exit_code=$wall_status" >> "$GITHUB_OUTPUT"
+          else
+            echo "Warning: scripts/visual-qa/build_screen_wall.py not present in standalone repo; generating receipt summary fallback."
+            python3 - "$VISUAL_QA_DIR/candidates" "$VISUAL_QA_DIR/wall" "$TITLE" <<'PY'
+          import json, pathlib, sys
+          cand_dir, out_dir, title = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
+          out_dir.mkdir(parents=True, exist_ok=True)
+          receipts = sorted(cand_dir.glob("*.json"))
+          pngs = sorted(cand_dir.glob("*.png"))
+          total_viol = 0
+          rows = []
+          for p in pngs:
+              stem = p.stem
+              surface, profile = stem.split("__", 1) if "__" in stem else (stem, "baseline-light")
+              rpath = cand_dir / f"{stem}.json"
+              cnt = 0
+              if rpath.is_file():
+                  data = json.loads(rpath.read_text(encoding="utf-8"))
+                  cnt = int((data.get("counts") or {}).get("total", len(data.get("violations") or [])))
+              total_viol += cnt
+              rows.append(f"| `{surface}` | `{profile}` | {cnt} |")
+          md = [
+              "<!-- catbird-visual-qa-screen-wall -->",
+              f"## {title}",
+              "",
+              f"Captured **{len(pngs)}** PNG(s) and **{len(receipts)}** JSON audit receipt(s) · **{total_viol}** total violation(s).",
+              "",
+              "> Note: Sync `scripts/visual-qa/build_screen_wall.py` into `Catbird/scripts/visual-qa/` to enable full contact-sheet & diff-heatmap rendering in standalone CI.",
+              "",
+              "| Surface | Profile | Violations |",
+              "| --- | --- | ---: |",
+              *rows,
+          ]
+          (out_dir / "summary.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+          (out_dir / "report.json").write_text(json.dumps({"entries": len(pngs), "totalViolations": total_viol}, indent=2) + "\n", encoding="utf-8")
+          PY
+            echo "exit_code=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload Visual QA Screen Wall artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-visual-qa-screen-wall
+          path: |
+            ${{ env.VISUAL_QA_DIR }}/wall/
+            ${{ env.VISUAL_QA_DIR }}/logs/
+          if-no-files-found: warn
+
+      - name: Post or update PR Screen Wall comment
+        if: >-
+          always() &&
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summaryPath = `${process.env.VISUAL_QA_DIR}/wall/summary.md`;
+            if (!fs.existsSync(summaryPath)) {
+              core.warning(`No summary.md generated at ${summaryPath}`);
+              return;
+            }
+            const marker = '<!-- catbird-visual-qa-screen-wall -->';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = fs.readFileSync(summaryPath, 'utf8') +
+              `\n[Download \`screen-wall.png\`, \`diff-strip.png\`, and interactive \`wall.html\` from this workflow run](${runUrl})\n`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Enforce Visual QA & Test Verdict
+        run: |
+          set -euo pipefail
+          tier1="${{ steps.tier1.outputs.exit_code }}"
+          tier2="${{ steps.tier2.outputs.exit_code || '0' }}"
+          wall="${{ steps.wall.outputs.exit_code }}"
+          echo "Verdict exit codes: tier1=${tier1} tier2=${tier2} wall=${wall}"
+          if [[ "$tier1" -ne 0 || "$tier2" -ne 0 || "$wall" -ne 0 ]]; then
+            echo "Visual QA gate failed (tier1=$tier1, tier2=$tier2, wall=$wall)" >&2
+            exit 1
+          fi
