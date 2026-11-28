@@ -35,10 +35,6 @@ enum ExistingConversationFinder {
 
   /// Shows an encrypted chat again if this account had deleted it for itself.
   static func revealIfHidden(_ conversationID: String, accountDID: String) {
-    let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
-    let hiddenKey = "mls.deletedForMe.\(accountDID.lowercased())"
-    var hiddenIDs = Set(defaults.stringArray(forKey: hiddenKey) ?? [])
-    guard hiddenIDs.remove(conversationID) != nil else { return }
-    defaults.set(Array(hiddenIDs).sorted(), forKey: hiddenKey)
+    MLSDeletedForMe(accountDID: accountDID).reveal(conversationID)
   }
 }

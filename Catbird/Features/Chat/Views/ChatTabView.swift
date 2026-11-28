@@ -875,11 +875,9 @@ struct ChatTabView: View {
     do {
       let rows = try await mlsCoordinator.listConversations(limit: 100)
       let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
-      let hiddenKey = "mls.deletedForMe.\(userDID.lowercased())"
-      let hiddenIDs = Set(defaults.stringArray(forKey: hiddenKey) ?? [])
+      let deletedForMe = MLSDeletedForMe(accountDID: userDID, defaults: defaults)
 
       let loadedConversations: [MLSConversationModel] = rows.compactMap { row in
-        guard !hiddenIDs.contains(row.conversationId) else { return nil }
         let muteKey = "mls.mutedUntil.\(userDID.lowercased()).\(row.conversationId)"
         let mutedSeconds = defaults.double(forKey: muteKey)
         let mutedUntil = mutedSeconds > 0 ? Date(timeIntervalSince1970: mutedSeconds) : nil
@@ -934,12 +932,23 @@ struct ChatTabView: View {
       var unreadCounts: [String: Int] = [:]
       var canonicalLastMessages: [String: MLSLastMessagePreview] = [:]
       var canonicalLatestActivity: [String: Date] = [:]
+      var deletedForMeIDs = Set<String>()
 
       for conversation in acceptedConversations {
         let convoID = conversation.conversationID
-        unreadCounts[convoID] = conversation.unreadCount
         let messageRows = (try? await mlsCoordinator.listMessages(conversationId: convoID, limit: 20)) ?? []
         let recentMessages = messageRows.map { MLSMessageModel(row: $0, currentUserDID: userDID) }
+
+        // A chat deleted for this account stays out of the list until someone writes in it again.
+        let isDeletedForMe = await deletedForMe.isHidden(convoID, newestFirst: recentMessages) { beforeSeq in
+          try await mlsCoordinator.listMessages(conversationId: convoID, beforeSeq: beforeSeq, limit: 100)
+            .map { MLSMessageModel(row: $0, currentUserDID: userDID) }
+        }
+        if isDeletedForMe {
+          deletedForMeIDs.insert(convoID)
+          continue
+        }
+        unreadCounts[convoID] = conversation.unreadCount
 
         if let newest = recentMessages.first {
           canonicalLatestActivity[convoID] = newest.timestamp
@@ -988,7 +997,9 @@ struct ChatTabView: View {
         }
       }
 
-      let sortedConversations = acceptedConversations.sorted { lhs, rhs in
+      let sortedConversations = acceptedConversations.filter {
+        !deletedForMeIDs.contains($0.conversationID)
+      }.sorted { lhs, rhs in
         let lhsDate = canonicalLatestActivity[lhs.conversationID] ?? lhs.createdAt
         let rhsDate = canonicalLatestActivity[rhs.conversationID] ?? rhs.createdAt
         return lhsDate > rhsDate
@@ -1143,11 +1154,7 @@ struct ChatTabView: View {
       logger.warning("Account switched before deleteMLSConversationForMe confirmed; dropping mutation")
       return
     }
-    let defaults = UserDefaults(suiteName: MLSAppGroupStorage.appGroupIdentifier) ?? .standard
-    let hiddenKey = "mls.deletedForMe.\(targetDID.lowercased())"
-    var hiddenIDs = Set(defaults.stringArray(forKey: hiddenKey) ?? [])
-    hiddenIDs.insert(convoID)
-    defaults.set(Array(hiddenIDs).sorted(), forKey: hiddenKey)
+    MLSDeletedForMe(accountDID: targetDID).hide(convoID)
 
     var updatedState = coordinator.mlsState
     updatedState.conversations.removeAll { $0.conversationID == convoID }
