@@ -709,6 +709,16 @@ struct MLSResurrectionWave0Tests {
     #expect(!filtered.circleKeyAccounts.contains { $0.contains(bobDID) || $0.contains("extra|") })
   }
 
+  @Test("A backup counts as passkey-linked only while a passkey method is unrevoked")
+  func passkeyLinkedReadsServerMethods() {
+    #expect(!LabyrinthPasskeyPolicy.hasUsablePasskey([]))
+    #expect(!LabyrinthPasskeyPolicy.hasUsablePasskey([("code", false), ("passkey", true)]))
+    #expect(LabyrinthPasskeyPolicy.hasUsablePasskey([("passkey", true), ("passkey", false)]))
+    let stopped = LabyrinthPasskeyPolicy.unreachableBackupMessage("HTTP 400")
+    #expect(stopped.hasPrefix("No passkey was created"))
+    #expect(stopped.hasSuffix("HTTP 400"))
+  }
+
   @Test("NotificationService suppresses banner and sound for verified own-sibling-device pushes without silencing unverified pushes")
   func notificationServiceSuppressesOwnSiblingDeviceAlertsAfterVerifiedReceipt() throws {
     let aliceDID = "did:plc:alicesibling01"
