@@ -1937,6 +1937,9 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       if let handle = self.handle {
         storeHandle(handle, for: userDID)
       }
+      // Petrel prefers its just-signed-in account over the current one whenever they differ,
+      // so a later switch back to another account would resolve to this one and be refused.
+      await activeClient.clearTemporaryAccountStorage()
 
       isAuthenticationCancelled = false
       isHandlingAuthExpiration = false
