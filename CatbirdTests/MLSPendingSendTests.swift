@@ -167,8 +167,36 @@ struct MLSPendingSendTests {
     #expect(own.canUnsend == true)
     #expect(remote.canEdit == false)
     #expect(remote.canUnsend == false)
-    #expect(own.canDeleteForMe == false)
-    #expect(remote.canDeleteForMe == false)
+    #expect(own.canDeleteForMe == true)
+    #expect(remote.canDeleteForMe == true)
+
+    let system = MLSMessageAdapter(
+      id: "system",
+      text: "Alice joined",
+      senderDID: "did:plc:remote",
+      currentUserDID: "did:plc:tester",
+      sentAt: Date(),
+      isSystemMessage: true
+    )
+    let tombstone = MLSMessageAdapter(
+      id: "gone",
+      text: "",
+      senderDID: "did:plc:remote",
+      currentUserDID: "did:plc:tester",
+      sentAt: Date(),
+      isTombstone: true
+    )
+    let failed = MLSMessageAdapter(
+      id: "failed",
+      text: "hello",
+      senderDID: "did:plc:tester",
+      currentUserDID: "did:plc:tester",
+      sentAt: Date(),
+      sendState: .failed("send failed")
+    )
+    #expect(system.canDeleteForMe == false)
+    #expect(tombstone.canDeleteForMe == false)
+    #expect(failed.canDeleteForMe == false)
   }
 
   @Test func acknowledgedPendingMessageDoesNotExposeServerActionsBeforeHandoff() {
