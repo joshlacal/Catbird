@@ -1490,7 +1490,7 @@
       "legacy_material" : 1,
       "off_grid_spacing" : 2,
       "raw_animation" : 1,
-      "raw_color" : 12,
+      "raw_color" : 11,
       "raw_corner_radius" : 2,
       "raw_font" : 6,
       "raw_spacing" : 11,
@@ -2324,7 +2324,7 @@
     "legacy_material" : 67,
     "off_grid_spacing" : 444,
     "raw_animation" : 238,
-    "raw_color" : 1295,
+    "raw_color" : 1294,
     "raw_corner_radius" : 399,
     "raw_font" : 580,
     "raw_spacing" : 2246,
@@ -2340,5 +2340,5 @@
     "unreasoned_lint_disable" : 1
   },
   "schemaVersion" : 1,
-  "totalViolations" : 6767
+  "totalViolations" : 6766
 }
