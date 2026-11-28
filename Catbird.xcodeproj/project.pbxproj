@@ -1772,7 +1772,7 @@
 			repositoryURL = "https://github.com/joshlacal/CatbirdBrand.git";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 0.1.0;
+				minimumVersion = 0.2.0;
 			};
 		};
 		218866A3300B678A00215DE7 /* XCRemoteSwiftPackageReference "BluemojiKit" */ = {

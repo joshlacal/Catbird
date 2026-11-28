@@ -1,5 +1,5 @@
 {
-  "originHash" : "a0b3d394365e748fd64dc558685aa229668d174ee0c202a6c6ebe3b7f84ece32",
+  "originHash" : "525c749f7b73e6059b261d7cbbed1ea0d4657ae26010a378f3298978a54de7cb",
   "pins" : [
     {
       "identity" : "adaptiveglyphkit",
@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/CatbirdBrand.git",
       "state" : {
-        "revision" : "695bad0204bd3d4850ba283ba0f7e843bf68aa13",
-        "version" : "0.1.0"
+        "revision" : "a7ddd5effee33a5454b1adc39c891a6851e1ada0",
+        "version" : "0.2.0"
       }
     },
     {
