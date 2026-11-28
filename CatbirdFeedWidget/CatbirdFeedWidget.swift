@@ -356,16 +356,16 @@ struct SmallFeedWidget: View {
 
   var body: some View {
     if let firstPost = entry.posts.first {
-      VStack(alignment: .leading, spacing: WidgetSpacing.sm) {
+      VStack(alignment: .leading, spacing: WidgetSpacing.xs) {
         // Header: avatar + feed label
-        HStack(spacing: WidgetSpacing.sm) {
+        HStack(spacing: WidgetSpacing.xs) {
           WidgetAvatar(
             name: accountName(for: entry.configuration),
             size: WidgetAvatarSize.sm
           )
 
           Text(feedDisplayName(for: entry.configuration))
-            .font(.system(size: 9, weight: .semibold))
+            .widgetFont(.meta, weight: .semibold)
             .foregroundStyle(.secondary)
             .lineLimit(1)
 
@@ -373,25 +373,25 @@ struct SmallFeedWidget: View {
         }
 
         // Single post inline
-        VStack(alignment: .leading, spacing: WidgetSpacing.xs) {
-          HStack(spacing: WidgetSpacing.xs) {
+        VStack(alignment: .leading, spacing: WidgetSpacing.hairline) {
+          HStack(spacing: WidgetSpacing.hairline) {
             Text(firstPost.authorName)
-              .font(.system(size: 11, weight: .semibold))
+              .widgetFont(.bodyCompact, weight: .semibold)
               .lineLimit(1)
 
             if entry.configuration.showTimestamps {
               Text(verbatim: "·")
-                .font(.system(size: 9))
+                .widgetFont(.meta)
                 .foregroundStyle(.secondary)
               Text(firstPost.timestamp, style: .relative)
-                .font(.system(size: 9))
+                .widgetFont(.meta)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
           }
 
           Text(firstPost.text)
-            .font(.system(size: 11))
+            .widgetFont(.bodyCompact)
             .foregroundStyle(.secondary)
             .lineLimit(4)
         }
@@ -404,11 +404,11 @@ struct SmallFeedWidget: View {
             likes: firstPost.likeCount,
             reposts: firstPost.repostCount,
             replies: firstPost.replyCount,
-            fontSize: 8
+            textRole: .micro
           )
         }
       }
-      .padding(WidgetSpacing.base)
+      .padding(WidgetSpacing.md)
     } else {
       emptyState
     }
@@ -417,17 +417,17 @@ struct SmallFeedWidget: View {
   @ViewBuilder
   private var emptyState: some View {
     let message = emptyStateMessage(for: entry)
-    VStack(spacing: WidgetSpacing.md) {
+    VStack(spacing: WidgetSpacing.sm) {
       Image(systemName: "text.bubble")
-        .font(.title2)
+        .widgetFont(.emptyIcon)
         .foregroundStyle(.tertiary)
 
       Text(message.title)
-        .font(.system(size: 12, weight: .medium))
+        .widgetFont(.body, weight: .medium)
         .multilineTextAlignment(.center)
 
       Text(message.detail)
-        .font(.system(size: 10))
+        .widgetFont(.caption)
         .foregroundStyle(.tertiary)
         .multilineTextAlignment(.center)
     }
@@ -449,7 +449,7 @@ struct MediumFeedWidget: View {
           title: feedDisplayName(for: entry.configuration),
           lastUpdated: entry.lastUpdated
         )
-        .padding(.bottom, WidgetSpacing.md)
+        .padding(.bottom, WidgetSpacing.sm)
 
         let postsToShow = Array(entry.posts.prefix(2))
         VStack(spacing: 0) {
@@ -463,14 +463,14 @@ struct MediumFeedWidget: View {
 
             if index < postsToShow.count - 1 {
               Divider()
-                .padding(.vertical, WidgetSpacing.sm)
+                .padding(.vertical, WidgetSpacing.xs)
             }
           }
         }
 
         Spacer(minLength: 0)
       }
-      .padding(WidgetSpacing.base)
+      .padding(WidgetSpacing.md)
     } else {
       emptyStateWithHeader
     }
@@ -478,7 +478,7 @@ struct MediumFeedWidget: View {
 
   @ViewBuilder
   private var emptyStateWithHeader: some View {
-    VStack(spacing: WidgetSpacing.md) {
+    VStack(spacing: WidgetSpacing.sm) {
       WidgetHeader(
         avatarName: accountName(for: entry.configuration),
         title: feedDisplayName(for: entry.configuration),
@@ -488,23 +488,23 @@ struct MediumFeedWidget: View {
       Spacer()
 
       let message = emptyStateMessage(for: entry)
-      VStack(spacing: WidgetSpacing.sm) {
+      VStack(spacing: WidgetSpacing.xs) {
         Image(systemName: "text.bubble")
-          .font(.title2)
+          .widgetFont(.emptyIcon)
           .foregroundStyle(.tertiary)
 
         Text(message.title)
-          .font(.system(size: 13, weight: .medium))
+          .widgetFont(.titleCompact, weight: .medium)
 
         Text(message.detail)
-          .font(.system(size: 10))
+          .widgetFont(.caption)
           .foregroundStyle(.tertiary)
           .multilineTextAlignment(.center)
       }
 
       Spacer()
     }
-    .padding(WidgetSpacing.base)
+    .padding(WidgetSpacing.md)
   }
 }
 
@@ -530,7 +530,7 @@ struct LargeFeedWidget: View {
           subtitle: accountHandle(for: entry.configuration).map { Text(verbatim: $0) },
           lastUpdated: entry.lastUpdated
         )
-        .padding(.bottom, WidgetSpacing.md)
+        .padding(.bottom, WidgetSpacing.sm)
 
         let postsToShow = Array(entry.posts.prefix(postCount))
         VStack(spacing: 0) {
@@ -544,14 +544,14 @@ struct LargeFeedWidget: View {
 
             if index < postsToShow.count - 1 {
               Divider()
-                .padding(.vertical, WidgetSpacing.sm)
+                .padding(.vertical, WidgetSpacing.xs)
             }
           }
         }
 
         Spacer(minLength: 0)
       }
-      .padding(WidgetSpacing.base)
+      .padding(WidgetSpacing.md)
     } else {
       largeEmptyState
     }
@@ -570,17 +570,17 @@ struct LargeFeedWidget: View {
       Spacer()
 
       let message = emptyStateMessage(for: entry)
-      VStack(spacing: WidgetSpacing.md) {
+      VStack(spacing: WidgetSpacing.sm) {
         Image(systemName: "text.bubble.fill")
-          .font(.title)
+          .widgetFont(.emptyIconLarge)
           .foregroundStyle(.tertiary)
 
-        VStack(spacing: WidgetSpacing.sm) {
+        VStack(spacing: WidgetSpacing.xs) {
           Text(message.title)
-            .font(.system(size: 14, weight: .medium))
+            .widgetFont(.title, weight: .medium)
 
           Text(message.detail)
-            .font(.system(size: 11))
+            .widgetFont(.bodyCompact)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
             .lineLimit(3)
@@ -589,7 +589,7 @@ struct LargeFeedWidget: View {
 
       Spacer()
     }
-    .padding(WidgetSpacing.base)
+    .padding(WidgetSpacing.md)
   }
 
   private func accountHandle(for configuration: ConfigurationAppIntent) -> String? {
@@ -646,7 +646,7 @@ struct ExtraLargeFeedWidget: View {
 
             if index < postsToShow.count - 1 {
               Divider()
-                .padding(.vertical, WidgetSpacing.sm)
+                .padding(.vertical, WidgetSpacing.xs)
             }
           }
         }
@@ -673,15 +673,15 @@ struct ExtraLargeFeedWidget: View {
       let message = emptyStateMessage(for: entry)
       VStack(spacing: WidgetSpacing.lg) {
         Image(systemName: "text.bubble.fill")
-          .font(.largeTitle)
+          .widgetFont(.emptyIconHero)
           .foregroundStyle(.tertiary)
 
-        VStack(spacing: WidgetSpacing.md) {
+        VStack(spacing: WidgetSpacing.sm) {
           Text(message.title)
-            .font(.system(size: 15, weight: .medium))
+            .widgetFont(.titleLarge, weight: .medium)
 
           Text(message.detail)
-            .font(.system(size: 12))
+            .widgetFont(.body)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
             .lineLimit(4)

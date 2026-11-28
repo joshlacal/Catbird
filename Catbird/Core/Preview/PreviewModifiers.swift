@@ -11,9 +11,9 @@ struct PreviewNetworkModeKey: EnvironmentKey {
   static let defaultValue: PreviewNetworkMode = .real
 }
 
-enum PreviewNetworkMode: String {
+enum PreviewNetworkMode: String, Sendable {
   case real     // Use actual Bluesky API
-  case mock     // Use mock responses (future)
+  case mock     // Use static fixture data, no auth/network (see PreviewFixtures)
   case offline  // No network calls
 }
 
@@ -33,17 +33,16 @@ extension EnvironmentValues {
 
 // MARK: - View Modifiers
 
-/// Applies authenticated AppState and all required environment values for previews.
-/// Injects the same environment hierarchy as ContentView:
-/// - AppState (via @Environment)
-/// - appSettings, adultContentEnabled
-/// - toastManager, themeManager, fontManager
+/// Applies authenticated or offline fixture `AppState` and all required environment values
+/// for previews. Injects the same environment hierarchy as `ContentView`.
 struct AuthenticatedPreviewModifier: ViewModifier {
   let appState: AppState
+  let networkMode: PreviewNetworkMode
   @State private var sceneContext: SceneNavigationContext
 
-  init(appState: AppState) {
+  init(appState: AppState, networkMode: PreviewNetworkMode = .real) {
     self.appState = appState
+    self.networkMode = networkMode
     _sceneContext = State(initialValue: SceneNavigationContext(appState: appState, sceneID: UUID()))
   }
 
@@ -57,34 +56,23 @@ struct AuthenticatedPreviewModifier: ViewModifier {
       .fontManager(appState.fontManager)
       .environment(\.toastManager, appState.toastManager)
       .environment(\.isPreviewMode, true)
-      .environment(\.previewNetworkMode, .real)
+      .environment(\.previewNetworkMode, networkMode)
   }
 }
 
 // MARK: - View Extensions
 
 extension View {
-  /// Apply full authenticated AppState for previews with real network access.
+  /// Apply full `AppState` for previews.
   ///
-  /// Authenticates via PreviewSecrets.xcconfig credentials (preferred) or
-  /// falls back to the running app's session. Shows skeleton UI if neither
-  /// is available.
-  ///
-  /// Usage:
-  /// ```swift
-  /// #Preview {
-  ///   MyView()
-  ///     .previewWithAuthenticatedState()
-  /// }
-  /// ```
+  /// Pass `mode: .mock` to skip auth/network entirely and resolve a fixture-backed
+  /// `AppState` (`PreviewContainer.fixtureAppState()`).
   @MainActor
-  func previewWithAuthenticatedState() -> some View {
-    modifier(AsyncPreviewStateModifier())
+  func previewWithAuthenticatedState(mode: PreviewNetworkMode = .real) -> some View {
+    modifier(AsyncPreviewStateModifier(mode: mode))
   }
 
   /// Apply preview environment without authentication.
-  /// Shows the wrapped view with default environment values — useful for
-  /// pure-UI components that don't need network data.
   @MainActor
   func previewWithMockEnvironment() -> some View {
     self
@@ -96,6 +84,7 @@ extension View {
 // MARK: - Async Loading Wrappers
 
 private struct AsyncPreviewStateModifier: ViewModifier {
+  var mode: PreviewNetworkMode = .real
   @State private var appState: AppState?
   @State private var isLoading = true
 
@@ -103,11 +92,16 @@ private struct AsyncPreviewStateModifier: ViewModifier {
     Group {
       if let appState {
         content
-          .modifier(AuthenticatedPreviewModifier(appState: appState))
+          .modifier(AuthenticatedPreviewModifier(appState: appState, networkMode: mode))
       } else if isLoading {
         PreviewLoadingView()
           .task {
-            appState = await PreviewContainer.shared.appState
+            switch mode {
+            case .mock:
+              appState = await PreviewContainer.fixtureAppState()
+            case .real, .offline:
+              appState = await PreviewContainer.shared.appState
+            }
             isLoading = false
           }
       } else {
@@ -130,11 +124,11 @@ private let platformBackgroundColor = Color(.windowBackgroundColor)
 /// Shown while preview authentication is in progress
 private struct PreviewLoadingView: View {
   var body: some View {
-    VStack(spacing: 16) {
+    VStack(spacing: Space.lg) {
       ProgressView()
         .controlSize(.large)
       Text(verbatim: "Authenticating preview…")
-        .font(.subheadline)
+        .appFont(AppTextRole.subheadline)
         .foregroundStyle(.secondary)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -145,18 +139,20 @@ private struct PreviewLoadingView: View {
 /// Shown when preview credentials are not configured
 private struct PreviewUnconfiguredView: View {
   var body: some View {
-    VStack(spacing: 12) {
+    VStack(spacing: Space.md) {
       Image(systemName: "key.slash")
-        .font(.system(size: 40))
+        .appFont(AppTextRole.largeTitle)
         .foregroundStyle(.tertiary)
       Text(verbatim: "Preview Not Configured")
-        .font(.headline)
-      Text(verbatim: "Add credentials to PreviewSecrets.xcconfig\nSee PreviewSecrets.xcconfig.template for setup")
-        .font(.caption)
-        .multilineTextAlignment(.center)
-        .foregroundStyle(.secondary)
+        .appFont(AppTextRole.headline)
+      Text(
+        verbatim: "Add credentials to PreviewSecrets.xcconfig for live data.\nOr use a fixture-backed preview (mode: .mock / PreviewFixtures) — those render without credentials."
+      )
+      .appFont(AppTextRole.caption)
+      .multilineTextAlignment(.center)
+      .foregroundStyle(.secondary)
     }
-    .padding(32)
+    .padding(Space.x3l)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(platformBackgroundColor)
   }

@@ -24,6 +24,11 @@ You are a Catbird codebase expert. When working on this project:
 4. **Navigation**: Use `AppNavigationManager` with type-safe `NavigationDestination` enum
 5. **Cross-platform**: Use ViewModifier protocols for iOS/macOS differences
 6. **Code Style**: 2-space indent, `// MARK:` sections, Swift 6 strict concurrency
+7. **Design System**: Follow the Catbird Design System Contract (`Core/UI/Kit/` + `CatbirdTokens`):
+   - Spacing/Radii/Motion: `Space.*` (4pt grid), `Radius.*` / `.catbirdClip(.x)` (continuous), `ControlHeight`, `AvatarSize`, `Motion.*` / `.catbirdAnimation(...)` — never raw literals or legacy `DesignTokens.*`.
+   - Components: `CatbirdButtonStyle` (`.buttonStyle(.catbird(...))`), `CatbirdIconButton`, `FollowButton`, `FeedLibraryButton`, `.catbirdCard(...)`, `CatbirdChip`, `CatbirdBadge`, `CatbirdNotice`, `CompactPostCard`, `CatbirdTextField`, `CatbirdAvatar`, `CatbirdSectionHeader`, `CatbirdHairline`, `CatbirdSheetChrome`.
+   - Typography & Theme: `.appFont(AppTextRole.*)` (SwiftUI) and `AppUIFont.font(...)` (UIKit); `CatbirdTheme` / `ThemeColors` semantic colors across Light/Dim/True Black; `.catbirdGlass(...)` instead of legacy `.*Material`; ≥44×44pt interactive tap targets.
+   - Gate: Always run `./scripts/design_lint.sh` (or `./scripts/design_lint.sh --diff`) before committing; zero new violations allowed in `.design-lint-budget.json`.
 
 ## Project Structure
 ```

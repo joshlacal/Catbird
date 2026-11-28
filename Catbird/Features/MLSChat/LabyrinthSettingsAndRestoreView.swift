@@ -27,6 +27,7 @@ struct LabyrinthSettingsAndRestoreView: View {
   var deviceMetadataByID: [String: DeviceRowModel] = [:]
 
   @Environment(AppState.self) private var appState: AppState?
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var status: LabyrinthBackupStatus?
   @State private var isPendingDeviceApproval = false
   @State private var approvalState: DeviceApprovalState?
@@ -78,7 +79,9 @@ struct LabyrinthSettingsAndRestoreView: View {
   /// Scrolls the form to an outcome row that has just appeared or changed.
   private func reveal(_ anchor: String, when message: String?, with proxy: ScrollViewProxy) {
     guard message != nil else { return }
-    withAnimation { proxy.scrollTo(anchor, anchor: .top) }
+    Motion.withAnimation(Motion.enter, reduceMotion: reduceMotion) {
+      proxy.scrollTo(anchor, anchor: .top)
+    }
   }
 
   private var form: some View {
@@ -87,7 +90,7 @@ struct LabyrinthSettingsAndRestoreView: View {
         Section {
           if let approvalCopy {
             Label {
-              VStack(alignment: .leading, spacing: 4) {
+              VStack(alignment: .leading, spacing: Space.xs) {
                 Text(approvalCopy.title)
                   .appFont(AppTextRole.footnote)
                   .fontWeight(.semibold)
@@ -170,7 +173,7 @@ struct LabyrinthSettingsAndRestoreView: View {
     .task(id: coordinator?.accountDidHash) { await refreshStatus() }
     .refreshable { await refreshStatus() }
     .overlay(alignment: .bottom) { workingIndicator }
-    .animation(.default, value: isLoading)
+    .catbirdAnimation(Motion.enter, value: isLoading)
     .onChange(of: appState?.pendingMLSDeviceRevocationReceipt) { _, _ in
       Task { await refreshRecoveryMaterial() }
     }
@@ -217,15 +220,15 @@ struct LabyrinthSettingsAndRestoreView: View {
   @ViewBuilder
   private var workingIndicator: some View {
     if isLoading, status != nil {
-      HStack(spacing: 10) {
+      HStack(spacing: Space.sm) {
         ProgressView()
         Text("Working… this can take up to a minute.")
           .appFont(AppTextRole.footnote)
       }
-      .padding(.horizontal, 16)
-      .padding(.vertical, 10)
-      .background(.regularMaterial, in: Capsule())
-      .padding(.bottom, 12)
+      .padding(.horizontal, Space.lg)
+      .padding(.vertical, Space.sm)
+      .adaptiveGlassEffect(style: .regular, in: Radius.capsule)
+      .padding(.bottom, Space.md)
       .accessibilityElement(children: .combine)
       .accessibilityIdentifier("labyrinth-working-indicator")
       .transition(.opacity)
@@ -295,7 +298,8 @@ struct LabyrinthSettingsAndRestoreView: View {
       if let status, needsRestoreFirst {
         DisclosureGroup("Details for Support") {
           Text(verbatim: supportDetails(status))
-            .font(.caption2.monospaced())
+            .appFont(AppTextRole.caption2)
+            .monospaced()
             .foregroundStyle(.secondary)
             .textSelection(.enabled)
             .accessibilityIdentifier("labyrinth-support-details")
@@ -410,7 +414,7 @@ struct LabyrinthSettingsAndRestoreView: View {
         ForEach(Array(status.rotationExclusions.enumerated()), id: \.offset) { offset, exclusion in
           let method = exclusion.recoveryMethod?.localizedCapitalized
             ?? String(localized: "Device", comment: "Fallback recovery method name when a device key is excluded during rotation")
-          VStack(alignment: .leading, spacing: 4) {
+          VStack(alignment: .leading, spacing: Space.xs) {
             Label(
               "\(method) recovery was removed during rotation",
               systemImage: "key.slash.fill"
@@ -459,7 +463,7 @@ struct LabyrinthSettingsAndRestoreView: View {
       }
 
       if let generatedRecoveryCode {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Space.sm) {
           Text("Save this 40-character recovery code in your password manager:")
             .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
@@ -468,7 +472,7 @@ struct LabyrinthSettingsAndRestoreView: View {
             .textSelection(.enabled)
             .accessibilityIdentifier("labyrinth-generated-recovery-code")
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, Space.xs)
 
         if recoveryCodeReceipt?.requiresDeviceSafetyConfirmation == true {
           Toggle(
@@ -605,7 +609,7 @@ struct LabyrinthSettingsAndRestoreView: View {
             .foregroundStyle(.secondary)
           Spacer()
           Text(verbatim: activeOtcOffer.formattedCode)
-            .appFont(AppTextRole.title3).monospaced().bold()
+            .appFont(AppTextRole.title3).monospaced().fontWeight(.bold)
             .accessibilityIdentifier("labyrinth-otc-formatted-code")
         }
       }
@@ -626,7 +630,7 @@ struct LabyrinthSettingsAndRestoreView: View {
       .accessibilityIdentifier("labyrinth-start-live-otc-session")
 
       if let initiatedOtcSession {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: Space.xs) {
           Text("Session ID (enter on authorized device):")
             .appFont(AppTextRole.caption)
             .foregroundStyle(.secondary)
@@ -778,9 +782,9 @@ struct LabyrinthSettingsAndRestoreView: View {
             totalActiveCount: devices.count
           )
 
-          HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-              HStack(spacing: 6) {
+          HStack(spacing: Space.md) {
+            VStack(alignment: .leading, spacing: Space.xs) {
+              HStack(spacing: Space.sm) {
                 Label(displayName, systemImage: isThisDevice ? "laptopcomputer.and.iphone" : "iphone")
                   .appFont(AppTextRole.subheadline).fontWeight(.medium)
                   .lineLimit(1)
@@ -803,10 +807,12 @@ struct LabyrinthSettingsAndRestoreView: View {
               }
               .buttonStyle(.borderless)
               .appFont(AppTextRole.caption)
+              .frame(minHeight: ControlHeight.minHitTarget)
+              .contentShape(Rectangle())
               .accessibilityIdentifier("labyrinth-revoke-\(deviceId)")
             }
           }
-          .padding(.vertical, 2)
+          .padding(.vertical, Space.hairline)
         }
       } else {
         Text("No active Labyrinth devices enrolled yet.")

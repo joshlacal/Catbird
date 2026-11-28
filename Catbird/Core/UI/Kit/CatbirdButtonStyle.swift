@@ -4,20 +4,19 @@
 //
 //  One capsule button style at three heights, plus a round icon button.
 //
-//  Colour: accent parts use the `.tint` shape style, so `.tint(_:)` re-tints a button
-//  (CatbirdNotice relies on this). `.primary` is a solid tint fill at every size;
-//  `.brand` is the opt-in hero gradient. `.glass` and `.glassProminent` are Liquid Glass
-//  for buttons that float over imagery (the sign-in sky, media, maps); on plain
-//  backgrounds use the solid kinds. Hit targets are always >= 44x44.
-//  CatbirdIconButton scales its glyph and circle with Dynamic Type (clamped to 1.5x).
+//  Colour: solid/brand/glassProminent foregrounds use `catbirdTheme.onAccent` for WCAG AA
+//  contrast across all 7 palettes × 3 modes. `.primary` fills with the active tint;
+//  `.brand` is the opt-in hero gradient; `.glass` and `.glassProminent` delegate to
+//  `.catbirdGlass(...)` so Liquid Glass, Reduce Transparency, and OLED True Black stay consistent.
+//  Hit targets are always >= 44x44. CatbirdIconButton scales its glyph and circle with Dynamic Type.
 //
 
 import SwiftUI
 
 enum CatbirdButtonKind: CaseIterable, Sendable {
-  /// Solid tint fill, white label. Same look at every size.
+  /// Solid tint fill, contrast-safe `onAccent` label. Same look at every size.
   case primary
-  /// Opt-in hero button: brand gradient (accent toward palette partner), white label.
+  /// Opt-in hero button: brand gradient (accent toward palette partner), `onAccent` label.
   case brand
   case tonal
   /// Hairline stroke, primary label.
@@ -27,10 +26,10 @@ enum CatbirdButtonKind: CaseIterable, Sendable {
   case quiet
   case destructive
   /// Liquid Glass capsule, primary label. For secondary actions over imagery.
-  /// Falls back to a material before iOS 26 and to an opaque fill under Reduce Transparency.
+  /// Falls back cleanly pre-iOS 26, under Reduce Transparency, and in OLED True Black.
   case glass
-  /// Liquid Glass tinted with the accent, white label. For the main action over imagery.
-  /// Falls back to a solid tint fill before iOS 26 and under Reduce Transparency.
+  /// Liquid Glass tinted with active `accentChrome`, `onAccent` label. For the main action over imagery.
+  /// Falls back cleanly pre-iOS 26, under Reduce Transparency, and in OLED True Black.
   case glassProminent
 }
 
@@ -57,8 +56,8 @@ enum CatbirdButtonSize: CaseIterable, Sendable {
   /// footnote.semibold / subheadline.semibold / headline
   var textRole: AppTextRole {
     switch self {
-    case .sm: return .footnote
-    case .md: return .subheadline
+    case .sm: return .footnote.weight(.semibold)
+    case .md: return .subheadline.weight(.semibold)
     case .lg: return .headline
     }
   }
@@ -70,11 +69,17 @@ struct CatbirdButtonStyle: ButtonStyle {
   var size: CatbirdButtonSize = .md
   var fullWidth = false
   var isLoading = false
+  var haptic = true
 
   func makeBody(configuration: Configuration) -> some View {
     CatbirdButtonBody(
-      configuration: configuration, kind: kind, size: size, fullWidth: fullWidth,
-      isLoading: isLoading)
+      configuration: configuration,
+      kind: kind,
+      size: size,
+      fullWidth: fullWidth,
+      isLoading: isLoading,
+      haptic: haptic
+    )
   }
 }
 
@@ -83,9 +88,16 @@ extension ButtonStyle where Self == CatbirdButtonStyle {
     _ kind: CatbirdButtonKind = .primary,
     size: CatbirdButtonSize = .md,
     fullWidth: Bool = false,
-    isLoading: Bool = false
+    isLoading: Bool = false,
+    haptic: Bool = true
   ) -> CatbirdButtonStyle {
-    CatbirdButtonStyle(kind: kind, size: size, fullWidth: fullWidth, isLoading: isLoading)
+    CatbirdButtonStyle(
+      kind: kind,
+      size: size,
+      fullWidth: fullWidth,
+      isLoading: isLoading,
+      haptic: haptic
+    )
   }
 }
 
@@ -95,37 +107,42 @@ private struct CatbirdButtonBody: View {
   let size: CatbirdButtonSize
   let fullWidth: Bool
   let isLoading: Bool
+  let haptic: Bool
 
   @Environment(\.isEnabled) private var isEnabled
-  @Environment(\.themeManager) private var themeManager
-  @Environment(\.colorScheme) private var scheme
+  @Environment(\.catbirdTheme) private var theme
   @Environment(\.colorSchemeContrast) private var contrast
 
-  private var increased: Bool { contrast == .increased }
+  private var increased: Bool { theme.isHighContrast || contrast == .increased }
+
+  private var destructiveForeground: Color {
+    // Tinted destructive pill washes the background with danger@0.08–0.14, so the text uses
+    // a slightly deeper red in Light (#B42318, ~6.4:1) and brighter coral in Dark (#FF6961, ~5.5:1)
+    // to clear WCAG AA (>= 4.5:1) across Light, Dim, and True Black.
+    theme.isDark
+      ? Color(.sRGB, red: 1.0, green: 0.412, blue: 0.380, opacity: 1.0)
+      : Color(.sRGB, red: 0.706, green: 0.137, blue: 0.094, opacity: 1.0)
+  }
 
   private var foreground: AnyShapeStyle {
     switch kind {
-    case .primary, .brand, .glassProminent: return AnyShapeStyle(Color.white)
-    case .tonal, .quiet: return AnyShapeStyle(TintShapeStyle())
-    case .outline, .glass: return AnyShapeStyle(Color.primary)
-    case .muted: return AnyShapeStyle(Color.secondary)
-    case .destructive: return AnyShapeStyle(Color.red)
+    case .primary, .brand, .glassProminent: return AnyShapeStyle(theme.onAccent)
+    case .tonal, .quiet: return AnyShapeStyle(theme.accentText)
+    case .outline, .glass: return AnyShapeStyle(theme.text(.primary))
+    case .muted: return AnyShapeStyle(theme.text(.secondary))
+    case .destructive: return AnyShapeStyle(destructiveForeground)
     }
   }
 
   /// Never the tint shape style itself: a tint that resolves to the tint recurses forever.
   private var spinnerTint: AnyShapeStyle? {
-    switch kind {
-    case .tonal, .quiet: return nil
-    default: return foreground
-    }
+    foreground
   }
 
   var body: some View {
     let pressed = configuration.isPressed
     configuration.label
       .appFont(size.textRole)
-      .fontWeight(.semibold)
       .lineLimit(1)
       .minimumScaleFactor(0.85)
       .opacity(isLoading ? 0 : 1)
@@ -139,11 +156,14 @@ private struct CatbirdButtonBody: View {
       .frame(minHeight: size.height)
       .frame(maxWidth: fullWidth ? .infinity : nil)
       .background { background }
-      .modifier(CatbirdGlassChrome(kind: kind))
+      .modifier(CatbirdButtonGlassChrome(kind: kind))
       .overlay {
         if kind == .outline || kind == .muted {
           Capsule(style: .continuous)
-            .strokeBorder(Color.secondary.opacity(increased ? 0.6 : 0.35), lineWidth: 1)
+            .strokeBorder(
+              theme.border(increased ? .prominent : .subtle),
+              lineWidth: increased ? 1.5 : 1
+            )
         }
       }
       // Visual height stays 32/40/48; the layout box grows to the 44pt hit target.
@@ -155,45 +175,50 @@ private struct CatbirdButtonBody: View {
       .opacity(isEnabled || isLoading ? 1 : 0.4)
       .allowsHitTesting(!isLoading)
       .accessibilityAddTraits(isLoading ? .updatesFrequently : [])
-      .catbirdAnimation(Motion.instant, value: pressed)
+      .catbirdAnimation(MotionIntent.instant, value: pressed)
+      .onChange(of: pressed) { _, nowPressed in
+        if nowPressed && haptic && isEnabled && !isLoading {
+          Self.triggerTapHaptic()
+        }
+      }
   }
 
   @ViewBuilder private var background: some View {
     let shape = Capsule(style: .continuous)
-    let tonal = increased ? 0.22 : 0.14
+    // Light mode uses a lighter tonal wash (0.08 / 0.10 high-contrast) so `accentText`
+    // clears WCAG AA (>= 4.65:1) cleanly across all 7 palettes without anti-alias dips.
+    let tonal = theme.isDark ? (increased ? 0.22 : 0.14) : (increased ? 0.10 : 0.08)
     switch kind {
-    case .primary: shape.fill(TintShapeStyle())
-    case .brand: shape.fill(BrandGradient.current(themeManager: themeManager, scheme: scheme))
-    case .tonal: shape.fill(TintShapeStyle().opacity(tonal))
-    case .destructive: shape.fill(Color.red.opacity(tonal))
+    case .primary: shape.fill(theme.accentChrome)
+    case .brand:
+      if BrandGradient.isSolid(for: theme.accentOption, scheme: theme.colorScheme) {
+        shape.fill(theme.accentChrome)
+      } else {
+        shape.fill(BrandGradient.current(theme: theme))
+      }
+    case .tonal: shape.fill(theme.accentChrome.opacity(tonal))
+    case .destructive: shape.fill(theme.semantic(.danger).opacity(tonal))
     case .outline, .muted, .quiet, .glass, .glassProminent: Color.clear
     }
   }
+
+  private static func triggerTapHaptic() {
+    #if os(iOS)
+    PlatformHaptics.light()
+    #endif
+  }
 }
 
-/// Draws the Liquid Glass capsule for the two glass kinds and nothing for the others.
-private struct CatbirdGlassChrome: ViewModifier {
+/// Routes `.glass` and `.glassProminent` through the unified `.catbirdGlass(...)` pipeline.
+private struct CatbirdButtonGlassChrome: ViewModifier {
   let kind: CatbirdButtonKind
-  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
   @ViewBuilder func body(content: Content) -> some View {
     switch kind {
-    case .glass, .glassProminent:
-      let prominent = kind == .glassProminent
-      let shape = Capsule(style: .continuous)
-      if reduceTransparency {
-        content.background {
-          shape.fill(prominent ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(Color.systemBackground))
-        }
-      } else if #available(iOS 26.0, macOS 26.0, *) {
-        content.glassEffect(
-          prominent ? .regular.tint(.accentColor).interactive() : .regular.interactive(),
-          in: shape)
-      } else {
-        content.background {
-          shape.fill(prominent ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(.regularMaterial))
-        }
-      }
+    case .glass:
+      content.catbirdGlass(.regular, in: Capsule(style: .continuous), interactive: true, tinted: false)
+    case .glassProminent:
+      content.catbirdGlass(.prominent, in: Capsule(style: .continuous), interactive: true, tinted: true)
     default:
       content
     }
@@ -204,7 +229,7 @@ private struct CatbirdGlassChrome: ViewModifier {
 
 enum CatbirdIconButtonStyle: Sendable {
   case tonal, quiet
-  /// Liquid Glass on iOS 26, material fallback before.
+  /// Liquid Glass via `.catbirdGlass` (handles iOS 26, pre-26, Reduce Transparency, and True Black).
   case glass
 }
 
@@ -214,42 +239,63 @@ struct CatbirdIconButton: View {
   var label: Text
   var size: CatbirdButtonSize = .md
   var style: CatbirdIconButtonStyle = .tonal
+  var haptic: Bool = true
   var action: () -> Void
 
   @Environment(\.isEnabled) private var isEnabled
   @ScaledMetric(relativeTo: .body) private var scale: CGFloat = 1
 
   init(
-    systemImage: String, label: LocalizedStringKey, size: CatbirdButtonSize = .md,
-    style: CatbirdIconButtonStyle = .tonal, action: @escaping () -> Void
+    systemImage: String,
+    label: LocalizedStringKey,
+    size: CatbirdButtonSize = .md,
+    style: CatbirdIconButtonStyle = .tonal,
+    haptic: Bool = true,
+    action: @escaping () -> Void
   ) {
     self.init(
-      systemImage: systemImage, label: Text(label), size: size, style: style, action: action)
+      systemImage: systemImage,
+      label: Text(label),
+      size: size,
+      style: style,
+      haptic: haptic,
+      action: action
+    )
   }
 
   init(
-    systemImage: String, label: Text, size: CatbirdButtonSize = .md,
-    style: CatbirdIconButtonStyle = .tonal, action: @escaping () -> Void
+    systemImage: String,
+    label: Text,
+    size: CatbirdButtonSize = .md,
+    style: CatbirdIconButtonStyle = .tonal,
+    haptic: Bool = true,
+    action: @escaping () -> Void
   ) {
     self.systemImage = systemImage
     self.label = label
     self.size = size
     self.style = style
+    self.haptic = haptic
     self.action = action
   }
 
   private var glyphSize: CGFloat {
     switch size {
-    case .sm: return 14
+    case .sm: return IconSize.inline
     case .md: return 17
-    case .lg: return 20
+    case .lg: return IconSize.md
     }
   }
 
   private var side: CGFloat { size.height * min(scale, 1.5) }
 
   var body: some View {
-    Button(action: action) {
+    Button {
+      if self.haptic {
+        Self.triggerTapHaptic()
+      }
+      self.action()
+    } label: {
       Image(systemName: systemImage)
         .appFont(size: glyphSize, weight: .semibold, relativeTo: .body)
         .foregroundStyle(TintShapeStyle())
@@ -262,21 +308,29 @@ struct CatbirdIconButton: View {
     .opacity(isEnabled ? 1 : 0.4)
     .accessibilityLabel(label)
   }
+
+  private static func triggerTapHaptic() {
+    #if os(iOS)
+    PlatformHaptics.light()
+    #endif
+  }
 }
 
 private struct IconChrome: ViewModifier {
   let style: CatbirdIconButtonStyle
+  @Environment(\.catbirdTheme) private var theme
   @Environment(\.colorSchemeContrast) private var contrast
+
+  private var increased: Bool { theme.isHighContrast || contrast == .increased }
 
   @ViewBuilder func body(content: Content) -> some View {
     switch style {
     case .tonal:
-      content.background(Circle().fill(TintShapeStyle().opacity(contrast == .increased ? 0.22 : 0.14)))
+      content.background(Circle().fill(TintShapeStyle().opacity(increased ? 0.22 : 0.14)))
     case .quiet:
       content
     case .glass:
-      // adaptiveGlassEffect falls back to a material before iOS 26.
-      content.adaptiveGlassEffect(in: Circle(), interactive: true)
+      content.catbirdGlass(.regular, in: Circle(), interactive: true, tinted: false)
     }
   }
 }
@@ -286,7 +340,7 @@ private struct CatbirdIconPressStyle: ButtonStyle {
     configuration.label
       .scaleEffect(configuration.isPressed ? 0.94 : 1)
       .opacity(configuration.isPressed ? 0.85 : 1)
-      .catbirdAnimation(Motion.instant, value: configuration.isPressed)
+      .catbirdAnimation(MotionIntent.instant, value: configuration.isPressed)
   }
 }
 
@@ -295,13 +349,13 @@ private struct CatbirdIconPressStyle: ButtonStyle {
     ForEach(CatbirdButtonKind.allCases, id: \.self) { kind in
       HStack {
         ForEach(CatbirdButtonSize.allCases, id: \.self) { size in
-          Button { } label: { Text(verbatim: "Label") }.buttonStyle(.catbird(kind, size: size))
+          Button {} label: { Text(verbatim: "Label") }.buttonStyle(.catbird(kind, size: size))
         }
       }
     }
-    Button { } label: { Text(verbatim: "Continue") }
+    Button {} label: { Text(verbatim: "Continue") }
       .buttonStyle(.catbird(.brand, size: .lg, fullWidth: true))
-    Button { } label: { Text(verbatim: "Loading") }
+    Button {} label: { Text(verbatim: "Loading") }
       .buttonStyle(.catbird(.primary, size: .md, isLoading: true))
     HStack {
       CatbirdIconButton(systemImage: "plus", label: Text(verbatim: "Add"), size: .sm) {}

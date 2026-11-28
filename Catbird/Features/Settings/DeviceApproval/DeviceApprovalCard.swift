@@ -19,47 +19,48 @@ struct DeviceApprovalCard: View {
   }
 
   private func card(_ copy: DeviceApprovalCopy) -> some View {
-    VStack(alignment: .leading, spacing: 10) {
+    VStack(alignment: .leading, spacing: Space.md) {
       Label {
         Text(copy.title)
-          .font(.headline)
+          .appFont(AppTextRole.headline)
       } icon: {
         Image(systemName: copy.tone == .blocking ? "lock.shield" : "person.badge.shield.checkmark")
-          .foregroundStyle(copy.tone == .blocking ? Color.orange : Color.blue)
+          .foregroundStyle(copy.tone == .blocking ? Color.orange : Color.accentColor)
       }
 
       Text(copy.message)
-        .font(.subheadline)
+        .appFont(AppTextRole.subheadline)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
 
       if let failure = model.failure {
         Text(failure.message)
-          .font(.footnote)
+          .appFont(AppTextRole.footnote)
           .foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
           .accessibilityIdentifier("device-approval-failure")
         if let detail = failure.detail {
           DisclosureGroup("Details for Support") {
             Text(verbatim: detail)
-              .font(.caption2.monospaced())
+              .appFont(AppTextRole.caption2)
+              .monospaced()
               .textSelection(.enabled)
               .frame(maxWidth: .infinity, alignment: .leading)
           }
-          .font(.footnote)
+          .appFont(AppTextRole.footnote)
           .foregroundStyle(.secondary)
           .accessibilityIdentifier("device-approval-failure-details")
         }
       }
 
-      HStack(spacing: 10) {
-        Button(Self.label(for: copy.primary)) { perform(copy.primary) }
-          .buttonStyle(.borderedProminent)
+      HStack(spacing: Space.sm) {
+        Button(Self.label(for: copy.primary)) { self.perform(copy.primary) }
+          .buttonStyle(.catbird(.primary, size: .sm))
           .disabled(model.isWorking)
           .accessibilityIdentifier("device-approval-primary")
         if let secondary = copy.secondary {
-          Button(Self.label(for: secondary)) { perform(secondary) }
-            .buttonStyle(.bordered)
+          Button(Self.label(for: secondary)) { self.perform(secondary) }
+            .buttonStyle(.catbird(.tonal, size: .sm))
             .disabled(model.isWorking)
             .accessibilityIdentifier("device-approval-secondary")
         }
@@ -69,9 +70,9 @@ struct DeviceApprovalCard: View {
         }
       }
     }
-    .padding(14)
+    .padding(Space.md)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 14))
+    .catbirdCard(copy.tone == .blocking ? .notice(.warning) : .embed)
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier("device-approval-card")
   }

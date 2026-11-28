@@ -833,7 +833,7 @@ enum CopilotReferencePresentation {
         case .search(let query): description = "Search: \(query)"
         case .smartFilter(_, let name): description = "Smart filter: \(name)"
         }
-        return String(render(description, sources: []).characters)
+        return String(render(description, sources: [], markdown: false).characters)
             .components(separatedBy: .newlines).joined(separator: " ")
     }
 
@@ -851,8 +851,10 @@ enum CopilotReferencePresentation {
     }
     private static let renderCache = NSCache<NSString, AttributedStringBox>()
 
-    static func render(_ text: String, sources: [CopilotSource]) -> AttributedString {
-        let cacheKey = "\(text.hashValue)_\(sources.count)" as NSString
+    static func render(_ text: String, sources: [CopilotSource], markdown: Bool = true) -> AttributedString {
+        let cacheKey = "\(text.hashValue)_\(sources.count)_\(markdown)" as NSString
+        // Answers carry inline Markdown; labels built from post text stay literal.
+        let plain: (String) -> AttributedString = markdown ? AskCatbirdMarkdown.inline : ChatTextRenderer.attributedString(for:)
         if let cached = renderCache.object(forKey: cacheKey) {
             return cached.value
         }
@@ -860,7 +862,7 @@ enum CopilotReferencePresentation {
         // Match a complete Markdown reference before bare identifiers so neither
         // its brackets nor a duplicate destination leak into the visible text.
         guard let pattern = referencePattern else {
-            let rendered = ChatTextRenderer.attributedString(for: text)
+            let rendered = plain(text)
             renderCache.setObject(AttributedStringBox(rendered), forKey: cacheKey)
             return rendered
         }
@@ -877,7 +879,7 @@ enum CopilotReferencePresentation {
             guard !raw.isEmpty else { continue }
             let referenceEnd = markdownURI != nil || webLabel != nil ? range.upperBound
                 : text.index(range.lowerBound, offsetBy: raw.count)
-            result.append(ChatTextRenderer.attributedString(for: String(text[cursor..<range.lowerBound])))
+            result.append(plain(String(text[cursor..<range.lowerBound])))
             let markdownLabel = Range(match.range(at: 1), in: text).map { String(text[$0]) } ?? ""
             let source = sources.first { $0.uri == raw } ?? CopilotSource(label: markdownLabel, uri: raw)
             var reference = AttributedString(label(for: source))
@@ -903,7 +905,7 @@ enum CopilotReferencePresentation {
             result.append(reference)
             cursor = referenceEnd
         }
-        result.append(ChatTextRenderer.attributedString(for: String(text[cursor...])))
+        result.append(plain(String(text[cursor...])))
         renderCache.setObject(AttributedStringBox(result), forKey: cacheKey)
         return result
     }

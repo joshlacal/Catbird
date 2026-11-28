@@ -3,7 +3,8 @@ import Petrel
 
 /// A view that displays a "[...] View full thread" separator in collapsed thread mode
 struct ThreadSeparatorView: View {
-  
+  @Environment(\.catbirdTheme) private var theme
+
   // MARK: - Properties
   
   let hiddenPostCount: Int
@@ -71,10 +72,10 @@ struct ThreadSeparatorView: View {
     HStack {
       Text("View full thread", comment: "Button in a collapsed thread row to expand the full conversation.")
         .appFont(AppTextRole.subheadline)
-        .foregroundColor(Color("AccentTextColor"))
+        .foregroundStyle(theme.accentText)
       Image(systemName: "chevron.forward")
         .appFont(AppTextRole.subheadline)
-        .foregroundColor(.accentColor)
+        .foregroundStyle(theme.accentText)
     }
     .padding(.vertical, 8)
     .frame(maxWidth: .infinity, alignment: .leading)

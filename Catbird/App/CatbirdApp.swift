@@ -107,9 +107,33 @@ private var isMessagesNavigationUIFixture: Bool {
   #endif
 }
 
+private var isCatbirdKitGallery: Bool {
+  #if DEBUG
+  UserDefaults.standard.bool(forKey: "CatbirdKitGallery")
+  #else
+  false
+  #endif
+}
+
+private var isCatbirdCatalog: Bool {
+  #if DEBUG
+  CatbirdCatalogLaunchConfig.isRequested
+  #else
+  false
+  #endif
+}
+
+private var isFixtureGallery: Bool {
+  #if DEBUG
+  ProcessInfo.processInfo.arguments.contains("--fixture-gallery")
+  #else
+  false
+  #endif
+}
+
 /// Any presentation fixture: skips account bootstrap, MLS lifecycle, and URL handling.
 private var isPresentationUIFixture: Bool {
-  isConversationKindUIFixture || isEncryptedRequestUIFixture || isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture || isSettingsUIFixture || isOnboardingIntelUIFixture || isSceneRuntimeUIFixture || isInlineReplyUIFixture || isMessagesViewportUIFixture || isSearchTabReselectionUIFixture || isMessagesNavigationUIFixture || isModerationUIFixture || isFeedPerformanceFixture
+  isCatbirdKitGallery || isCatbirdCatalog || isFixtureGallery || isConversationKindUIFixture || isEncryptedRequestUIFixture || isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture || isSettingsUIFixture || isOnboardingIntelUIFixture || isSceneRuntimeUIFixture || isInlineReplyUIFixture || isMessagesViewportUIFixture || isSearchTabReselectionUIFixture || isMessagesNavigationUIFixture || isModerationUIFixture || isFeedPerformanceFixture
 }
 
 private var isOnboardingIntelUIFixture: Bool {
@@ -891,7 +915,7 @@ struct CatbirdApp: App {
 
   // MARK: - Initialization
   init() {
-    if !shouldDeferSupportTipStartupForLocalTesting {
+    if !shouldDeferSupportTipStartupForLocalTesting && !isCatbirdCatalog && !isCatbirdKitGallery && !isFixtureGallery {
       SupportTipStore.shared.start()
     }
     if isPresentationUIFixture { return }
@@ -1126,8 +1150,14 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
       ) { scene in
         Group {
           #if DEBUG
-          if UserDefaults.standard.bool(forKey: "CatbirdKitGallery") {
+          if isCatbirdCatalog {
+            CatbirdCatalogHost()
+          } else if isCatbirdKitGallery {
             CatbirdKitGallery()
+          } else if isFixtureGallery {
+            FixtureGalleryView()
+          } else if UserDefaults.standard.bool(forKey: "BirdSpinnerPlayground") {
+            BirdSpinnerPlayground()
           } else if ConversationKindUIFixture.isRequested {
             ConversationKindUIFixture()
           } else if isEncryptedRequestUIFixture {
@@ -1225,6 +1255,15 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
 
 private extension CatbirdApp {
   func handleSceneURL(_ url: URL, in scene: SceneWindowState) {
+  #if DEBUG
+  if isCatbirdCatalog,
+     let scheme = url.scheme?.lowercased(),
+     (scheme == "blue.catbird" || scheme == "catbird"),
+     url.host?.lowercased() == "catalog" {
+    CatbirdCatalogRouteInbox.enqueue(url)
+    return
+  }
+  #endif
   guard !isPresentationUIFixture else { return }
   logger.info(
     "Received URL for scheme=\(url.scheme ?? "none", privacy: .public) host=\(url.host ?? "none", privacy: .public) path=\(url.path, privacy: .public)"
@@ -1796,24 +1835,21 @@ private extension CatbirdApp {
     return authenticated  // Show content only if biometric passed
   }
 
-  /// Picks up exactly where the launch screen leaves off: the same 250pt
-  /// `LaunchIcon`, centered on the system background, with progress below it,
-  /// so a cold launch doesn't jump to a smaller icon.
+  /// Picks up where the static launch screen leaves off: the same 250pt
+  /// bird, centered on the system background, now as the live 3D spinner,
+  /// with a caption below it.
   struct LoadingView: View {
     private static let launchIconSize: CGFloat = 250
 
     var body: some View {
-      Image("LaunchIcon")
-        .accessibilityHidden(true)
+      BirdSpinner(size: Self.launchIconSize)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay {
-          VStack(spacing: 12) {
-            ProgressView()
-            Text("Loading…")
-              .font(.subheadline)
-              .foregroundStyle(.secondary)
-          }
-          .offset(y: Self.launchIconSize / 2 + 48)
+          Text("Loading…")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .accessibilityHidden(true)
+            .offset(y: Self.launchIconSize / 2 + 32)
         }
         .background(Color.systemBackground)
     }
@@ -3016,11 +3052,8 @@ struct BiometricAuthenticationOverlay: View {
         .platformIgnoresSafeArea()
       
       VStack(spacing: 30) {
-        // App icon
-        Image("CatbirdIcon")
-          .resizable()
-          .frame(width: 80, height: 80)
-          .cornerRadius(16)
+        BirdSpinner(size: 96)
+          .accessibilityHidden(true)
         
         Text("Catbird Locked")
           .font(.largeTitle)

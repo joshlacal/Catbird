@@ -133,6 +133,7 @@ actor MLSProfileEnricher {
     if !staleOrMissing.isEmpty {
       logger.info("Ensuring profiles for \(staleOrMissing.count) uncached/stale participants")
       await fetchProfilesInBatches(staleOrMissing, using: client, currentUserDID: currentUserDID)
+      await fillUnresolvedFromPersistedCache(staleOrMissing)
     }
 
     var resolved: [String: ProfileData] = [:]
@@ -168,6 +169,29 @@ actor MLSProfileEnricher {
   }
 
   // MARK: - Private Methods
+
+  /// When the network fetch left a participant unresolved (offline, a failed
+  /// request, an appview that omitted them), fall back to the profile last
+  /// persisted for notifications so a chat shows a known name instead of "?".
+  /// No fetch timestamp is recorded, so the next call still refetches.
+  private func fillUnresolvedFromPersistedCache(_ canonicalDIDs: [String]) async {
+    var unresolved: [String] = []
+    for did in canonicalDIDs where profileCache[did] == nil {
+      if let cached = await ProfileCacheDatabase.shared.read(did: did), profileCache[did] == nil {
+        profileCache[did] = ProfileData(
+          did: cached.did,
+          handle: cached.handle,
+          displayName: cached.displayName,
+          avatarURL: cached.avatarURL.flatMap(URL.init(string:))
+        )
+      } else if profileCache[did] == nil {
+        unresolved.append(did)
+      }
+    }
+    if !unresolved.isEmpty {
+      logger.notice("No profile available for \(unresolved.count) participant(s): \(unresolved.joined(separator: ","), privacy: .private)")
+    }
+  }
 
   private func extractUniqueDIDs(from conversations: [MLSConversationViewModel]) -> [String] {
     var uniqueDIDs = Set<String>()
@@ -243,8 +267,13 @@ actor MLSProfileEnricher {
       }
       
       // Persist to MLS member table for NSE rich notifications
-      if let userDID = currentUserDID, !profilesToPersist.isEmpty {
-        await persistProfilesToDatabase(profilesToPersist, currentUserDID: userDID)
+      // Off the caller's path: an open chat waits on ensureProfiles to show
+      // names, and must not also wait on these App Group writes.
+      if currentUserDID != nil, !profilesToPersist.isEmpty {
+        let pendingWrites = profilesToPersist
+        Task.detached(priority: .utility) {
+          await Self.persistProfilesToDatabase(pendingWrites)
+        }
       }
 
       // Keep a copy of each member's picture where the notification extension can read it,
@@ -265,11 +294,9 @@ actor MLSProfileEnricher {
   }
   
   /// Persist profiles to the shared App Group profile cache so NSE can resolve display names.
-  private func persistProfilesToDatabase(
-    _ profiles: [(did: String, handle: String?, displayName: String?, avatarURL: String?)],
-    currentUserDID: String
+  private static func persistProfilesToDatabase(
+    _ profiles: [(did: String, handle: String?, displayName: String?, avatarURL: String?)]
   ) async {
-    _ = currentUserDID
     for profile in profiles {
       guard let handle = profile.handle, !handle.isEmpty else { continue }
       await ProfileCacheDatabase.shared.write(

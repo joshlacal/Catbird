@@ -24,12 +24,16 @@ extension View {
     
     /// Apply primary background color based on theme
     func themedPrimaryBackground(_ themeManager: ThemeManager, appSettings: AppSettings) -> some View {
-        self.background { 
+        self.background {
             ThemedContrastAwareBackground(
                 themeManager: themeManager,
                 appSettings: appSettings
             ) { colorScheme, increaseContrast in
-                Color.dynamicBackground(themeManager, currentScheme: colorScheme)
+                CatbirdThemeColors.resolve(
+                    themeManager: themeManager,
+                    colorScheme: colorScheme,
+                    contrast: increaseContrast ? .increased : .standard
+                ).surface(.canvas)
             }
             .ignoresSafeArea(.all)
         }
@@ -39,12 +43,16 @@ extension View {
     
     /// Apply secondary background color based on theme
     func themedSecondaryBackground(_ themeManager: ThemeManager, appSettings: AppSettings) -> some View {
-        self.background { 
+        self.background {
             ThemedContrastAwareBackground(
                 themeManager: themeManager,
                 appSettings: appSettings
             ) { colorScheme, increaseContrast in
-                Color.dynamicSecondaryBackground(themeManager, currentScheme: colorScheme)
+                CatbirdThemeColors.resolve(
+                    themeManager: themeManager,
+                    colorScheme: colorScheme,
+                    contrast: increaseContrast ? .increased : .standard
+                ).surface(.card)
             }
             .ignoresSafeArea(.all)
         }
@@ -54,9 +62,12 @@ extension View {
     
     /// Apply tertiary background color based on theme
     func themedTertiaryBackground(_ themeManager: ThemeManager, appSettings: AppSettings) -> some View {
-        self.background { 
+        self.background {
             ThemedBackground(themeManager: themeManager) { colorScheme in
-                Color.dynamicTertiaryBackground(themeManager, currentScheme: colorScheme)
+                CatbirdThemeColors.resolve(
+                    themeManager: themeManager,
+                    colorScheme: colorScheme
+                ).surface(.elevated)
             }
             .ignoresSafeArea(.all)
         }
@@ -66,7 +77,7 @@ extension View {
     
     /// Apply elevated background color based on theme (for cards and modals)
     func themedElevatedBackground(_ themeManager: ThemeManager, elevation: ColorElevation = .low, appSettings: AppSettings) -> some View {
-        self.background { 
+        self.background {
             ThemedElevatedBackground(themeManager: themeManager, elevation: elevation)
         }
     }
@@ -75,9 +86,12 @@ extension View {
     
     /// Apply grouped background color based on theme (for list backgrounds)
     func themedGroupedBackground(_ themeManager: ThemeManager, appSettings: AppSettings) -> some View {
-        self.background { 
+        self.background {
             ThemedBackground(themeManager: themeManager) { colorScheme in
-                Color.dynamicGroupedBackground(themeManager, currentScheme: colorScheme)
+                CatbirdThemeColors.resolve(
+                    themeManager: themeManager,
+                    colorScheme: colorScheme
+                ).surface(.grouped)
             }
             .ignoresSafeArea(.all)
         }
@@ -104,7 +118,11 @@ extension View {
                     themeManager: themeManager,
                     appSettings: appSettings
                 ) { colorScheme, increaseContrast in
-                    Color.dynamicSeparator(themeManager, currentScheme: colorScheme, increaseContrast: increaseContrast)
+                    CatbirdThemeColors.resolve(
+                        themeManager: themeManager,
+                        colorScheme: colorScheme,
+                        contrast: increaseContrast ? .increased : .standard
+                    ).border(.subtle)
                 }
             }
     }
@@ -117,7 +135,10 @@ extension View {
     func themedListRowBackground(_ themeManager: ThemeManager, appSettings: AppSettings) -> some View {
         self.listRowBackground(
             ThemedBackground(themeManager: themeManager) { colorScheme in
-                Color.dynamicBackground(themeManager, currentScheme: colorScheme)
+                CatbirdThemeColors.resolve(
+                    themeManager: themeManager,
+                    colorScheme: colorScheme
+                ).surface(.canvas)
             }
             .ignoresSafeArea(.all)
         )
@@ -132,11 +153,13 @@ extension View {
         self
             .background {
                 ThemedBackground(themeManager: themeManager) { colorScheme in
-                    Color.elevatedBackground(themeManager, elevation: .modal, currentScheme: colorScheme)
+                    CatbirdThemeColors.resolve(
+                        themeManager: themeManager,
+                        colorScheme: colorScheme
+                    ).surface(.elevated)
                 }
                 .ignoresSafeArea(.all)
             }
-            // Themed sheet background without redundant transition
     }
 }
 
@@ -165,22 +188,22 @@ struct ContrastAwareBackgroundModifier: ViewModifier {
 
 struct AdaptiveContrastModifier: ViewModifier {
     let themeManager: ThemeManager
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityDifferentiateWithoutColor) var differentiateWithoutColor
     @Environment(\.accessibilityReduceTransparency) var reduceTransparency
     
     func body(content: Content) -> some View {
+        let theme = CatbirdThemeColors.resolve(themeManager: themeManager, colorScheme: colorScheme)
         content
-            .if(themeManager.isUsingTrueBlack && differentiateWithoutColor) { view in
+            .if(theme.isTrueBlack && differentiateWithoutColor) { view in
                 view.overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                    Radius.sm.shape
+                        .strokeBorder(theme.border(.prominent), lineWidth: 1)
                 )
             }
             .if(reduceTransparency) { view in
                 view.background {
-                    ThemedBackground(themeManager: themeManager) { colorScheme in
-                        Color.dynamicBackground(themeManager, currentScheme: colorScheme)
-                    }
+                    theme.surface(.canvas)
                 }
             }
     }
@@ -200,9 +223,6 @@ struct ThemedNavigationBarModifier: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
     
     func body(content: Content) -> some View {
-        let isDarkMode = themeManager.isDarkMode(for: colorScheme)
-        let isBlackMode = themeManager.isUsingTrueBlack
-        
         content
             .onAppear {
                 applyNavigationBarTheme()
@@ -216,26 +236,10 @@ struct ThemedNavigationBarModifier: ViewModifier {
             .onChange(of: themeManager.colorSchemeOverride) {
                 applyNavigationBarTheme()
             }
-            // Apply toolbar background based on theme using SwiftUI approach
-//            .toolbarBackground(
-//                isDarkMode ? (isBlackMode ? Color.black : themeManager.dimBackgroundColor) : Color(.systemBackground),
-//                for: .navigationBar
-//            )
-//            .toolbarBackground(
-//                isDarkMode ? (isBlackMode ? Color.black : themeManager.dimBackgroundColor) : Color(.systemBackground),
-//                for: .tabBar
-//            )
-//            .toolbarBackgroundVisibility(.visible, for: .tabBar)
-//            .toolbarColorScheme(themeManager.effectiveColorScheme(for: colorScheme), for: .navigationBar)
-//            .toolbarColorScheme(themeManager.effectiveColorScheme(for: colorScheme), for: .tabBar)
-            // Ensure tab bar icons use the correct tint color
-            .tint(isDarkMode && isBlackMode ? Color.blue.opacity(0.9) : nil)
     }
     
     private func applyNavigationBarTheme() {
-        // Navigation bar theme is already applied by ThemeManager.applyTheme()
-        // No need to call forceUpdateNavigationBars() here to avoid infinite loops
-        // The toolbar modifiers above handle the appearance for this specific view
+        // Navigation bar typography and accent tint are owned by ThemeManager.applyTheme().
     }
 }
 
@@ -276,7 +280,7 @@ struct ThemedElevatedBackground: View {
                 // Add subtle elevation effect in dark modes
                 Group {
                     if themeManager.isDarkMode(for: colorScheme) && !themeManager.isUsingTrueBlack {
-                        RoundedRectangle(cornerRadius: 0)
+                        Rectangle()
                             .stroke(
                                 LinearGradient(
                                     colors: [
@@ -298,50 +302,24 @@ struct ThemedGlassBackground: View {
     let themeManager: ThemeManager
     let intensity: GlassIntensity
     @Environment(\.colorScheme) private var colorScheme
-    
-    var body: some View {
-        if themeManager.isUsingTrueBlack && themeManager.isDarkMode(for: colorScheme) {
-            // True black mode: Use solid backgrounds with hierarchy
-            ZStack {
-                Color.elevatedBackground(themeManager, elevation: intensity.elevationLevel, currentScheme: colorScheme)
-                
-                // Add subtle inner glow for depth
-                if intensity != .subtle {
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(
-                            LinearGradient(
-                                colors: [
-                                    Color(white: 0.2, opacity: 0.1),
-                                    Color(white: 0.1, opacity: 0.05)
-                                ],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            ),
-                            lineWidth: 1
-                        )
-                        .blendMode(.plusLighter)
-                }
-            }
-        } else {
-            // Dim mode: Use translucent backgrounds with blur
-            ZStack {
-                // Base blur material with proper background
-                switch intensity {
-                case .subtle:
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                case .medium:
-                    Rectangle()
-                        .fill(.thinMaterial)
-                case .strong:
-                    Rectangle()
-                        .fill(.regularMaterial)
-                }
-                
-                // Overlay tint
-                Color.glassOverlay(themeManager, intensity: intensity, currentScheme: colorScheme)
-            }
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
+    private var glassStyle: CatbirdGlassStyle {
+        switch intensity {
+        case .subtle: return .clear
+        case .medium, .strong: return .regular
         }
+    }
+
+    var body: some View {
+        let resolvedTheme = CatbirdThemeColors.resolve(
+            themeManager: themeManager,
+            colorScheme: colorScheme,
+            contrast: colorSchemeContrast
+        )
+        Color.clear
+            .catbirdGlass(glassStyle, in: Rectangle())
+            .environment(\.catbirdTheme, resolvedTheme)
     }
 }
 
@@ -360,13 +338,20 @@ struct ThemedTextModifier: ViewModifier {
     
     func body(content: Content) -> some View {
         let increaseContrast = accessibilityContrast == .increased || (appSettings?.effectiveIncreaseContrast ?? false)
-        let color = Color.dynamicText(
-            themeManager,
-            style: style,
-            currentScheme: colorScheme,
-            increaseContrast: increaseContrast
+        let theme = CatbirdThemeColors.resolve(
+            themeManager: themeManager,
+            colorScheme: colorScheme,
+            contrast: increaseContrast ? .increased : .standard
         )
-        content.foregroundStyle(color)
+        let role: CatbirdTextRoleColor = {
+            switch style {
+            case .primary: return .primary
+            case .secondary: return .secondary
+            case .tertiary: return .tertiary
+            case .disabled: return .disabled
+            }
+        }()
+        content.foregroundStyle(theme.text(role))
     }
 }
 
@@ -416,14 +401,14 @@ struct ThemedBorderView: View {
     
     var body: some View {
         let increaseContrast = accessibilityContrast == .increased || (appSettings?.effectiveIncreaseContrast ?? false)
-        RoundedRectangle(cornerRadius: 12)
-            .stroke(
-                Color.dynamicBorder(
-                    themeManager, 
-                    isProminent: isProminent, 
-                    currentScheme: colorScheme, 
-                    increaseContrast: increaseContrast
-                ), 
+        let theme = CatbirdThemeColors.resolve(
+            themeManager: themeManager,
+            colorScheme: colorScheme,
+            contrast: increaseContrast ? .increased : .standard
+        )
+        Radius.md.shape
+            .strokeBorder(
+                theme.border(isProminent ? .prominent : .subtle),
                 lineWidth: increaseContrast ? 2 : 1
             )
     }
@@ -468,7 +453,9 @@ extension Material {
   VStack(spacing: 20) {
     ThemedBackground(
       themeManager: themeManager,
-      colorProvider: { _ in .blue }
+      colorProvider: { scheme in
+        CatbirdThemeColors.resolve(themeManager: themeManager, colorScheme: scheme).accentChrome
+      }
     )
     .frame(height: 100)
     .overlay(Text(verbatim: "Themed Background"))

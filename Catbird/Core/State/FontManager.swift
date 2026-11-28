@@ -1,9 +1,15 @@
 import SwiftUI
 import CoreText
+#if canImport(CatbirdBrand)
+import CatbirdBrand
+#endif
 #if os(iOS)
 import UIKit
 #elseif os(macOS)
 import AppKit
+#endif
+#if DEBUG
+import os
 #endif
 import OSLog
 
@@ -29,6 +35,11 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     /// Note: This may be called before UIApplication.shared is available (e.g., during App.init()).
     /// In that case, we return a safe default.
     static var current: CrossPlatformContentSizeCategory {
+        #if DEBUG
+        if let overridden = FontManager.overrideCrossPlatformContentSizeCategory {
+            return overridden
+        }
+        #endif
         #if os(iOS)
         // Guard against early access before UIApplication is available
         // During CatbirdApp.init(), UIApplication.shared may not exist yet
@@ -173,6 +184,7 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
         let weight: Font.Weight
         let design: Font.Design
         let width: CGFloat
+        let monospacedDigits: Bool
         let textStyle: Font.TextStyle?
         let sizeScale: CGFloat
         let maxContentSizeCategory: CrossPlatformContentSizeCategory?
@@ -208,10 +220,12 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     private func resolvedFont(
         baseSize: CGFloat,
         weight: Font.Weight,
+        design designOverride: Font.Design? = nil,
         width: CGFloat = 100,
+        monospacedDigits: Bool = false,
         relativeTo textStyle: Font.TextStyle?
     ) -> Font {
-        let design = fontDesign
+        let design = designOverride ?? fontDesign
         let scale = sizeScale
         let maxCategory = dynamicTypeLimit
         let key = FontCacheKey(
@@ -219,6 +233,7 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
             weight: weight,
             design: design,
             width: width,
+            monospacedDigits: monospacedDigits,
             textStyle: textStyle,
             sizeScale: scale,
             maxContentSizeCategory: maxCategory,
@@ -230,7 +245,7 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
         }
 
         let scaledSize = baseSize * scale
-        let font: Font
+        var font: Font
         if width != 100 {
             font = Font.customSystemFont(
                 size: scaledSize,
@@ -249,6 +264,9 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
             )
         } else {
             font = Font.system(size: scaledSize, weight: weight, design: design)
+        }
+        if monospacedDigits {
+            font = font.monospacedDigit()
         }
 
         fontCacheLock.withLock {
@@ -767,11 +785,45 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
         return max(0, fontSize * (lineSpacingMultiplier - 1.0))
     }
 
-    /// The spacing `appFont(_: AppTextRole)` gives every text role: the body size's spacing scaled
-    /// by the line-spacing multiplier.
+    /// The spacing `appFont(_: AppTextRole)` gives body text: the body size's spacing scaled
+    /// by the line-spacing multiplier. Retained for native feed parity tests.
     var roleLineSpacing: CGFloat {
         getLineSpacing(for: Typography.Size.body) * lineSpacingMultiplier
     }
+
+    /// Per-role line spacing scaled by the role's base point size and line-spacing multiplier.
+    func lineSpacing(for role: AppTextRole) -> CGFloat {
+        getLineSpacing(for: role.baseSize) * lineSpacingMultiplier
+    }
+
+    #if DEBUG
+    private static let overrideCategoryLock = OSAllocatedUnfairLock<CrossPlatformContentSizeCategory?>(initialState: nil)
+
+    /// Cross-platform Dynamic Type override for deterministic snapshot/catalog harnesses.
+    static var overrideCrossPlatformContentSizeCategory: CrossPlatformContentSizeCategory? {
+        get { overrideCategoryLock.withLock { $0 } }
+        set { overrideCategoryLock.withLock { $0 = newValue } }
+    }
+
+    #if os(iOS)
+    /// Deterministic Dynamic Type override for snapshot/catalog harnesses.
+    /// Read before `UIApplication.shared.preferredContentSizeCategory`.
+    static var overrideContentSizeCategory: UIContentSizeCategory? {
+        get { overrideCategoryLock.withLock { $0?.uiContentSizeCategory } }
+        set {
+            overrideCategoryLock.withLock { state in
+                state = newValue.map { CrossPlatformContentSizeCategory(from: $0) }
+            }
+        }
+    }
+    #endif
+
+    /// Re-reads the active content size category (honoring `overrideContentSizeCategory`),
+    /// invalidating the memo cache so tests can toggle Dynamic Type mid-process.
+    func refreshContentSizeCategory() {
+        currentContentSizeCategory = CrossPlatformContentSizeCategory.current
+    }
+    #endif
 
     // MARK: - Line Height
 
@@ -838,40 +890,142 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     
     /// Get appropriate font for a specific text role, optionally with an explicit weight
     func fontForTextRole(_ role: AppTextRole, weight: Font.Weight? = nil) -> Font {
-        let (size, defaultWeight, textStyle): (CGFloat, Font.Weight, Font.TextStyle) = {
-            switch role {
-            case .largeTitle: return (Typography.Size.largeTitle, .bold, .largeTitle)
-            case .title1: return (Typography.Size.title1, .bold, .title)
-            case .title2: return (Typography.Size.title2, .semibold, .title2)
-            case .title3: return (Typography.Size.title3, .semibold, .title3)
-            case .headline: return (Typography.Size.headline, .semibold, .headline)
-            case .subheadline: return (Typography.Size.subheadline, .medium, .subheadline)
-            case .body: return (Typography.Size.body, .regular, .body)
-            case .callout: return (Typography.Size.callout, .regular, .callout)
-            case .footnote: return (Typography.Size.footnote, .regular, .footnote)
-            case .caption: return (Typography.Size.caption, .medium, .caption)
-            case .caption2: return (Typography.Size.micro, .medium, .caption2)
-            }
-        }()
-        return accessibleFont(size: size, weight: weight ?? defaultWeight, relativeTo: textStyle)
+        let resolvedWeight = weight ?? role.weightOverride ?? role.defaultWeight
+        return resolvedFont(
+            baseSize: role.baseSize,
+            weight: resolvedWeight,
+            design: role.designOverride,
+            width: role.widthPercent,
+            monospacedDigits: role.usesMonospacedDigits,
+            relativeTo: dynamicTypeEnabled ? role.textStyle : nil
+        )
     }
 }
 
-// MARK: - Text Role Enum
+// MARK: - Text Role Value Type
 
-enum AppTextRole: CaseIterable {
-    case largeTitle
-    case title1
-    case title2
-    case title3
-    case headline
-    case subheadline
-    case body
-    case callout
-    case footnote
-    case caption
-    case caption2
-    
+/// Semantic typography role carrying optional weight, design, and monospaced-digits overrides.
+/// Value type so `.weight(_:)`, `.design(_:)`, `.monospaced()`, and `.monospacedDigits()` actually apply
+/// while staying 100% source-compatible with `AppTextRole.*` static dot syntax.
+struct AppTextRole: Hashable, Sendable, CaseIterable {
+    enum Kind: String, CaseIterable, Hashable, Sendable {
+        case display
+        case largeTitle
+        case title1
+        case title2
+        case title3
+        case headline
+        case subheadline
+        case body
+        case callout
+        case footnote
+        case caption
+        case caption2
+    }
+
+    let kind: Kind
+    let weightOverride: Font.Weight?
+    let designOverride: Font.Design?
+    let usesMonospacedDigits: Bool
+
+    init(
+        kind: Kind,
+        weightOverride: Font.Weight? = nil,
+        designOverride: Font.Design? = nil,
+        usesMonospacedDigits: Bool = false
+    ) {
+        self.kind = kind
+        self.weightOverride = weightOverride
+        self.designOverride = designOverride
+        self.usesMonospacedDigits = usesMonospacedDigits
+    }
+
+    /// Brand display role (`Brand.type.display`: 125% width, 800/heavy weight, -0.02em tracking).
+    static let display = AppTextRole(kind: .display)
+    static let largeTitle = AppTextRole(kind: .largeTitle)
+    static let title1 = AppTextRole(kind: .title1)
+    static let title2 = AppTextRole(kind: .title2)
+    static let title3 = AppTextRole(kind: .title3)
+    static let headline = AppTextRole(kind: .headline)
+    static let subheadline = AppTextRole(kind: .subheadline)
+    static let body = AppTextRole(kind: .body)
+    static let callout = AppTextRole(kind: .callout)
+    static let footnote = AppTextRole(kind: .footnote)
+    static let caption = AppTextRole(kind: .caption)
+    static let caption2 = AppTextRole(kind: .caption2)
+
+    static var allCases: [AppTextRole] {
+        Kind.allCases.map { AppTextRole(kind: $0) }
+    }
+
+    #if canImport(CatbirdBrand)
+    private static let displayBaseSize = CGFloat(Brand.type.display.minSize)
+    private static let displayWidthPercent = CGFloat(Brand.type.display.widthPercent)
+    private static let displayTrackingEm = CGFloat(Brand.type.display.trackingEm)
+    #else
+    private static let displayBaseSize: CGFloat = 34
+    private static let displayWidthPercent: CGFloat = 125
+    private static let displayTrackingEm: CGFloat = -0.02
+    #endif
+
+    var baseSize: CGFloat {
+        switch kind {
+        case .display: return Self.displayBaseSize
+        case .largeTitle: return Typography.Size.largeTitle
+        case .title1: return Typography.Size.title1
+        case .title2: return Typography.Size.title2
+        case .title3: return Typography.Size.title3
+        case .headline: return Typography.Size.headline
+        case .subheadline: return Typography.Size.subheadline
+        case .body: return Typography.Size.body
+        case .callout: return Typography.Size.callout
+        case .footnote: return Typography.Size.footnote
+        case .caption: return Typography.Size.caption
+        case .caption2: return Typography.Size.micro
+        }
+    }
+
+    var defaultWeight: Font.Weight {
+        switch kind {
+        case .display: return .heavy
+        case .largeTitle, .title1: return .bold
+        case .title2, .title3, .headline: return .semibold
+        case .subheadline: return .medium
+        case .body, .callout, .footnote: return .regular
+        case .caption, .caption2: return .medium
+        }
+    }
+
+    var textStyle: Font.TextStyle {
+        switch kind {
+        case .display, .largeTitle: return .largeTitle
+        case .title1: return .title
+        case .title2: return .title2
+        case .title3: return .title3
+        case .headline: return .headline
+        case .subheadline: return .subheadline
+        case .body: return .body
+        case .callout: return .callout
+        case .footnote: return .footnote
+        case .caption: return .caption
+        case .caption2: return .caption2
+        }
+    }
+
+    var widthPercent: CGFloat {
+        switch kind {
+        case .display: return Self.displayWidthPercent
+        default: return 100
+        }
+    }
+
+    var trackingEm: CGFloat {
+        switch kind {
+        case .display: return Self.displayTrackingEm
+        default: return 0
+        }
+    }
+
     /// Convert SwiftUI Font.TextStyle to AppTextRole
     static func from(_ textStyle: Font.TextStyle) -> AppTextRole {
         switch textStyle {
@@ -889,20 +1043,40 @@ enum AppTextRole: CaseIterable {
         @unknown default: return .body
         }
     }
-    
-    /// Handle .weight() calls on AppTextRole (return self for compatibility)
+
+    /// Override the font weight for this role.
     func weight(_ weight: Font.Weight) -> AppTextRole {
-        return self
+        AppTextRole(
+            kind: kind,
+            weightOverride: weight,
+            designOverride: designOverride,
+            usesMonospacedDigits: usesMonospacedDigits
+        )
     }
-    
-    /// Handle .design() calls on AppTextRole (return self for compatibility)  
+
+    /// Override the font design for this role.
     func design(_ design: Font.Design) -> AppTextRole {
-        return self
+        AppTextRole(
+            kind: kind,
+            weightOverride: weightOverride,
+            designOverride: design,
+            usesMonospacedDigits: usesMonospacedDigits
+        )
     }
-    
-    /// Handle .monospaced() calls on AppTextRole (return self for compatibility)
+
+    /// Render this role using the monospaced system design.
     func monospaced() -> AppTextRole {
-        return self
+        design(.monospaced)
+    }
+
+    /// Enable tabular/monospaced digits for numeric counters and timestamps.
+    func monospacedDigits(_ enabled: Bool = true) -> AppTextRole {
+        AppTextRole(
+            kind: kind,
+            weightOverride: weightOverride,
+            designOverride: designOverride,
+            usesMonospacedDigits: enabled
+        )
     }
 }
 
@@ -915,36 +1089,31 @@ struct AppFontModifier: ViewModifier {
     let role: AppTextRole
 
     func body(content: Content) -> some View {
-        let baseWeight = getBaseWeight(for: role)
+        let baseWeight = role.weightOverride ?? role.defaultWeight
         let bold = legibilityWeight == .bold || fontManager.effectiveBoldText
         let adjustedWeight = adjustFontWeight(baseWeight: baseWeight, boldText: bold)
-        
+        let roleTracking = resolvedTracking()
+
         content
             .font(fontManager.fontForTextRole(role, weight: adjustedWeight))
-            .lineSpacing(fontManager.roleLineSpacing)
-            .tracking(fontManager.letterSpacingValue)
+            .lineSpacing(fontManager.lineSpacing(for: role))
+            .tracking(roleTracking)
             .modifier(AppLineHeightModifier(factor: fontManager.lineHeightFactor))
     }
-    
-    
-    private func getBaseWeight(for role: AppTextRole) -> Font.Weight {
-        switch role {
-        case .largeTitle, .title1:
-            return .bold
-        case .title2, .title3, .headline:
-            return .semibold
-        case .subheadline:
-            return .medium
-        case .body, .callout, .footnote:
-            return .regular
-        case .caption, .caption2:
-            return .medium
+
+    private func resolvedTracking() -> CGFloat {
+        guard role.trackingEm != 0 else {
+            return fontManager.letterSpacingValue
         }
+        let emTracking = role.trackingEm * fontManager.scaledSize(role.baseSize)
+        return fontManager.letterSpacing == "normal"
+            ? emTracking
+            : emTracking + fontManager.letterSpacingValue
     }
-    
+
     private func adjustFontWeight(baseWeight: Font.Weight, boldText: Bool) -> Font.Weight {
         guard boldText else { return baseWeight }
-        
+
         // Increase font weight for accessibility
         switch baseWeight {
         case .ultraLight: return .light
@@ -1031,9 +1200,18 @@ extension EnvironmentValues {
 // MARK: - View Extensions
 
 extension View {
-    /// Apply app font based on text role
-    func appFont(_ role: AppTextRole) -> some View {
-        self.modifier(AppFontModifier(role: role))
+    /// Apply app font based on text role, with optional weight, design, and tabular-digit overrides.
+    func appFont(
+        _ role: AppTextRole,
+        weight: Font.Weight? = nil,
+        design: Font.Design? = nil,
+        monospacedDigits: Bool = false
+    ) -> some View {
+        var resolved = role
+        if let weight { resolved = resolved.weight(weight) }
+        if let design { resolved = resolved.design(design) }
+        if monospacedDigits { resolved = resolved.monospacedDigits(true) }
+        return self.modifier(AppFontModifier(role: resolved))
     }
     
     /// Apply custom app font with specific parameters

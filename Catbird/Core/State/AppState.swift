@@ -3458,6 +3458,10 @@ final class AppState {
                 }
                 guard targetSeq > 0 else { continue }
                 do {
+                    try await coordinator.markConversationRead(
+                        conversationId: row.conversationId,
+                        readThroughSeq: targetSeq
+                    )
                     try await coordinator.acknowledgeEntriesUpTo(
                         conversationId: row.conversationId,
                         upToSeq: targetSeq

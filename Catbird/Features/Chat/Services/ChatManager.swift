@@ -137,7 +137,9 @@ final class ChatManager: StateInvalidationSubscriber {
   private(set) var client: ATProtoClient?  // Made private(set) for controlled access
 
   // Conversations and messages
-  var conversations: [ChatBskyConvoDefs.ConvoView] = []
+  var conversations: [ChatBskyConvoDefs.ConvoView] = [] {
+    didSet { bumpRevisionsForMemberChanges(from: oldValue) }
+  }
   // Store original message views for reactions and other advanced features
   private(set) var originalMessagesMap: [String: [String: ChatBskyConvoDefs.MessageView]] = [:]  // [convoId: [messageId: MessageView]]
   private(set) var systemMessagesMap: [String: [String: ChatBskyConvoDefs.SystemMessageView]] = [:]  // [convoId: [messageId: SystemMessageView]]
@@ -204,6 +206,20 @@ final class ChatManager: StateInvalidationSubscriber {
 
   func bumpConversationRevision(for convoId: String) {
     convoRevisions[convoId, default: 0] &+= 1
+  }
+
+  /// An open chat builds sender names and avatars from its conversation's
+  /// `members`, but only rebuilds when this conversation's revision moves.
+  /// List loads and convo refreshes replace `conversations` without bumping it,
+  /// so a chat opened before its conversation (or its members' profiles)
+  /// arrived kept showing blank names until the next message. Bump every
+  /// conversation whose members appeared or changed.
+  private func bumpRevisionsForMemberChanges(from oldConversations: [ChatBskyConvoDefs.ConvoView]) {
+    let oldMembers = Dictionary(
+      oldConversations.map { ($0.id, $0.members) }, uniquingKeysWith: { first, _ in first })
+    for convo in conversations where oldMembers[convo.id] != convo.members {
+      bumpConversationRevision(for: convo.id)
+    }
   }
 
   // Profile member signature cache (P145)
