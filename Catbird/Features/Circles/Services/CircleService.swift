@@ -1272,61 +1272,20 @@ actor CircleService {
     try await transport.updatePreferences(space: space, muted: muted)
   }
 
-  /// Reports a post. For an encrypted Circle the report discloses the post
-  /// key and its media keys (spec §8; the sheet shows the consent first),
-  /// taken from this account's opened copy of `(post, cid)`.
+  /// Files a report with the Circle AppView. The app reports Circle posts to
+  /// Catbird's moderation service instead (`CircleReportView`); this path
+  /// stays for the AppView endpoint. It never discloses decryption keys:
+  /// Catbird's operator does not read Circle content.
   func report(
     post: ATProtocolURI, circle: CircleSummary, reason: CircleReportReason, details: String? = nil, cid: CID? = nil
   ) async throws -> UUID {
-    try await report(
-      post: post, circle: circle, reason: reason, details: details, cid: cid.map { CIDString($0) }
-    )
+    try await transport.report(post: post, circle: circle, reason: reason, details: details)
   }
 
   func report(
     post: ATProtocolURI, circle: CircleSummary, reason: CircleReportReason, details: String? = nil, cid: CIDString?
   ) async throws -> UUID {
-    guard circle.isEncrypted else {
-      return try await transport.report(post: post, circle: circle, reason: reason, details: details)
-    }
-    let disclosure = try await reportDisclosure(post: post, cid: cid, circle: circle)
-    return try await transport.report(
-      post: post, circle: circle, reason: reason, details: details, disclosure: disclosure
-    )
-  }
-
-  /// The §8 disclosure for an encrypted post this account opened.
-  func reportDisclosure(post: ATProtocolURI, cid: CID?, circle: CircleSummary) async throws -> CircleReportDisclosure {
-    try await reportDisclosure(post: post, cid: cid.map { CIDString($0) }, circle: circle)
-  }
-
-  func reportDisclosure(post: ATProtocolURI, cid: CIDString?, circle: CircleSummary) async throws -> CircleReportDisclosure {
-    guard let cid, let accountDID = await activeAccountDID(),
-          let payload = feedCache.openedPayload(
-            accountDID: accountDID.didString(), space: circle.uri, uri: post, cid: cid
-          ),
-          payload.keyVersion > 0
-    else {
-      throw CircleError.invalidParameter(CircleReportCopy.notOpened)
-    }
-    guard payload.media.count <= CirclePostSealer.maxAttachments else {
-      throw CircleError.invalidParameter("Too many attachments to report.")
-    }
-    guard let circleKey = try await requireKeyManager().key(circle: circle, version: payload.keyVersion) else {
-      throw CircleError.encryptionUnavailable
-    }
-    let postKey: Data
-    do {
-      postKey = try await requireCrypto().postKey(
-        circleKey: circleKey, circleID: circle.circleId.description, postURI: post.uriString()
-      )
-    } catch {
-      throw CircleError.encryptionUnavailable
-    }
-    return CircleReportDisclosure(
-      postKey: postKey,
-      media: payload.media.map { .init(cid: $0.cid.string, key: $0.key, iv: $0.iv) }
-    )
+    try await transport.report(post: post, circle: circle, reason: reason, details: details)
   }
 
   private func activeAccountDID() async -> DID? {

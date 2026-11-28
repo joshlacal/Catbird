@@ -2,8 +2,11 @@ import SwiftUI
 import Petrel
 import PetrelCatbird
 
-/// Private moderation report sheet for Circle posts.
-/// Reports route exclusively through the proxied AppView endpoint (`blue.catbird.circle.reportRecord`) and never fall back to public moderation.
+/// Report sheet for Circle posts.
+/// Reports go through the reporter's PDS to Catbird's moderation service
+/// (`CatbirdModeration`), never to Bluesky. Like Signal, they carry ids only:
+/// the post's URI and CID, the Circle, and a reason category. No post text,
+/// media, keys or free text.
 struct CircleReportView: View {
   let post: AppBskyFeedDefs.PostView
   let circle: CircleSummary
@@ -13,7 +16,6 @@ struct CircleReportView: View {
   @Environment(\.dismiss) private var dismiss
 
   @State private var selectedReason: CircleReportReason = .abuse
-  @State private var details: String = ""
   @State private var isSubmitting: Bool = false
   @State private var errorMessage: String?
   @State private var isSubmitted: Bool = false
@@ -23,19 +25,13 @@ struct CircleReportView: View {
       Form {
         Section {
           Text(
-            "Report a post in Circle \"\(circle.name)\". Reports are reviewed privately and do not create public moderation labels.",
-            comment: "Explanation at the top of the Circle post report sheet — %1$@ is the Circle name."
+            "Report a post in Circle \"\(circle.name)\".",
+            comment: "Heading at the top of the Circle post report sheet — %1$@ is the Circle name."
           )
             .appFont(AppTextRole.subheadline)
+          Label(CatbirdModeration.whatIsShared, systemImage: "lock")
+            .appFont(AppTextRole.subheadline)
             .foregroundStyle(.secondary)
-        }
-
-        if circle.isEncrypted {
-          Section {
-            Label(CircleReportCopy.disclosureConsent, systemImage: "key")
-              .appFont(AppTextRole.subheadline)
-              .accessibilityLabel(CircleReportCopy.disclosureConsent)
-          }
         }
 
         Section("Reason") {
@@ -46,13 +42,6 @@ struct CircleReportView: View {
           }
           .pickerStyle(.inline)
           .accessibilityLabel("Report reason")
-        }
-
-        Section("Additional Details (Optional)") {
-          TextField("Describe the issue...", text: $details, axis: .vertical)
-            .lineLimit(3...6)
-            .accessibilityLabel("Additional report details")
-            .accessibilityHint("Optional explanation of the violation")
         }
 
         if let errorMessage {
@@ -88,7 +77,7 @@ struct CircleReportView: View {
             .fontWeight(.semibold)
             .disabled(isSubmitting)
             .accessibilityLabel("Submit report")
-            .accessibilityHint("Submits private report to Circle moderators")
+            .accessibilityHint("Sends the report to Catbird")
           }
         }
       }
@@ -97,29 +86,48 @@ struct CircleReportView: View {
           dismiss()
         }
       } message: {
-        Text("Thank you. This post has been reported privately for Circle review.")
+        Text(CatbirdModeration.sent)
       }
     }
   }
 
   private func submitReport() {
+    guard let serviceDID = CatbirdModeration.serviceDID else {
+      errorMessage = CatbirdModeration.notConfigured
+      return
+    }
+    guard let client = appState.atProtoClient else {
+      errorMessage = String(
+        localized: "Sign in to report this post.",
+        comment: "Error message when attempting to report a Circle post while signed out"
+      )
+      return
+    }
     isSubmitting = true
     errorMessage = nil
 
-    let reportingService = service ?? appState.circleService
+    let subject = CatbirdModeration.circlePostSubject(uri: post.uri, cid: post.cid)
+    let reasonType = CatbirdModeration.reasonType(for: selectedReason)
+    let reason = CatbirdModeration.circleReason(space: circle.uri.uriString())
 
     Task {
       do {
-        _ = try await reportingService.report(
-          post: post.uri,
-          circle: circle,
-          reason: selectedReason,
-          details: details.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : details,
-          cid: post.cid
+        let sent = try await ReportingService(client: client).submitReport(
+          subject: subject,
+          reasonType: reasonType,
+          reason: reason,
+          labelerDid: serviceDID
         )
         await MainActor.run {
           self.isSubmitting = false
-          self.isSubmitted = true
+          if sent {
+            self.isSubmitted = true
+          } else {
+            self.errorMessage = String(
+              localized: "Couldn’t send the report. Please try again.",
+              comment: "Error message when submitting a Circle report fails"
+            )
+          }
         }
       } catch {
         await MainActor.run {

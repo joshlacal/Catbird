@@ -719,6 +719,10 @@ struct BlockChatSenderSheet: View {
   }
 }
 
+/// Reports an encrypted chat to Catbird's moderation service (Ozone) through
+/// the reporter's PDS. Like Signal, the report names the account, the
+/// conversation and, when one was picked, the message by id, plus a reason
+/// category. It never carries message text and has no free-text box.
 struct MLSReportSpamSheet: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
@@ -726,49 +730,39 @@ struct MLSReportSpamSheet: View {
   let conversationId: String
   let reportedDid: String
   let reportedDisplayName: String
+  /// The reported message, when the report started from a message.
+  var messageId: String? = nil
   var apiClient: MLSAPIClient? = nil
   var client: ATProtoClient? = nil
 
-  @State private var reasonText = ""
   @State private var isSubmitting = false
   @State private var errorMessage: String?
 
   var body: some View {
     NavigationStack {
-      Form {
-        Section("Account") {
-          Text(reportedDisplayName)
-        }
-        Section("Details (Optional)") {
-          TextEditor(text: $reasonText)
-            .frame(minHeight: 90)
-        }
-        if let errorMessage {
-          Section {
-            Text(errorMessage)
-              .foregroundStyle(.red)
-              .appFont(AppTextRole.footnote)
-          }
-        }
-      }
-      .navigationTitle("Report Account")
-      .toolbarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel") { dismiss() }
-        }
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Submit") {
-            Task { await submitReport() }
-          }
-          .disabled(isSubmitting)
-        }
-      }
+      ChatReportFormView(
+        title: messageId == nil
+          ? String(localized: "Report Account", comment: "Navigation title for reporting an encrypted chat participant")
+          : String(localized: "Report Message", comment: "Navigation title for reporting an encrypted chat message"),
+        subtitle: reportedDisplayName,
+        isSubmitting: isSubmitting,
+        errorMessage: errorMessage,
+        onSubmit: { reason, _ in
+          Task { await submitReport(reason: reason) }
+        },
+        onCancel: { dismiss() },
+        showsDetails: false,
+        footnote: CatbirdModeration.whatIsShared
+      )
     }
   }
 
   @MainActor
-  private func submitReport() async {
+  private func submitReport(reason: ComAtprotoModerationDefs.ReasonType) async {
+    guard let serviceDID = CatbirdModeration.serviceDID else {
+      errorMessage = CatbirdModeration.notConfigured
+      return
+    }
     guard let activeClient = apiClient?.client ?? client ?? appState.atProtoClient else {
       errorMessage = String(localized: "Reporting is unavailable while offline.", comment: "Error when submitting a moderation report without a network client")
       return
@@ -776,13 +770,20 @@ struct MLSReportSpamSheet: View {
     isSubmitting = true
     defer { isSubmitting = false }
     do {
-      let subjectRepo = ComAtprotoAdminDefs.RepoRef(did: try DID(didString: reportedDid))
-      let input = ComAtprotoModerationCreateReport.Input(
-        reasonType: ComAtprotoModerationDefs.ReasonType(rawValue: "com.atproto.moderation.defs#reasonSpam"),
-        reason: reasonText.isEmpty ? "Encrypted chat report (\(conversationId.prefix(8)))" : reasonText,
-        subject: .comAtprotoAdminDefsRepoRef(subjectRepo)
+      let subject = try CatbirdModeration.chatSubject(
+        senderDID: reportedDid, conversationID: conversationId, messageID: messageId
       )
-      _ = try await activeClient.com.atproto.moderation.createReport(input: input)
+      let sent = try await ReportingService(client: activeClient).submitReport(
+        subject: subject,
+        reasonType: reason,
+        reason: CatbirdModeration.chatReason,
+        labelerDid: serviceDID
+      )
+      guard sent else {
+        errorMessage = String(localized: "Couldn’t send the report. Please try again.", comment: "Error message when submitting a chat report fails")
+        return
+      }
+      appState.toastManager.show(ToastItem(message: CatbirdModeration.sent))
       dismiss()
     } catch {
       errorMessage = error.localizedDescription

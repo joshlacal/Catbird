@@ -597,73 +597,25 @@ private actor UploadRecorder {
 }
 
 
-// MARK: - I8: encrypted-report disclosure
+// MARK: - Reports carry no keys (Signal model)
 
-@Suite("Circle report disclosure (I8)", .serialized)
+@Suite("Circle reports disclose nothing", .serialized)
 struct CircleReportDisclosureTests {
-  private func openedPayload(media: Int) throws -> CircleOpenedPayload {
-    let refs = (0..<media).map { index in
-      CircleMediaKeyRef(
-        cid: CID.fromDAGCBOR(Data("m\(index)".utf8)), key: Data(repeating: UInt8(index + 1), count: 32),
-        iv: Data(repeating: 0x0F, count: 12), sha256: String(repeating: "00", count: 32),
-        mimeType: "image/jpeg", alt: nil, width: nil, height: nil
-      )
-    }
-    let post = AppBskyFeedPost(
-      text: "x", entities: nil, facets: nil, reply: nil, embed: nil, langs: nil, labels: nil, tags: nil,
-      createdAt: ATProtocolDate(date: Date())
-    )
-    return CircleOpenedPayload(post: post, media: refs, keyVersion: 1)
-  }
-
-  @Test("An encrypted report carries the post key and each attachment's key and IV")
-  func encryptedReportCarriesKeys() async throws {
+  @Test("An encrypted Circle report carries no post key or media keys, even for a post opened here")
+  func encryptedReportCarriesNoKeys() async throws {
     let h = SealHarness()
     try await h.publishKeys(1...1)
     _ = try await h.manager.refreshKeys(circle: SealFixtures.circle())
     let uri = try h.postURI("3l7reportaaa1")
     let cid = CID.fromDAGCBOR(Data("report-envelope-1".utf8))
-    let account = SealFixtures.author.didString()
-    let cache = CircleFeedCache.shared
-    cache.storeOpened(
-      try openedPayload(media: 2), accountDID: account, space: SealFixtures.circle().uri, uri: uri, cid: cid,
-      generation: cache.generation(accountDID: account)
-    )
 
     _ = try await h.service.report(post: uri, circle: SealFixtures.circle(), reason: .abuse, cid: cid)
 
     let report = try #require(await h.transport.reports.first)
-    let disclosure = try #require(report.disclosure)
-    #expect(disclosure.postKey == Data(repeating: 0, count: 32))
-    #expect(disclosure.media.count == 2)
-    #expect(disclosure.media.first?.cid == CID.fromDAGCBOR(Data("m0".utf8)).string)
-    #expect(disclosure.media.first?.key == Data(repeating: 1, count: 32))
-    #expect(disclosure.media.first?.iv == Data(repeating: 0x0F, count: 12))
-    #expect(CircleReportCopy.disclosureConsent == "Reporting shares this post's decryption key with Catbird moderators.")
-
-    // The wire input carries them as disclosedPostKey / disclosedMedia.
-    let input = try GatewayCircleTransport.reportInput(
-      post: uri, circle: SealFixtures.circle(), reason: .abuse, details: nil, disclosure: disclosure
-    )
-    #expect(input.disclosedPostKey?.data == disclosure.postKey)
-    #expect(input.disclosedMedia?.count == 2)
-    #expect(input.disclosedMedia?.first?.iv.data == Data(repeating: 0x0F, count: 12))
+    #expect(report.disclosure == nil)
   }
 
-  @Test("An encrypted post never opened here is not reported without its key")
-  func unopenedEncryptedReportIsRefused() async throws {
-    let h = SealHarness()
-    try await h.publishKeys(1...1)
-    let uri = try h.postURI("3l7reportaaa2")
-    await #expect(throws: CircleError.invalidParameter(CircleReportCopy.notOpened)) {
-      _ = try await h.service.report(
-        post: uri, circle: SealFixtures.circle(), reason: .spam, cid: CID.fromDAGCBOR(Data("never".utf8))
-      )
-    }
-    #expect(await h.transport.reports.isEmpty)
-  }
-
-  @Test("A plaintext report is unchanged: no disclosure fields")
+  @Test("A plaintext report has no disclosure fields")
   func plaintextReportIsUnchanged() async throws {
     let h = SealHarness()
     let plain = CircleSummary(
@@ -681,6 +633,20 @@ struct CircleReportDisclosureTests {
     )
     #expect(input.disclosedPostKey == nil)
     #expect(input.disclosedMedia == nil)
+  }
+
+  @Test("Circle reports to Catbird's moderation service name ids only")
+  func ozoneSubjectIsIdsOnly() throws {
+    let uri = try ATProtocolURI(uriString: "at://did:plc:bob/blue.catbird.circle.post/3l7postaaaaa")
+    let cid = CIDString(CID.fromDAGCBOR(Data("post".utf8)))
+    guard case .comAtprotoRepoStrongRef(let ref) = CatbirdModeration.circlePostSubject(uri: uri, cid: cid) else {
+      Issue.record("a Circle post is reported by strong ref")
+      return
+    }
+    #expect(ref.uri.uriString() == uri.uriString())
+    #expect(CatbirdModeration.circleReason(space: "at://did:plc:alice/space/blue.catbird.circle/3c")
+      == "Catbird Circle report. Circle: at://did:plc:alice/space/blue.catbird.circle/3c")
+    #expect(CatbirdModeration.reasonType(for: .abuse).rawValue == "com.atproto.moderation.defs#reasonRude")
   }
 }
 
