@@ -1,70 +1,61 @@
 import SwiftUI
 
-/// Standardized error state view for consistent error handling across the app
+/// Standardized error state view for consistent error handling across the app.
 struct ErrorStateView: View {
-  // MARK: - Properties
-    @Environment(AppState.self) private var appState
-    @Environment(\.colorScheme) private var colorScheme
-  
+  @Environment(\.catbirdTheme) private var theme
   let error: Error
   let context: String
   let retryAction: (() -> Void)?
-  
-  // MARK: - Initialization
-  
+
   init(error: Error, context: String = "", retryAction: (() -> Void)? = nil) {
     self.error = error
     self.context = context
     self.retryAction = retryAction
   }
-  
-  // MARK: - Body
-  
+
   var body: some View {
-    VStack(spacing: 16) {
-      // Error icon
+    VStack(spacing: Space.lg) {
       Image(systemName: "exclamationmark.triangle.fill")
-        .appFont(size: 48)
-        .foregroundColor(.orange)
-      
-      // Error title
+        .catbirdSymbol(.hero)
+        .foregroundStyle(theme.semantic(.warning))
+        .accessibilityHidden(true)
+
       Text("Something went wrong")
         .appFont(AppTextRole.title2)
-        .fontWeight(.semibold)
+        .foregroundStyle(theme.text(.primary))
         .multilineTextAlignment(.center)
-      
-      // Error message
-      VStack(spacing: 8) {
+        .accessibilityAddTraits(.isHeader)
+
+      VStack(spacing: Space.sm) {
         if !context.isEmpty {
           Text(context)
-                            .appFont(AppTextRole.body)
-            .foregroundColor(.secondary)
+            .appFont(AppTextRole.body)
+            .foregroundStyle(theme.text(.secondary))
             .multilineTextAlignment(.center)
         }
-        
+
         Text(errorDescription)
           .appFont(AppTextRole.caption)
-          .foregroundColor(.secondary)
+          .foregroundStyle(theme.text(.secondary))
           .multilineTextAlignment(.center)
-          .padding(.horizontal)
+          .padding(.horizontal, Space.lg)
       }
-      
-      // Retry button
-      if let retryAction = retryAction {
+
+      if let retryAction {
         Button("Try Again") {
           retryAction()
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
+        .buttonStyle(.catbird(.primary, size: .lg))
       }
     }
-    .padding(24)
+    .padding(Space.xxl)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
+    .background(theme.surface(.canvas))
+    .accessibilityElement(children: .contain)
   }
-  
+
   // MARK: - Computed Properties
-  
+
   /// Plain-language explanation of the failure. Raw error text (HTTP codes, decoder
   /// messages) stays in the logs of whoever produced the error.
   private var errorDescription: String {
@@ -97,67 +88,65 @@ struct ErrorStateView: View {
   }
 }
 
-/// Network state indicator for showing connection status
+/// Network state indicator for showing connection status.
 struct NetworkStateIndicator: View {
   // MARK: - Properties
-  
+  @Environment(\.catbirdTheme) private var theme
   @State private var isConnected: Bool = true
   @State private var isRetrying: Bool = false
-  
+
   let onRetry: (() -> Void)?
-  
+
   // MARK: - Body
-  
+
   var body: some View {
     if !isConnected {
-      HStack(spacing: 12) {
+      HStack(spacing: Space.md) {
         Image(systemName: "wifi.slash")
-          .foregroundColor(.red)
-        
+          .catbirdSymbol(.row)
+          .foregroundStyle(theme.semantic(.danger))
+          .accessibilityHidden(true)
+
         Text("No internet connection")
           .appFont(AppTextRole.subheadline)
-          .foregroundColor(.primary)
-        
-        Spacer()
-        
-        if let onRetry = onRetry {
+          .foregroundStyle(theme.text(.primary))
+
+        Spacer(minLength: Space.sm)
+
+        if let onRetry {
           Button("Retry") {
-            isRetrying = true
+            self.isRetrying = true
             onRetry()
-            
-            // Reset retry state after a delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-              isRetrying = false
+            Task { @MainActor in
+              try? await Task.sleep(for: .seconds(1))
+              self.isRetrying = false
             }
           }
           .disabled(isRetrying)
-          .buttonStyle(.bordered)
-          .controlSize(.small)
+          .buttonStyle(.catbird(.tonal, size: .sm, isLoading: isRetrying))
         }
       }
-      .padding(.horizontal, 16)
-      .padding(.vertical, 8)
-      .background(Color.systemGray6)
-      .cornerRadius(8)
-      .padding(.horizontal)
+      .padding(.horizontal, Space.lg)
+      .padding(.vertical, Space.sm)
+      .catbirdCard(.embed, radius: .sm)
+      .padding(.horizontal, Space.screenMargin)
     }
   }
 }
 
-/// Content unavailable view for empty states
+/// Content unavailable view for empty states.
 struct ContentUnavailableStateView: View {
   // MARK: - Properties
-    @Environment(AppState.self) private var appState
-    @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.catbirdTheme) private var theme
 
   let title: String
   let description: String
   let systemImage: String
   let actionTitle: String?
   let action: (() -> Void)?
-  
+
   // MARK: - Initialization
-  
+
   init(
     title: String,
     description: String,
@@ -171,81 +160,75 @@ struct ContentUnavailableStateView: View {
     self.actionTitle = actionTitle
     self.action = action
   }
-  
+
   // MARK: - Body
-  
+
   var body: some View {
-    VStack(spacing: 20) {
-      // Icon
+    VStack(spacing: Space.xl) {
       Image(systemName: systemImage)
-        .appFont(size: 64)
-        .foregroundColor(.secondary)
-        .accessibilityHidden(true) // Decorative, don't read to screen readers
-      
-      // Text content
-      VStack(spacing: 8) {
+        .appFont(size: AvatarSize.xl, weight: .medium, relativeTo: .largeTitle)
+        .foregroundStyle(theme.text(.secondary))
+        .accessibilityHidden(true)
+
+      VStack(spacing: Space.sm) {
         Text(title)
           .appFont(AppTextRole.title2)
-          .fontWeight(.semibold)
+          .foregroundStyle(theme.text(.primary))
           .multilineTextAlignment(.center)
           .accessibilityAddTraits(.isHeader)
-        
+
         Text(description)
           .appFont(AppTextRole.body)
-          .foregroundColor(.secondary)
+          .foregroundStyle(theme.text(.secondary))
           .multilineTextAlignment(.center)
           .lineLimit(nil)
       }
-      
-      // Action button
-      if let actionTitle = actionTitle, let action = action {
+
+      if let actionTitle, let action {
         Button(actionTitle) {
           action()
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
+        .buttonStyle(.catbird(.primary, size: .lg))
       }
     }
-    .padding(32)
+    .padding(Space.x3l)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
+    .background(theme.surface(.canvas))
     .accessibilityElement(children: .contain)
   }
 }
 
-/// Loading state view with customizable message
+/// Loading state view with customizable message.
 struct LoadingStateView: View {
   // MARK: - Properties
-  
-    @Environment(AppState.self) private var appState
-    @Environment(\.colorScheme) private var colorScheme
-let message: String
+  @Environment(\.catbirdTheme) private var theme
+  let message: String
   let showProgress: Bool
-  
+
   // MARK: - Initialization
-  
+
   init(message: String = String(localized: "Loading…", comment: "Default loading state message."), showProgress: Bool = true) {
     self.message = message
     self.showProgress = showProgress
   }
-  
+
   // MARK: - Body
-  
+
   var body: some View {
-    VStack(spacing: 16) {
+    VStack(spacing: Space.lg) {
       if showProgress {
         ProgressView()
           .scaleEffect(1.2)
       }
-      
+
       Text(message)
-                        .appFont(AppTextRole.body)
-        .foregroundColor(.secondary)
+        .appFont(AppTextRole.body)
+        .foregroundStyle(theme.text(.secondary))
         .multilineTextAlignment(.center)
     }
-    .padding(24)
+    .padding(Space.xxl)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
+    .background(theme.surface(.canvas))
   }
 }
 
@@ -260,7 +243,7 @@ extension ErrorStateView {
       retryAction: retryAction
     )
   }
-  
+
   /// Create an error view for authentication errors
   static func authenticationError(retryAction: (() -> Void)? = nil) -> ErrorStateView {
     ErrorStateView(
@@ -283,7 +266,7 @@ extension ContentUnavailableStateView {
     let title = hasName
       ? String(localized: "No Posts in \(feedName)", comment: "Empty state title for a named feed — variable is feed name.")
       : String(localized: "No Posts Yet", comment: "Empty state title when a feed has no posts.")
-    if let onExplore = onExplore {
+    if let onExplore {
       return ContentUnavailableStateView(
         title: title,
         description: String(localized: "This feed doesn’t have any posts yet. Try refreshing, or explore other feeds to discover new posts.", comment: "Empty feed state description with explore option."),
@@ -292,7 +275,7 @@ extension ContentUnavailableStateView {
       ) {
         onExplore()
       }
-    } else if let onRefresh = onRefresh {
+    } else if let onRefresh {
       return ContentUnavailableStateView(
         title: title,
         description: String(localized: "This feed doesn’t have any posts yet. Pull down to refresh or try again later.", comment: "Empty feed state description with refresh option."),
@@ -309,7 +292,7 @@ extension ContentUnavailableStateView {
       )
     }
   }
-  
+
   /// Create an empty following feed state view
   static func emptyFollowingFeed(onDiscover: @escaping () -> Void) -> ContentUnavailableStateView {
     ContentUnavailableStateView(
@@ -321,7 +304,7 @@ extension ContentUnavailableStateView {
       onDiscover()
     }
   }
-  
+
   /// Create a content filtered state view
   static func contentFiltered(onAdjustFilters: @escaping () -> Void) -> ContentUnavailableStateView {
     ContentUnavailableStateView(
@@ -333,7 +316,7 @@ extension ContentUnavailableStateView {
       onAdjustFilters()
     }
   }
-  
+
   /// Create a network error state view for feeds
   static func feedNetworkError(onRetry: @escaping () -> Void) -> ContentUnavailableStateView {
     ContentUnavailableStateView(
@@ -353,7 +336,7 @@ enum NetworkError: LocalizedError {
   case connectionFailed
   case requestTimeout
   case serverError(Int)
-  
+
   var errorDescription: String? {
     switch self {
     case .connectionFailed:
@@ -370,47 +353,34 @@ enum AuthenticationError: LocalizedError {
   case sessionExpired
   case invalidCredentials
   case accountSuspended
-  
+
   var errorDescription: String? {
     switch self {
-    case .sessionExpired:
-      return String(localized: "Your session has expired", comment: "Auth error description when session expires.")
-    case .invalidCredentials:
-      return String(localized: "Invalid username or password", comment: "Auth error description for invalid login credentials.")
-    case .accountSuspended:
-      return String(localized: "Your account has been suspended", comment: "Auth error description when account is suspended.")
+    case .sessionExpired: String(localized: "Your session has expired", comment: "Auth error description when session expires.")
+    case .invalidCredentials: String(localized: "Invalid username or password", comment: "Auth error description for invalid login credentials.")
+    case .accountSuspended: String(localized: "Your account has been suspended", comment: "Auth error description when account is suspended.")
     }
   }
-  
+
   var failureReason: String? {
     switch self {
-    case .sessionExpired:
-      return String(localized: "Your authentication session has timed out for security reasons.", comment: "Auth error failure reason when session expires.")
-    case .invalidCredentials:
-      return String(localized: "The username or password you entered is incorrect.", comment: "Auth error failure reason for invalid credentials.")
-    case .accountSuspended:
-      return String(localized: "Your account access has been restricted due to policy violations.", comment: "Auth error failure reason when account is suspended.")
+    case .sessionExpired: String(localized: "Your authentication session has timed out for security reasons.", comment: "Auth error failure reason when session expires.")
+    case .invalidCredentials: String(localized: "The username or password you entered is incorrect.", comment: "Auth error failure reason for invalid credentials.")
+    case .accountSuspended: String(localized: "Your account access has been restricted due to policy violations.", comment: "Auth error failure reason when account is suspended.")
     }
   }
-  
+
   var recoverySuggestion: String? {
     switch self {
-    case .sessionExpired:
-      return String(localized: "Please log out and log back in to continue.", comment: "Auth error recovery suggestion when session expires.")
-    case .invalidCredentials:
-      return String(localized: "Please check your username and password and try again.", comment: "Auth error recovery suggestion for invalid credentials.")
-    case .accountSuspended:
-      return String(localized: "Please contact support for assistance with your account.", comment: "Auth error recovery suggestion when account is suspended.")
+    case .sessionExpired: String(localized: "Please log out and log back in to continue.", comment: "Auth error recovery suggestion when session expires.")
+    case .invalidCredentials: String(localized: "Please check your username and password and try again.", comment: "Auth error recovery suggestion for invalid credentials.")
+    case .accountSuspended: String(localized: "Please contact support for assistance with your account.", comment: "Auth error recovery suggestion when account is suspended.")
     }
   }
 }
 
-// MARK: - Preview
-
 #Preview("Error State") {
-  ErrorStateView.networkError {
-    logger.debug("Retry tapped")
-  }
+  ErrorStateView.networkError { logger.debug("Retry tapped") }
 }
 
 #Preview("Content Unavailable") {
@@ -419,9 +389,7 @@ enum AuthenticationError: LocalizedError {
     description: "When you follow people, their posts will appear here.",
     systemImage: "tray",
     actionTitle: "Find People to Follow"
-  ) {
-    logger.debug("Action tapped")
-  }
+  ) { logger.debug("Action tapped") }
 }
 
 #Preview("Loading State") {

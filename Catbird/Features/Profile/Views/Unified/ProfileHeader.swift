@@ -20,6 +20,7 @@ struct ProfileHeader: View {
     let hideAvatar: Bool
     
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.catbirdTheme) private var theme
     @Environment(\.moderationPolicy) private var moderationPolicy
     @Environment(\.displayScale) private var displayScale
 
@@ -726,7 +727,7 @@ struct ProfileHeader: View {
                             .lineLimit(1)
                     }
                     .appFont(AppTextRole.subheadline)
-                    .foregroundStyle(Color("AccentTextColor"))
+                    .foregroundStyle(theme.accentText)
                 }
                 .buttonStyle(.plain)
             }
@@ -943,9 +944,11 @@ struct ProfileHeader: View {
         applyDetectedLinks(in: description, to: attributedBio)
         applyDetectedHandles(in: description, to: attributedBio)
 
+        let effectiveScheme = appState.themeManager.effectiveColorScheme(for: colorScheme)
         return AttributedString(attributedBio).applyingPostBodyLinkAccent(
             highlightLinks: appState.appSettings.highlightLinks,
-            linkStyle: appState.appSettings.linkStyle
+            linkStyle: appState.appSettings.linkStyle,
+            accentColor: appState.themeManager.activeAccentText(for: effectiveScheme)
         )
     }
 
@@ -1057,7 +1060,7 @@ struct ProfileHeader: View {
                 } else {
                     Image(systemName: "message")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Color("AccentTextColor"))
+                        .foregroundStyle(theme.accentText)
                 }
             }
             .frame(width: 18, height: 18)

@@ -47,9 +47,33 @@ swiftc -typecheck -sdk $(xcrun --show-sdk-path --sdk iphonesimulator) \
 swiftc -typecheck -sdk $(xcrun --show-sdk-path --sdk macosx) \
   -target arm64-apple-macos13.0 <file.swift>
 
-# Lint
-swiftlint
+# Lint (strict design-system gate: SwiftLint design rules + SwiftSyntax AST + monotonic budget ratchet)
+./scripts/design_lint.sh
+
+# Fast lint on changed files only (vs main)
+./scripts/design_lint.sh --diff
+
+# Single-file lint (used by editor/agent hooks)
+./scripts/design_lint.sh --file Catbird/Features/<Path>/<File>.swift
+
+# Legacy full style lint (informational)
+swiftlint lint --baseline .swiftlint-baseline.json
 ```
+
+## Design System Contract (Mandatory for All UI Work)
+
+Every SwiftUI, UIKit, and Widget change MUST adhere to Catbird's design system (`Catbird/Core/UI/Kit/`) and pass `./scripts/design_lint.sh` (enforced in CI via `.github/workflows/design-lint.yml`):
+
+- **Tokens (`Core/UI/Kit/CatbirdTokens.swift`)**:
+  - **Spacing**: Strict 4pt grid via `Space.*` (`hairline` 2, `xs` 4, `sm` 8, `md` 12, `lg` 16, `xl` 20, `xxl` 24, `x3l` 32, `x4l` 40, `x5l` 48, `x6l` 64, `screenMargin` 16). Never write raw numeric `.padding(N)`, `VStack/HStack(spacing: N)`, `EdgeInsets`, or off-4pt-grid literals.
+  - **Radii**: Always continuous squircles via `Radius.*` (4 / 8 / 12 / 16 / 24) with `.catbirdClip(.x)` or `Radius.x.shape`. Never use `.cornerRadius(...)`, `.clipShape(.rect(cornerRadius:))`, raw `RoundedRectangle(cornerRadius:)`, or raw UIKit `.layer.cornerRadius = N`.
+  - **Sizes & Motion**: Use `ControlHeight` (32/40/48, `minHitTarget` 44), `AvatarSize` (24/32/40/48/64/96), `Elevation`, and `Motion.*` / `.catbirdAnimation(...)` / `Motion.withAnimation(...)` (Reduce Motion aware). Never use raw `.animation(...)`, `withAnimation(.spring/...)`, or `UIView.animate` without Reduce Motion.
+  - **Legacy banned**: Never introduce new `DesignTokens.*`, `.spacingSM/Base/...`, `.cornerRadiusMD()`, `.designBody()`, or `.buttonStyle(.bordered/.borderedProminent)`.
+- **Kit Components (`Core/UI/Kit/`)**: Reuse `CatbirdButtonStyle` (`.buttonStyle(.catbird(...))`), `CatbirdIconButton`, `FollowButton`, `FeedLibraryButton`, `.catbirdCard(.embed/.panel/.notice(...))`, `CatbirdChip`, `CatbirdBadge`, `CatbirdNotice`, `CompactPostCard`, `CatbirdTextField`, `CatbirdAvatar`, `CatbirdSectionHeader`, `CatbirdHairline`, `CatbirdSheetChrome`, `BirdSpinner`, and `ErrorStateView` instead of hand-rolling duplicates.
+- **Typography**: Use `.appFont(AppTextRole.*)` in SwiftUI and `AppUIFont.font(...)` in UIKit so user font family, scale, line spacing, and Dynamic Type apply everywhere. Never use `.font(.system(...))`, `.font(.body/.headline/...)`, standalone `.fontWeight`/`.bold()` without `.appFont`, or raw `UIFont.systemFont`.
+- **Theme, Color & Liquid Glass**: Use `CatbirdTheme` (`@Environment(\.catbirdTheme)`) / `ThemeColors` semantic surfaces, text, borders, and accents (`accentChrome`, `accentText`, `onAccent`) across Light, Dim, and True Black modes. Never hardcode `Color.blue`/`.blue`/`UIColor.systemBlue`, raw `Color.white`/`Color.black`/`Color(red:/hex:)`, or magic `.opacity(...)`. Use `.catbirdGlass(...)` for glass surfaces (never legacy `.ultraThinMaterial`/`.regularMaterial`/`UIBlurEffect`).
+- **Accessibility**: Every interactive control MUST preserve a ≥44×44pt hit target (`ControlHeight.minHitTarget`), grow cleanly under Dynamic Type AX3, and honor Reduce Transparency & Reduce Motion.
+- **Ratchet Policy**: `.design-lint-budget.json` is strictly monotonic. New files must have **0** violations. If your changes reduce violations in an existing file, run `./scripts/design_lint.sh --write-budget` to lock in the improvement. Any budget ceiling increase requires explicit `DESIGN_DEBT_APPROVED` PR approval + a `docs/DECISIONS.md` entry, and any inline suppression (`// design-lint:ignore <rule> -- reason: <why> (<#issue|DECISIONS.md>)`) must include a reason and reference.
 
 ### Testing
 - **Frameworks**: Swift Testing (`@Test`) preferred for all new tests; XCTest for legacy suites.

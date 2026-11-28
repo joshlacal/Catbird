@@ -33,6 +33,7 @@ enum MLSDirectDraftRoute {
 struct MLSDirectDraftConversationView: View {
   @Environment(AppState.self) private var appState
   @Environment(SceneNavigationContext.self) private var sceneContext
+  @Environment(\.colorScheme) private var colorScheme
 
   let recipientDID: String
   /// Called with the conversation to show once the first message has created it.
@@ -60,14 +61,15 @@ struct MLSDirectDraftConversationView: View {
 
   var body: some View {
     ScrollView {
-      VStack(spacing: 16) {
+      VStack(spacing: Space.lg) {
         profileHeader
         if let capability = recipientCapability, let notice = ChatFailureMessage.text(for: capability) {
           noticeCard(notice) {
             if case .unknown = capability {
               Button("Try again") {
-                Task { await checkRecipient(forceRefresh: true) }
+                Task { await self.checkRecipient(forceRefresh: true) }
               }
+              .buttonStyle(.catbird(.quiet, size: .sm))
               .disabled(isSending)
             }
           }
@@ -75,13 +77,14 @@ struct MLSDirectDraftConversationView: View {
         if let errorMessage {
           noticeCard(errorMessage, isError: waitingConversationID == nil) {
             if let waitingConversationID {
-              Button("Open Chat") { onOpenConversation(waitingConversationID) }
+              Button("Open Chat") { self.onOpenConversation(waitingConversationID) }
+                .buttonStyle(.catbird(.quiet, size: .sm))
             }
           }
         }
       }
-      .padding(.horizontal, 20)
-      .padding(.top, 32)
+      .padding(.horizontal, Space.xl)
+      .padding(.top, Space.x3l)
       .frame(maxWidth: .infinity)
     }
     .scrollDismissesKeyboard(.interactively)
@@ -90,13 +93,13 @@ struct MLSDirectDraftConversationView: View {
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
       ToolbarItem(placement: .principal) {
-        HStack(spacing: 4) {
+        HStack(spacing: Space.xs) {
           Image(systemName: "lock.fill")
-            .font(.caption)
+            .appFont(AppTextRole.caption)
             .foregroundStyle(.green)
             .accessibilityHidden(true)
           Text(title)
-            .font(.headline)
+            .appFont(AppTextRole.headline)
             .lineLimit(1)
         }
         .accessibilityElement(children: .combine)
@@ -123,21 +126,22 @@ struct MLSDirectDraftConversationView: View {
   // MARK: - Header
 
   private var profileHeader: some View {
-    VStack(spacing: 12) {
+    VStack(spacing: Space.md) {
       Button {
-        sceneContext.navigationManager.navigate(
-          to: .profile(recipientDID), in: AppNavigationManager.chatTabIndex)
+        self.sceneContext.navigationManager.navigate(
+          to: .profile(self.recipientDID), in: AppNavigationManager.chatTabIndex)
       } label: {
-        VStack(spacing: 8) {
+        VStack(spacing: Space.sm) {
           AsyncProfileImage(url: recipient?.avatarURL, size: 80, did: recipientDID)
           if let displayName = recipient?.displayName, !displayName.isEmpty {
             Text(displayName)
-              .font(.title3.weight(.semibold))
+              .appFont(AppTextRole.title3)
+              .fontWeight(.semibold)
               .foregroundStyle(.primary)
           }
           if let handle = recipient?.handle, !handle.isEmpty {
             Text(verbatim: "@\(handle)")
-              .font(.subheadline)
+              .appFont(AppTextRole.subheadline)
               .foregroundStyle(.secondary)
           } else if recipient == nil {
             ProgressView()
@@ -156,11 +160,11 @@ struct MLSDirectDraftConversationView: View {
       } icon: {
         Image(systemName: "lock.fill")
       }
-      .font(.footnote)
+      .appFont(AppTextRole.footnote)
       .foregroundStyle(.secondary)
       .multilineTextAlignment(.center)
     }
-    .padding(.bottom, 4)
+    .padding(.bottom, Space.xs)
   }
 
   private func noticeCard<Actions: View>(
@@ -168,23 +172,24 @@ struct MLSDirectDraftConversationView: View {
     isError: Bool = false,
     @ViewBuilder actions: () -> Actions
   ) -> some View {
-    VStack(spacing: 8) {
+    VStack(spacing: Space.sm) {
       Text(text)
-        .font(.footnote)
+        .appFont(AppTextRole.footnote)
         .foregroundStyle(isError ? Color.red : Color.secondary)
         .multilineTextAlignment(.center)
       actions()
-        .font(.footnote.weight(.semibold))
+        .appFont(AppTextRole.footnote)
+        .fontWeight(.semibold)
     }
-    .padding(12)
+    .padding(Space.md)
     .frame(maxWidth: .infinity)
-    .adaptiveGlassEffect(in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    .catbirdCard(isError ? .notice(.error) : .embed)
   }
 
   // MARK: - Composer
 
   private var composer: some View {
-    HStack(alignment: .bottom, spacing: 8) {
+    HStack(alignment: .bottom, spacing: Space.sm) {
       TextField(
         String(localized: "Encrypted message", comment: "Placeholder in the composer of a new encrypted chat"),
         text: $messageText,
@@ -192,32 +197,37 @@ struct MLSDirectDraftConversationView: View {
       )
       .lineLimit(1...6)
       .focused($composerFocused)
-      .padding(.horizontal, 14)
-      .padding(.vertical, 9)
+      .padding(.horizontal, Space.md)
+      .padding(.vertical, Space.sm)
       .background(
-        RoundedRectangle(cornerRadius: 20, style: .continuous)
+        Radius.xl.shape
           .strokeBorder(Color.secondary.opacity(0.3))
       )
       .accessibilityIdentifier("mlsDirectDraft.composer")
 
       Button {
-        Task { await send() }
+        Task { await self.send() }
       } label: {
-        if isSending {
-          ProgressView()
-            .frame(width: 32, height: 32)
-        } else {
-          Image(systemName: "arrow.up.circle.fill")
-            .font(.system(size: 32))
+        Group {
+          if isSending {
+            ProgressView()
+              .frame(width: ControlHeight.sm, height: ControlHeight.sm)
+          } else {
+            Image(systemName: "arrow.up.circle.fill")
+              .appFont(size: 32, weight: .regular, relativeTo: .title)
+          }
         }
+        .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+        .contentShape(Rectangle())
       }
       .disabled(!canSend)
       .accessibilityLabel(Text("Send", comment: "Send button in a new encrypted chat"))
       .accessibilityIdentifier("mlsDirectDraft.send")
     }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 8)
-    .background(.bar)
+    .padding(.horizontal, Space.md)
+    .padding(.vertical, Space.sm)
+    .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
+    .overlay(alignment: .top) { Divider() }
   }
 
   // MARK: - Loading

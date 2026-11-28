@@ -181,9 +181,10 @@ enum NavigationFontConfig {
         let baseWeight: CGFloat = 600.0 // Semibold for titles
         let adjustedWeight = adjustWeightForFontStyle(baseWeight, fontManager: fontManager)
 
-        // Create variations dictionary for title
+        // Create variations dictionary for inline title (100% width per docs/brand/03-typography.md:
+        // extended 125% width is reserved exclusively for the display role on large titles).
         let titleVariations: [Int: Any] = [
-            wdthAxisID: 120,  // Width: 120% (expanded)
+            wdthAxisID: 100,
             wghtAxisID: adjustedWeight,  // Weight: Adjusted based on FontManager
             opszAxisID: Double(scaledSize)  // Optical size matching scaled point size
         ]
@@ -477,12 +478,14 @@ struct DeepNavigationFontModifier: ViewModifier {
 }
 
 extension View {
-    /// Ensures this view's navigation title uses the correct Core Text fonts with width=120
+    /// No-op compatibility modifier; navigation title typography is configured via `NavigationFontConfig`.
+    @available(*, deprecated, message: "No-op; remove call site")
     func ensureNavigationFonts() -> some View {
         self.modifier(NavigationFontModifier())
     }
     
-    /// Ensures fonts are applied for deep navigation contexts (UIKit views, threads, profiles)
+    /// No-op compatibility modifier for deep navigation contexts.
+    @available(*, deprecated, message: "No-op; remove call site")
     func ensureDeepNavigationFonts() -> some View {
         self.modifier(DeepNavigationFontModifier())
     }
@@ -493,11 +496,13 @@ extension View {
 // macOS stubs for SwiftUI modifiers
 extension View {
     /// No-op on macOS
+    @available(*, deprecated, message: "No-op; remove call site")
     func ensureNavigationFonts() -> some View {
         self
     }
     
     /// No-op on macOS
+    @available(*, deprecated, message: "No-op; remove call site")
     func ensureDeepNavigationFonts() -> some View {
         self
     }

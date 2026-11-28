@@ -885,6 +885,7 @@ extension NativeFeedRowCoordinator {
     struct Key: Equatable {
       let schemeOverride: ColorScheme?
       let darkThemeMode: ThemeManager.DarkThemeMode
+      let accentColor: AccentColorOption
       let increaseContrast: Bool
     }
 
@@ -892,7 +893,7 @@ extension NativeFeedRowCoordinator {
     init(themeManager: ThemeManager, increaseContrast: Bool) {
       key = Key(
         schemeOverride: themeManager.colorSchemeOverride, darkThemeMode: themeManager.darkThemeMode,
-        increaseContrast: increaseContrast)
+        accentColor: themeManager.currentAccentColor, increaseContrast: increaseContrast)
       func themed(_ style: TextStyle) -> UIColor {
         let light = UIColor(Color.dynamicText(
           themeManager, style: style, currentScheme: .light, increaseContrast: increaseContrast))
@@ -902,8 +903,12 @@ extension NativeFeedRowCoordinator {
       }
       text = themed(.primary)
       metadata = themed(.secondary)
-      accentLink = UIColor(named: "AccentTextColor") ?? .link
-      tintLink = UIColor(named: "AccentColor") ?? .tintColor
+      let lightAccentText = UIColor(themeManager.activeAccentText(for: .light))
+      let darkAccentText = UIColor(themeManager.activeAccentText(for: .dark))
+      accentLink = UIColor { $0.userInterfaceStyle == .dark ? darkAccentText : lightAccentText }
+      let lightAccentChrome = UIColor(themeManager.activeAccentChrome(for: .light))
+      let darkAccentChrome = UIColor(themeManager.activeAccentChrome(for: .dark))
+      tintLink = UIColor { $0.userInterfaceStyle == .dark ? darkAccentChrome : lightAccentChrome }
     }
 
     static func == (lhs: RowColors, rhs: RowColors) -> Bool { lhs.key == rhs.key }
@@ -926,6 +931,7 @@ extension NativeFeedRowCoordinator {
     let legibilityWeight: UILegibilityWeight
     let colorSchemeOverride: ColorScheme?
     let darkThemeMode: ThemeManager.DarkThemeMode
+    let accentColor: AccentColorOption
 
     @MainActor
     init(appState: AppState, traits: UITraitCollection) {
@@ -942,6 +948,7 @@ extension NativeFeedRowCoordinator {
       legibilityWeight = traits.legibilityWeight
       colorSchemeOverride = appState.themeManager.colorSchemeOverride
       darkThemeMode = appState.themeManager.darkThemeMode
+      accentColor = appState.themeManager.currentAccentColor
     }
   }
 

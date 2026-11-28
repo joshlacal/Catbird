@@ -2,26 +2,26 @@
 //  ToastNotification.swift
 //  Catbird
 //
-//  Toast notification system with Liquid Glass styling
+//  Toast notification system with unified `.catbirdGlass` styling and `CatbirdTheme` tokens.
 //
 
-import SwiftUI
-import OSLog
 import Accessibility
+import OSLog
+import SwiftUI
 
 // MARK: - Toast Model
 
 @Observable
 final class ToastManager {
   private let logger = Logger(subsystem: "blue.catbird", category: "Toast")
-  
+
   var currentToast: ToastItem?
   /// Toast hosts (the root scene content plus any sheet that installs one), in
   /// presentation order. Only the most recently presented host draws the toast,
   /// so a toast raised while a sheet is up appears on the sheet, not behind it.
   private(set) var containerStack: [UUID] = []
   @ObservationIgnored private var dismissTask: Task<Void, Never>?
-  
+
   func show(_ toast: ToastItem) {
     // Re-showing the toast that is already visible just restarts its timer.
     if let current = currentToast,
@@ -31,13 +31,13 @@ final class ToastManager {
       scheduleDismiss(for: current)
       return
     }
-    
+
     logger.debug("🍞 ToastManager.show() called: \(toast.message)")
     currentToast = toast
     scheduleDismiss(for: toast)
     announce(toast.message)
   }
-  
+
   func dismiss() {
     dismissTask?.cancel()
     dismissTask = nil
@@ -62,9 +62,9 @@ final class ToastManager {
     dismissTask = Task { @MainActor in
       // A cancelled sleep means a newer toast (or a manual dismiss) took over.
       guard (try? await Task.sleep(for: .seconds(item.duration))) != nil else { return }
-      if currentToast?.id == item.id {
-        currentToast = nil
-        logger.debug("🍞 Toast auto-dismissed")
+      if self.currentToast?.id == item.id {
+        self.currentToast = nil
+        self.logger.debug("🍞 Toast auto-dismissed")
       }
     }
   }
@@ -83,7 +83,7 @@ struct ToastItem: Identifiable, Equatable {
   let message: String
   let icon: String
   let duration: TimeInterval
-  
+
   init(message: String, icon: String = "checkmark.circle.fill", duration: TimeInterval = 3.0) {
     self.message = message
     self.icon = icon
@@ -97,67 +97,51 @@ struct ToastView: View {
   let toast: ToastItem
   let onDismiss: () -> Void
   @State private var dragOffset: CGFloat = 0
-  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-  
+  @Environment(\.catbirdTheme) private var theme
+
   private let toastMinHeight: CGFloat = 52
-  
+
   var body: some View {
-    HStack(spacing: 12) {
+    HStack(spacing: Space.md) {
       Image(systemName: toast.icon)
-        .appFont(AppTextRole.headline)
-        .foregroundStyle(.white)
+        .catbirdSymbol(.row, weight: .semibold)
+        .foregroundStyle(theme.onAccent)
         .accessibilityHidden(true)
-      
+
       Text(toast.message)
-        .appFont(AppTextRole.subheadline)
-        .fontWeight(.medium)
-        .foregroundStyle(.white)
+        .appFont(AppTextRole.subheadline.weight(.medium))
+        .foregroundStyle(theme.onAccent)
         .lineLimit(3)
         .multilineTextAlignment(.leading)
         .fixedSize(horizontal: false, vertical: true)
     }
-    .padding(.horizontal, 20)
-    .padding(.vertical, 10)
+    .padding(.horizontal, Space.xl)
+    .padding(.vertical, Space.sm)
     .frame(minHeight: toastMinHeight)
-    .background(
-      Group {
-        // Only iOS 26+/macOS 26+ has the real glass effect; older OSes need a visible fallback.
-        if #available(iOS 26.0, macOS 26.0, *) {
-          Color.clear
-        } else if reduceTransparency {
-          Capsule()
-            .fill(Color.accentColor)
-        } else {
-          Capsule()
-            .fill(.ultraThinMaterial)
-            .overlay(
-              Capsule()
-                .fill(Color.accentColor.opacity(0.5))
-            )
-        }
-      }
-    )
-    .clipShape(Capsule())
-    .glassEffectCompatibility(reduceTransparency: reduceTransparency)
-    .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 4)
+    .catbirdGlass(.clear, in: Capsule(style: .continuous), interactive: true, tinted: true)
+    .catbirdElevation(.floating)
     .offset(y: dragOffset)
-    .animation(.spring(response: 0.3, dampingFraction: 0.9), value: dragOffset)
+    .catbirdAnimation(MotionIntent.enter, value: dragOffset)
     .accessibilityElement(children: .combine)
     .accessibilityAddTraits(.isStaticText)
-    .accessibilityAction(named: Text("Dismiss", comment: "Accessibility action to dismiss a toast banner.")) { onDismiss() }
-    .onTapGesture { onDismiss() }
+    .accessibilityAction(named: Text("Dismiss", comment: "Accessibility action to dismiss a toast banner.")) {
+      self.onDismiss()
+    }
+    .onTapGesture {
+      self.onDismiss()
+    }
     .gesture(
       DragGesture()
         .onChanged { value in
           if value.translation.height < 0 {  // Swipe up to dismiss
-            dragOffset = value.translation.height
+            self.dragOffset = value.translation.height
           }
         }
         .onEnded { value in
           if value.translation.height < -30 || value.predictedEndTranslation.height < -80 {
-            onDismiss()
+            self.onDismiss()
           } else {
-            dragOffset = 0
+            self.dragOffset = 0
           }
         }
     )
@@ -172,28 +156,33 @@ struct ToastView: View {
 struct ToastContainerModifier: ViewModifier {
   let manager: ToastManager?
   @Environment(\.toastManager) private var environmentManager
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var containerID = UUID()
 
   private var toastManager: ToastManager { manager ?? environmentManager }
-  
+
   func body(content: Content) -> some View {
     content
       .overlay(alignment: .top) {
         if let toast = toastManager.currentToast, toastManager.isActiveContainer(containerID) {
           ToastView(toast: toast) {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-              toastManager.dismiss()
+            Motion.withAnimation(MotionIntent.exit, reduceMotion: self.reduceMotion) {
+              self.toastManager.dismiss()
             }
           }
-          .padding(.horizontal, 16)
-          .padding(.top, 8)
+          .padding(.horizontal, Space.screenMargin)
+          .padding(.top, Space.sm)
           .transition(.move(edge: .top).combined(with: .opacity))
           .id(toast.id)
         }
       }
-      .animation(.spring(response: 0.4, dampingFraction: 0.85), value: toastManager.currentToast?.id)
-      .onAppear { toastManager.registerContainer(containerID) }
-      .onDisappear { toastManager.unregisterContainer(containerID) }
+      .catbirdAnimation(MotionIntent.enter, value: toastManager.currentToast?.id)
+      .onAppear {
+        self.toastManager.registerContainer(self.containerID)
+      }
+      .onDisappear {
+        self.toastManager.unregisterContainer(self.containerID)
+      }
   }
 }
 
@@ -230,23 +219,6 @@ extension View {
   func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
     if condition {
       transform(self)
-    } else {
-      self
-    }
-  }
-}
-
-private extension View {
-  // Applies the new glassEffect when available; otherwise returns self.
-  // Reduce Transparency swaps the clear glass for `.regular` so the white text keeps its contrast.
-  @ViewBuilder
-  func glassEffectCompatibility(reduceTransparency: Bool) -> some View {
-    if #available(iOS 26.0, macOS 26.0, *) {
-      if reduceTransparency {
-        self.glassEffect(.regular.tint(.accentColor).interactive(), in: .capsule)
-      } else {
-        self.glassEffect(.clear.tint(.accentColor).interactive(), in: .capsule)
-      }
     } else {
       self
     }

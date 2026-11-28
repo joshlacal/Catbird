@@ -57,7 +57,6 @@ struct FeedLibraryButtonLabel: View {
       }
     }
     .appFont(size.buttonSize.textRole)
-    .fontWeight(.semibold)
     .lineLimit(1)
     .foregroundStyle(TintShapeStyle())
     .padding(.horizontal, size.buttonSize.horizontalPadding)
@@ -72,6 +71,7 @@ struct FeedLibraryButtonLabel: View {
 struct FeedLibraryButton: View {
   @Environment(AppState.self) private var appState
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.catbirdTheme) private var theme
   let feed: AppBskyFeedDefs.GeneratorView
   var size: FeedLibraryButtonSize = .regular
   var onOpen: (() -> Void)?
@@ -92,7 +92,7 @@ struct FeedLibraryButton: View {
   private var actionState: FeedLibraryActionState { actions.state(for: feed.uri) }
 
   var body: some View {
-    VStack(alignment: alignsTrailing ? .trailing : .leading, spacing: 6) {
+    VStack(alignment: alignsTrailing ? .trailing : .leading, spacing: Space.sm) {
       if showsStatus && actionState == .saving {
         ProgressView("Saving")
           .appFont(AppTextRole.caption)
@@ -155,15 +155,21 @@ struct FeedLibraryButton: View {
     case .pendingSync:
       Text("Saved on this device. It will sync when you’re back online.")
         .appFont(AppTextRole.caption)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(theme.text(.secondary))
       retryButton
     case .failed(let message):
-      Text(message).appFont(AppTextRole.caption).foregroundStyle(.red)
+      Text(message)
+        .appFont(AppTextRole.caption)
+        .foregroundStyle(theme.semantic(.danger))
       retryButton
     case .success(.saved):
-      Text("Added to Saved").appFont(AppTextRole.caption).foregroundStyle(.secondary)
+      Text("Added to Saved")
+        .appFont(AppTextRole.caption)
+        .foregroundStyle(theme.text(.secondary))
     case .success(.pinned):
-      Text("Pinned to Feeds").appFont(AppTextRole.caption).foregroundStyle(.secondary)
+      Text("Pinned to Feeds")
+        .appFont(AppTextRole.caption)
+        .foregroundStyle(theme.text(.secondary))
     default:
       EmptyView()
     }
@@ -171,8 +177,9 @@ struct FeedLibraryButton: View {
 
   private var retryButton: some View {
     Button(action: retry) {
-      Text("Try Again").appFont(AppTextRole.caption).frame(minHeight: ControlHeight.minHitTarget)
+      Text("Try Again")
     }
+    .buttonStyle(.catbird(.quiet, size: .sm))
   }
 
   private func retry() {

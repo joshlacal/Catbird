@@ -7,25 +7,16 @@ import AppKit
 #endif
 import OSLog
 
-/// 6-digit hex → SwiftUI Color. Used to materialize CatbirdBrand
-/// palette strings (e.g. `"#143F9C"`) into Colors at enum-property
-/// read time. Returns nil for malformed input so the caller can
-/// substitute a sane fallback.
-private func brandColor(fromHex hex: String) -> Color? {
-    let s = hex.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "#"))
-    guard s.count == 6, let v = UInt32(s, radix: 16) else { return nil }
-    return Color(
-        .displayP3,
-        red:   Double((v >> 16) & 0xff) / 255,
-        green: Double((v >>  8) & 0xff) / 255,
-        blue:  Double( v        & 0xff) / 255
-    )
+/// 6-digit hex → SwiftUI Color in sRGB, matching `docs/brand/contrast-audit.md`.
+/// Returns nil for malformed input so the caller can substitute a sane fallback.
+func brandColor(fromHex hex: String) -> Color? {
+    CatbirdSRGBColor(hex: hex)?.swiftUIColor
 }
 
 /// Catbird brand accent palettes. The raw value "default" is
 /// preserved for the renamed-from-`bluesky` case so existing
 /// UserDefaults entries continue to resolve correctly.
-enum AccentColorOption: String, CaseIterable, Identifiable {
+enum AccentColorOption: String, CaseIterable, Identifiable, Sendable, Hashable {
     case catbird = "default"
     case twilight = "twilight"
     case lavender = "lavender"
@@ -50,7 +41,7 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
 
     /// Palette as decoded from the generated CatbirdBrand tokens.
     /// Mode-adaptive Color accessors derive from these strings.
-    private var brandPalette: catbird_Color.Palette {
+    var brandPalette: catbird_Color.Palette {
         switch self {
         case .catbird:  return Brand.color.catbird
         case .twilight: return Brand.color.twilight
@@ -62,36 +53,108 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Chrome / fill accent for light mode. Use for buttons, FAB, tab
-    /// indicator backgrounds, selected-state fills, display-size icons.
-    /// On the Catbird palette this is `#5192FF`, which passes WCAG
-    /// AA-large but not AA-normal — avoid for inline body-size text.
+    /// Raw chrome / fill accent for light mode from `Brand.color`.
     var color: Color {
         brandColor(fromHex: brandPalette.accentLight) ?? .blue
     }
 
-    /// Chrome / fill accent for dark mode. Same role as `color`, lifted
-    /// for contrast against dark surfaces.
+    /// Raw chrome / fill accent for dark mode from `Brand.color`.
     var darkColor: Color {
         brandColor(fromHex: brandPalette.accentDark) ?? .blue
     }
 
-    /// Text-safe accent for light mode. Use for inline links, @mentions,
-    /// hashtags, and any accent-colored text at body size / regular
-    /// weight. On the Catbird palette this is `#005EFF`, which clears
-    /// WCAG AA-normal (5.19:1 on white).
+    /// Raw text-tier accent for light mode from `Brand.color`.
     var textColor: Color {
         brandColor(fromHex: brandPalette.accentText) ?? .blue
     }
 
-    /// Text-safe accent for dark mode.
+    /// Raw text-tier accent for dark mode from `Brand.color`.
     var textDarkColor: Color {
         brandColor(fromHex: brandPalette.accentTextDark) ?? .blue
     }
 
+    /// WCAG AA-large (>= 3.0:1 on canvas and card) chrome accent in sRGB.
+    /// Dark mode uses `Brand.color.<palette>.accentDark` verbatim (all 7 clear >= 5.15:1).
+    /// Light mode preserves `Brand.color.<palette>.accentLight` whenever it clears 3.05:1 on
+    /// the light card surface (`#F2F2F7`) and darkens along the exact same HSL hue otherwise.
+    func chromeSRGB(for colorScheme: ColorScheme) -> CatbirdSRGBColor {
+        let hex = colorScheme == .dark ? brandPalette.accentDark : brandPalette.accentLight
+        let raw = CatbirdSRGBColor(hex: hex) ?? CatbirdSRGBColor.catbirdFallbackAccent
+        if colorScheme == .dark {
+            return raw
+        }
+        return raw.darkenedToContrast(against: CatbirdSRGBColor.lightCard, minimumRatio: 3.05)
+    }
+
+    /// WCAG AA-normal (>= 4.5:1 on canvas and card) text accent in sRGB.
+    /// Dark mode uses `Brand.color.<palette>.accentTextDark` verbatim (all 7 clear >= 5.15:1).
+    /// Light mode uses `Brand.color.<palette>.accentText` whenever it already clears >= 4.5:1 on
+    /// `#F2F2F7` (Catbird `#005EFF`, Twilight `#5856D6`, Midnight `#3154A5`, and all palettes once
+    /// `CatbirdBrand` 0.2.0 is tagged). While pinned to `CatbirdBrand` 0.1.0 (where alternate light
+    /// `accentText == accentLight`), bridges to the exact `Color.pkl` 0.2.0 same-hue AA hexes.
+    func textAccentSRGB(for colorScheme: ColorScheme) -> CatbirdSRGBColor {
+        let hex = colorScheme == .dark ? brandPalette.accentTextDark : brandPalette.accentText
+        let raw = CatbirdSRGBColor(hex: hex) ?? CatbirdSRGBColor.catbirdFallbackTextAccent
+        if colorScheme == .dark {
+            return raw
+        }
+        if raw.contrastRatio(with: CatbirdSRGBColor.lightCard) >= 4.5 {
+            return raw
+        }
+        if let bridgedHex = Self.accessibleLightTextHexBridge[self],
+           let bridged = CatbirdSRGBColor(hex: bridgedHex),
+           bridged.contrastRatio(with: CatbirdSRGBColor.lightCard) >= 4.5 {
+            return bridged
+        }
+        return raw.darkenedToContrast(against: CatbirdSRGBColor.lightCard, minimumRatio: 4.55)
+    }
+
+    /// Exact `docs/brand/tokens/Color.pkl` 0.2.0 same-hue AA-normal light text derivations
+    /// used until `CatbirdBrand` 0.2.0 is released and bumped in `project.pbxproj`.
+    private static let accessibleLightTextHexBridge: [AccentColorOption: String] = [
+        .lavender: "#8553C5",
+        .sunrise: "#C14200",
+        .aurora: "#217877",
+        .dusk: "#C4326F"
+    ]
+
+    /// WCAG AA-normal (>= 4.5:1) foreground on top of `chromeSRGB(for:)`: `#FFFFFF` or `#0B0D12`.
+    func onAccentSRGB(for colorScheme: ColorScheme) -> CatbirdSRGBColor {
+        CatbirdSRGBColor.onAccent(for: chromeSRGB(for: colorScheme))
+    }
+
+    func chromeColor(for colorScheme: ColorScheme) -> Color {
+        chromeSRGB(for: colorScheme).swiftUIColor
+    }
+
+    func textAccentColor(for colorScheme: ColorScheme) -> Color {
+        textAccentSRGB(for: colorScheme).swiftUIColor
+    }
+
+    func onAccentColor(for colorScheme: ColorScheme) -> Color {
+        onAccentSRGB(for: colorScheme).swiftUIColor
+    }
+
     #if os(iOS)
     var uiColor: UIColor {
-        UIColor(color)
+        UIColor(chromeColor(for: .light))
+    }
+
+    var uiDarkColor: UIColor {
+        UIColor(chromeColor(for: .dark))
+    }
+
+    func uiColor(for colorScheme: ColorScheme) -> UIColor {
+        colorScheme == .dark ? uiDarkColor : uiColor
+    }
+
+    /// Trait-adaptive UIKit tint color that follows light/dark transitions automatically.
+    var dynamicUIColor: UIColor {
+        let light = uiColor
+        let dark = uiDarkColor
+        return UIColor { traitCollection in
+            traitCollection.userInterfaceStyle == .dark ? dark : light
+        }
     }
     #endif
 }
@@ -128,9 +191,9 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
     
     // MARK: - Theme Definitions
     
-    enum DarkThemeMode {
-        case dim     // Standard dark mode with grays
-        case black   // True black with proper hierarchy
+    enum DarkThemeMode: String, CaseIterable, Sendable, Equatable, Hashable {
+        case dim     // Standard dark mode with Brand.color.dim surfaces
+        case black   // True black OLED mode with Brand.color.trueBlack surfaces
     }
     
     // MARK: - Initialization
@@ -268,10 +331,12 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
                 // accent color into spots UIKit treats as non-tint by
                 // default (some text styles, list chevrons, etc.).
                 // Only custom palettes override.
-                if currentAccentColor == .catbird {
+                if self.currentAccentColor == .catbird {
                     window.tintColor = nil
+                } else if let override = self.colorSchemeOverride {
+                    window.tintColor = self.currentAccentColor.uiColor(for: override)
                 } else {
-                    window.tintColor = currentAccentColor.uiColor
+                    window.tintColor = self.currentAccentColor.dynamicUIColor
                 }
             }
             
@@ -566,7 +631,7 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
         case (.dark, .black):
             return Color.black
         case (.dark, .dim):
-            return Color(red: 0.18, green: 0.18, blue: 0.20)
+            return CatbirdSRGBColor.dimBackground.swiftUIColor
         case (.light, _):
             return Color.systemBackground
         default:
@@ -586,9 +651,34 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
         colorSchemeOverride ?? .light // Default to light if no override
     }
     
-    /// Get the dim background color
+    /// Get the dim background color from `Brand.color.dim.background` (`#111318`).
     var dimBackgroundColor: Color {
-        Color(red: 0.18, green: 0.18, blue: 0.20)
+        CatbirdSRGBColor.dimBackground.swiftUIColor
+    }
+
+    // MARK: - Active Semantic Accent Helpers
+
+    /// Active chrome accent for buttons, FABs, selected fills and borders.
+    func activeAccentChrome(for colorScheme: ColorScheme) -> Color {
+        currentAccentColor.chromeColor(for: effectiveColorScheme(for: colorScheme))
+    }
+
+    /// Active text-safe accent for inline links, mentions, hashtags and quiet labels.
+    func activeAccentText(for colorScheme: ColorScheme) -> Color {
+        currentAccentColor.textAccentColor(for: effectiveColorScheme(for: colorScheme))
+    }
+
+    /// Active WCAG AA-checked foreground (`#FFFFFF` vs `#0B0D12`) over `activeAccentChrome`.
+    func activeOnAccent(for colorScheme: ColorScheme) -> Color {
+        currentAccentColor.onAccentColor(for: effectiveColorScheme(for: colorScheme))
+    }
+
+    /// Resolve the full semantic theme snapshot for SwiftUI `@Environment(\.catbirdTheme)`.
+    func resolvedTheme(
+        for colorScheme: ColorScheme,
+        contrast: ColorSchemeContrast = .standard
+    ) -> CatbirdThemeColors {
+        CatbirdThemeColors.resolve(themeManager: self, colorScheme: colorScheme, contrast: contrast)
     }
     
     // Tab bar theming now handled by SwiftUI modifiers - removed complex UITabBar.appearance() approach
@@ -753,20 +843,28 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
 
 struct ThemeModifier: ViewModifier {
     @Environment(\.colorScheme) private var systemColorScheme
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     let themeManager: ThemeManager
 
     func body(content: Content) -> some View {
+        let effectiveScheme = themeManager.effectiveColorScheme(for: systemColorScheme)
+        let resolvedTheme = themeManager.resolvedTheme(
+            for: systemColorScheme,
+            contrast: colorSchemeContrast
+        )
         content
             .preferredColorScheme(themeManager.colorSchemeOverride)
             // Default .catbird palette leaves tint unresolved so SwiftUI
             // uses its contextual `.tint` resolution (asset-catalog
-            // AccentColor, which is already #5192FF). Forcing an explicit
-            // tint here caused the accent to propagate into spots SwiftUI
-            // treats as non-tint by default — visible as text/glyphs that
-            // should have been primary/secondary label color showing as
-            // the accent. Only custom palettes override.
-            .tint(themeManager.currentAccentColor == .catbird ? nil : themeManager.currentAccentColor.color)
+            // AccentColor). Custom palettes resolve mode-adaptively so dark
+            // mode receives `accentDark` rather than `accentLight`.
+            .tint(
+                themeManager.currentAccentColor == .catbird
+                    ? nil
+                    : themeManager.activeAccentChrome(for: effectiveScheme)
+            )
             .environment(\.themeManager, themeManager)
+            .environment(\.catbirdTheme, resolvedTheme)
     }
 }
 
