@@ -7,6 +7,7 @@ struct SettingsAvatarToolbarButton: View {
   @MainActor private static var lastKnownAccountDIDs: Set<String> = []
   @MainActor private static var lastProfileRefreshTime: Date?
   private static let refreshThrottleInterval: TimeInterval = 600 // 10 minutes
+  private static let menuAvatarSize: CGFloat = 30
   @State private var avatarImages: [String: PlatformImage] = [:]
 
   let action: () -> Void
@@ -90,7 +91,10 @@ struct SettingsAvatarToolbarButton: View {
   }
   @ViewBuilder
   private func accountMenuIcon(for account: AuthenticationManager.AccountInfo) -> some View {
-    if let image = avatarImages[account.did] {
+    if let image = avatarImages[account.did]
+      ?? AvatarImageLoader.shared.cachedAvatar(
+        did: account.did, avatarURL: account.cachedAvatarURL, size: Self.menuAvatarSize)
+    {
       #if os(iOS)
         Image(uiImage: image)
           .resizable()
@@ -131,20 +135,36 @@ struct SettingsAvatarToolbarButton: View {
     await appStateManager.authentication.refreshCachedAccountProfiles(using: client)
   }
 
+  /// Loads every missing avatar concurrently and publishes them in one state update.
+  /// Updating per image rebuilds the open menu each time, which scrolls it back to the top.
   @MainActor
   private func loadAvatars(for accounts: [AuthenticationManager.AccountInfo]) async {
-    for account in accounts {
-      guard avatarImages[account.did] == nil else { continue }
-      let image = await AvatarImageLoader.shared.loadAvatar(
-        did: account.did,
-        client: appState.atProtoClient,
-        avatarURL: account.cachedAvatarURL,
-        size: 30
-      )
-      if let image {
-        avatarImages[account.did] = image
+    let missing = accounts.filter { avatarImages[$0.did] == nil }
+    guard !missing.isEmpty else { return }
+    let client = appState.atProtoClient
+    let size = Self.menuAvatarSize
+    let loaded = await withTaskGroup(of: (String, PlatformImage?).self) { group in
+      for account in missing {
+        let did = account.did
+        let avatarURL = account.cachedAvatarURL
+        group.addTask {
+          let image = await AvatarImageLoader.shared.loadAvatar(
+            did: did,
+            client: client,
+            avatarURL: avatarURL,
+            size: size
+          )
+          return (did, image)
+        }
       }
+      var results: [String: PlatformImage] = [:]
+      for await (did, image) in group {
+        if let image { results[did] = image }
+      }
+      return results
     }
+    guard !Task.isCancelled, !loaded.isEmpty else { return }
+    avatarImages.merge(loaded) { current, _ in current }
   }
 }
 

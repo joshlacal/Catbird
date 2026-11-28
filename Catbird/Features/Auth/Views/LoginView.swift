@@ -108,34 +108,10 @@ struct LoginView: View {
                     ZStack(alignment: .topLeading) {
                         // Center logo and text
                         VStack(spacing: adaptiveSpacing(geometry, factor: 0.4)) {
-                            // Hyperrealistic icon with multiple shadow layers
-                            ZStack {
-                                // Deep shadow layer
-                                Image("CatbirdIcon")
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: adaptiveSize(geometry, base: 250, min: 120),
-                                           height: adaptiveSize(geometry, base: 250, min: 120))
-                                    .blur(radius: 20)
-                                    .opacity(0.3)
-                                    .offset(y: 15)
-                                    .scaleEffect(0.95)
-                                
-                                // Mid shadow layer
-                                Image("CatbirdIcon")
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: adaptiveSize(geometry, base: 250, min: 120),
-                                           height: adaptiveSize(geometry, base: 250, min: 120))
-                                    .blur(radius: 8)
-                                    .opacity(0.9)
-                                    .offset(y: 8)
-                                    .scaleEffect(0.98)
-                                
-                                // Main icon with realistic lighting
-                                mainIconWithLighting(geometry: geometry)
-                            }
-                            .padding(.bottom, adaptiveSpacing(geometry, factor: 0.2))
+                            // Live 3D mascot: drag to spin, tap to bounce.
+                            BirdSpinner(size: adaptiveSize(geometry, base: 250, min: 120))
+                                .accessibilityHidden(true)
+                                .padding(.bottom, adaptiveSpacing(geometry, factor: 0.2))
                             
                             VStack(spacing: 3) {
                                 Text(verbatim: "Catbird")
@@ -727,34 +703,6 @@ struct LoginView: View {
     
     // MARK: - View Functions
     
-    private func mainIconWithLighting(geometry: GeometryProxy) -> some View {
-        let iconSize = adaptiveSize(geometry, base: 250, min: 120)
-        
-        return Image("CatbirdIcon")
-            .resizable()
-            .aspectRatio(contentMode: .fit)
-            .frame(width: iconSize, height: iconSize)
-            .overlay(iconHighlightOverlay)
-            .symbolEffect(.bounce, options: .repeating, value: isLoggingIn)
-            .modifier(IconShadowModifier(colorScheme: colorScheme))
-    }
-    
-    private var iconHighlightOverlay: some View {
-        LinearGradient(
-            colors: [
-                Color.white.opacity(0.15),
-                Color.white.opacity(0.0)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-        .mask(
-            Image("CatbirdIcon")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-        )
-        .blendMode(.colorBurn)
-    }
     
     private func advancedPDSField(geometry: GeometryProxy) -> some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -1657,16 +1605,6 @@ private struct LoginSheetFrame: ViewModifier {
         #else
         content
         #endif
-    }
-}
-
-struct IconShadowModifier: ViewModifier {
-    let colorScheme: ColorScheme
-    
-    func body(content: Content) -> some View {
-        content
-            .shadow(color: colorScheme == .dark ? .black.opacity(0.6) : .black.opacity(0.2), radius: 1, x: 0, y: 1)
-            .shadow(color: colorScheme == .dark ? .white.opacity(0.1) : .white.opacity(0.8), radius: 1, x: 0, y: -1)
     }
 }
 

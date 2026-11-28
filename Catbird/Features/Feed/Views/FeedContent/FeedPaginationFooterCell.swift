@@ -196,10 +196,10 @@ final class FeedPaginationFooterCell: UICollectionViewCell {
     let boldLegibility: Bool = traitCollection.legibilityWeight == UILegibilityWeight.bold
     let boldText: Bool = boldLegibility || fontManager.effectiveBoldText
     let key: Int = Self.textKey(fontManager: fontManager, boldText: boldText, traits: traitCollection)
-    // `AppFontModifier`: one weight heavier with bold text, the body size's line spacing scaled by
-    // the multiplier (which `Text`, like `UILabel`, ignores when negative), and the app's tracking.
-    let spacing: CGFloat = fontManager.getLineSpacing(for: Typography.Size.body) * fontManager.lineSpacingMultiplier
-    let lineSpacing: CGFloat = max(0, spacing)
+    // `AppFontModifier`: one weight heavier with bold text, per-role line spacing (matching
+    // `fontManager.lineSpacing(for:)`), and the app's tracking.
+    let role: AppTextRole = state == .failed ? .subheadline : .footnote
+    let lineSpacing: CGFloat = max(0, fontManager.lineSpacing(for: role))
     let kerning: CGFloat = fontManager.letterSpacingValue
     if state == .failed, let failureLabel, failureTextKey != key {
       failureTextKey = key

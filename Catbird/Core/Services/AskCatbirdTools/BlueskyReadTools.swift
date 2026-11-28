@@ -57,11 +57,7 @@ private extension ToolContext {
     for post in posts {
       await recordSource(label: ToolFormatter.sourceLabel(post: post), uri: post.uri.uriString())
     }
-    let snapshots = posts.map { AskCatbirdPostFormatter.compact(CopilotPostEvidenceBuilder.build($0)) }
-    let body = CopilotPrompt.sourceJSON(AskCatbirdPostFormatter.SearchResult(
-      posts: snapshots,
-      coverage: "Bounded post text, attachment descriptions, link previews and quoted records only. Media bytes and linked pages were not inspected. Engagement counts are as of retrieval."
-    ))
+    let body = AskCatbirdToolPostFormatter.list(posts, refs: postRefs)
     return header.map { "\($0)\n\(body)" } ?? body
   }
 }
@@ -138,7 +134,8 @@ struct ProfileFetchTool: Tool {
       lines.append("Relationship: " + (relationship.isEmpty ? "none" : relationship.joined(separator: ", ")))
     }
     if let pinned = profile.pinnedPost {
-      lines.append("Pinned post identifier (tool arguments only): \(pinned.uri.uriString())")
+      let pinnedID = context.postRefs?.ref(for: pinned.uri.uriString()) ?? pinned.uri.uriString()
+      lines.append("Pinned post id (tool arguments only): \(pinnedID)")
     }
     lines.append("Navigation identifier (tool arguments only): \(profile.did.description)")
     return lines.joined(separator: "\n")
@@ -245,7 +242,7 @@ struct PostsFetchTool: Tool {
   @available(iOS 26.0, macOS 26.0, *)
   @Generable
   struct Arguments {
-    @Guide(description: "at:// post URIs or bsky.app post links copied from context or results.", .maximumCount(10))
+    @Guide(description: "Post ids such as p3, at:// post URIs or bsky.app post links copied from context or results.", .maximumCount(10))
     let uris: [String]
   }
 
@@ -255,7 +252,7 @@ struct PostsFetchTool: Tool {
 
   func fetch(arguments: Arguments) async throws -> String {
     let limit = context.itemLimit(arguments.uris.count)
-    let uris = try arguments.uris.prefix(limit).map(AskCatbirdToolPolicy.postURI)
+    let uris = try arguments.uris.prefix(limit).map(context.postURI)
     guard !uris.isEmpty else { throw BlueskyAgentError.emptyResult("posts") }
     let (code, output) = try await context.client.app.bsky.feed.getPosts(input: .init(uris: uris))
     guard (200...299).contains(code), let posts = output?.posts, !posts.isEmpty else {
@@ -279,7 +276,7 @@ struct QuotesFetchTool: Tool {
   @available(iOS 26.0, macOS 26.0, *)
   @Generable
   struct Arguments {
-    @Guide(description: "The at:// post URI or bsky.app post link from context or results.")
+    @Guide(description: "A post id such as p3, an at:// post URI or a bsky.app post link from context or results.")
     let uri: String
 
     @Guide(description: "Maximum quote posts to return.", .range(1...10))
@@ -291,7 +288,7 @@ struct QuotesFetchTool: Tool {
   }
 
   func fetch(arguments: Arguments) async throws -> String {
-    let uri = try AskCatbirdToolPolicy.postURI(arguments.uri)
+    let uri = try context.postURI(arguments.uri)
     let limit = context.itemLimit(arguments.limit)
     let (code, output) = try await context.client.app.bsky.feed.getQuotes(input: .init(uri: uri, limit: limit))
     guard (200...299).contains(code), let posts = output?.posts else {

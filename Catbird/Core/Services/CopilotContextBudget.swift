@@ -12,10 +12,34 @@ enum CopilotContextBudget {
         let user: CopilotStoredTurn
         let previousAssistantAnswer: CopilotStoredTurn
         let assistantTextStatus = "Previous answer, not factual evidence."
+        /// Set when the pair's retrieved evidence was left out of the prompt.
+        var evidenceStatus: String?
     }
 
+    static let omittedEvidenceStatus =
+        "Evidence retrieved for this earlier answer is omitted; its sources list what was consulted. Read them again if needed."
+
     static func formatHistory(turns: [CopilotStoredTurn]) -> String {
-        CopilotPrompt.sourceJSON(extractPairs(from: turns))
+        CopilotPrompt.sourceJSON(promptPairs(from: turns))
+    }
+
+    /// Pairs as the model sees them. Only the latest exchange carries the evidence it
+    /// was answered from; earlier exchanges keep their question, answer and sources,
+    /// so follow-ups can be checked without replaying every earlier read.
+    static func promptPairs(from turns: [CopilotStoredTurn]) -> [TurnPair] {
+        var pairs = extractPairs(from: turns)
+        for index in pairs.indices.dropLast() {
+            let user = pairs[index].user
+            let answer = pairs[index].previousAssistantAnswer
+            guard user.evidence?.isEmpty == false || answer.evidence?.isEmpty == false else { continue }
+            var leanUser = user
+            var leanAnswer = answer
+            leanUser.evidence = nil
+            leanAnswer.evidence = nil
+            pairs[index] = TurnPair(user: leanUser, previousAssistantAnswer: leanAnswer,
+                                    evidenceStatus: omittedEvidenceStatus)
+        }
+        return pairs
     }
 
     /// The most recent complete question-and-answer pair, oldest first.

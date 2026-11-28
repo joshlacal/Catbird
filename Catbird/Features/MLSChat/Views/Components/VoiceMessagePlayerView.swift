@@ -20,27 +20,31 @@ struct VoiceMessagePlayerView: View {
   @State private var showTranscript = false
 
   @Environment(AppState.self) private var appState
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      HStack(spacing: 10) {
+    VStack(alignment: .leading, spacing: Space.sm) {
+      HStack(spacing: Space.sm) {
         Button(action: handleTap) {
           Group {
             if isLoading {
               ProgressView()
                 .scaleEffect(0.8)
-                .frame(width: 32, height: 32)
+                .frame(width: ControlHeight.sm, height: ControlHeight.sm)
             } else if loadError != nil {
               Image(systemName: "arrow.clockwise.circle.fill")
-                .font(.system(size: 32))
+                .appFont(size: 32, weight: .regular, relativeTo: .title)
                 .foregroundStyle(.red.opacity(0.7))
             } else {
               Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                .font(.system(size: 32))
+                .appFont(size: 32, weight: .regular, relativeTo: .title)
                 .foregroundStyle(isOwnMessage ? .white : Color.accentColor)
             }
           }
+          .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+          .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .disabled(isLoading)
         .accessibilityLabel(
           isPlaying
@@ -74,11 +78,11 @@ struct VoiceMessagePlayerView: View {
 
       if let transcript = audioData.transcript, !transcript.isEmpty {
         Button {
-          withAnimation(.easeInOut(duration: 0.2)) {
-            showTranscript.toggle()
+          Motion.withAnimation(Motion.instant, reduceMotion: self.reduceMotion) {
+            self.showTranscript.toggle()
           }
         } label: {
-          HStack(spacing: 4) {
+          HStack(spacing: Space.xs) {
             Image(systemName: "text.quote")
               .appFont(AppTextRole.caption2)
             if showTranscript {
@@ -92,15 +96,17 @@ struct VoiceMessagePlayerView: View {
             }
           }
           .foregroundStyle(isOwnMessage ? .white.opacity(0.7) : .secondary)
+          .frame(minHeight: ControlHeight.minHitTarget, alignment: .leading)
+          .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
       }
     }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 8)
+    .padding(.horizontal, Space.md)
+    .padding(.vertical, Space.sm)
     .frame(width: 240)
     .onDisappear {
-      stopPlayback()
+      self.stopPlayback()
     }
   }
 
@@ -294,7 +300,7 @@ struct VoiceWaveformView: View {
           let barProgress = Double(index) / Double(max(displaySamples.count - 1, 1))
           let isActive = barProgress <= progress
 
-          RoundedRectangle(cornerRadius: 1)
+          Capsule(style: .continuous)
             .fill(isActive ? accentColor : trackColor)
             .frame(
               width: max(

@@ -11,11 +11,11 @@
     },
     "CatbirdMLSCore": {
       "repository": "joshlacal/CatbirdMLSCore",
-      "revision": "bbdab90006f66510e76a6013754d659045c7ac4a"
+      "revision": "7a1544a7e8cf1eedde9d4ba3c065559f5cd485dd"
     }
   },
   "nativeArtifact": {
-    "url": "https://github.com/joshlacal/CatbirdMLSCore/releases/download/v1.5.24/CatbirdMLSFFI.xcframework.zip",
-    "checksum": "f73493acf9e4300357040da91b5e0f6eec1947cf1fced24e747fc62f4b9b9a75"
+    "url": "https://github.com/joshlacal/CatbirdMLSCore/releases/download/v1.5.25/CatbirdMLSFFI.xcframework.zip",
+    "checksum": "aafa1f4109a4265a0db9e5dda673d55fa75c318845a3399da7a5c6b483c6cb64"
   }
 }

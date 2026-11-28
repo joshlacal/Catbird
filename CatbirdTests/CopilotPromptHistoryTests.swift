@@ -49,6 +49,25 @@ struct CopilotPromptHistoryTests {
     #expect(sources.first?["uri"] as? String == "at://source/post/1")
   }
 
+  @Test func onlyTheLatestExchangeReplaysItsEvidence() throws {
+    let older = makePair(index: 1)
+    let newer = makePair(index: 2)
+    let formatted = CopilotContextBudget.formatHistory(turns: older + newer)
+    let pairs = try #require(JSONSerialization.jsonObject(with: Data(formatted.utf8)) as? [[String: Any]])
+    #expect(pairs.count == 2)
+    let oldAnswer = try #require(pairs[0]["previousAssistantAnswer"] as? [String: Any])
+    #expect(oldAnswer["evidence"] == nil)
+    #expect(oldAnswer["text"] as? String == "Earlier interpretation 1")
+    #expect((oldAnswer["sources"] as? [[String: Any]])?.first?["uri"] as? String == "at://source/post/1")
+    #expect(oldAnswer["proposalOutcome"] as? String == "Draft opened for review; not published.")
+    #expect(pairs[0]["evidenceStatus"] as? String == CopilotContextBudget.omittedEvidenceStatus)
+    #expect(pairs[1]["evidenceStatus"] == nil)
+    #expect(!formatted.contains("Actual retrieved post 1"))
+    #expect(formatted.contains("Actual retrieved post 2"))
+    let prompt = CopilotPrompt.format(context: .search(query: "q"), history: older + newer, prompt: "And then?")
+    #expect(!prompt.contains("Actual retrieved post 1") && prompt.contains("Actual retrieved post 2"))
+  }
+
   @Test func historyBudgetTrimsWholePairsIncludingTheirEvidence() async throws {
     let older = makePair(index: 1)
     let newer = makePair(index: 2)

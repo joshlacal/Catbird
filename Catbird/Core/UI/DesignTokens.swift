@@ -14,6 +14,7 @@ import SwiftUI
 
 /// Shared values for custom components. Native Form/List metrics remain system-owned.
 /// Named typography helpers use FontManager so app preferences and Dynamic Type apply.
+@available(*, deprecated, message: "Use CatbirdTokens (Space/Radius/ControlHeight/Motion) and CatbirdTheme")
 struct DesignTokens {
     
     // MARK: - Base Unit
@@ -231,6 +232,7 @@ struct DesignTokens {
 
 // MARK: - View Extensions for Design Tokens
 
+@available(*, deprecated, message: "Use CatbirdTokens (Space/Radius/ControlHeight/Motion) and CatbirdTheme")
 extension View {
     
     // MARK: - Spacing Modifiers
@@ -276,30 +278,25 @@ extension View {
     
     // MARK: - Size Modifiers
     
-    /// Apply consistent corner radius
-    func cornerRadius(_ radius: CGFloat) -> some View {
-        self.clipShape(RoundedRectangle(cornerRadius: radius))
-    }
-    
-    /// Quick corner radius helpers
+    /// Quick corner radius helpers (continuous corners; use `.catbirdClip(_:)` in new code).
     func cornerRadiusXS() -> some View {
-        self.cornerRadius(DesignTokens.Size.radiusXS)
+        self.clipShape(RoundedRectangle(cornerRadius: DesignTokens.Size.radiusXS, style: .continuous))
     }
     
     func cornerRadiusSM() -> some View {
-        self.cornerRadius(DesignTokens.Size.radiusSM)
+        self.clipShape(RoundedRectangle(cornerRadius: DesignTokens.Size.radiusSM, style: .continuous))
     }
     
     func cornerRadiusMD() -> some View {
-        self.cornerRadius(DesignTokens.Size.radiusMD)
+        self.clipShape(RoundedRectangle(cornerRadius: DesignTokens.Size.radiusMD, style: .continuous))
     }
     
     func cornerRadiusLG() -> some View {
-        self.cornerRadius(DesignTokens.Size.radiusLG)
+        self.clipShape(RoundedRectangle(cornerRadius: DesignTokens.Size.radiusLG, style: .continuous))
     }
     
     func cornerRadiusXL() -> some View {
-        self.cornerRadius(DesignTokens.Size.radiusXL)
+        self.clipShape(RoundedRectangle(cornerRadius: DesignTokens.Size.radiusXL, style: .continuous))
     }
     
     // MARK: - Typography Modifiers
@@ -414,6 +411,7 @@ extension View {
 
 // MARK: - VStack and HStack Extensions
 
+@available(*, deprecated, message: "Use CatbirdTokens (Space/Radius/ControlHeight/Motion) and CatbirdTheme")
 extension VStack {
     /// Create VStack with design token spacing
     static func withSpacing(_ spacing: CGFloat, alignment: HorizontalAlignment = .center, @ViewBuilder content: () -> Content) -> VStack<Content> {
@@ -421,6 +419,7 @@ extension VStack {
     }
 }
 
+@available(*, deprecated, message: "Use CatbirdTokens (Space/Radius/ControlHeight/Motion) and CatbirdTheme")
 extension HStack {
     /// Create HStack with design token spacing
     static func withSpacing(_ spacing: CGFloat, alignment: VerticalAlignment = .center, @ViewBuilder content: () -> Content) -> HStack<Content> {

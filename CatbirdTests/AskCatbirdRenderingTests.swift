@@ -443,7 +443,7 @@ private enum FixtureData {
   static let turns = [
     CopilotStoredTurn(role: .user, text: "What is this post about?"),
     CopilotStoredTurn(role: .assistant,
-      text: "Maya is celebrating the community garden’s first season of native flowers. She says bees are returning after last spring’s planting.\n\nThe image description mentions purple coneflowers beside a garden path. I have the description, but haven’t inspected the image itself.",
+      text: "**Maya** is celebrating the community garden’s first season of native flowers.\n\n### What she shares\n- Bees are returning after last spring’s planting.\n- The image description mentions *purple coneflowers* beside a garden path.\n\n> I have the image description, but haven’t inspected the image itself.",
       sources: [CopilotSource(label: "Maya Chen · Community garden in bloom", uri: postURI)])
   ]
 }

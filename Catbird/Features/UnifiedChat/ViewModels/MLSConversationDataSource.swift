@@ -12,6 +12,7 @@ import Observation
 import OSLog
 import Petrel
 import SwiftUI
+import UserNotifications
 
 /// A locally-originated outgoing message that has no server row yet.
 struct PendingMLSSend: Identifiable, Equatable, Sendable {
@@ -44,6 +45,7 @@ struct MLSMessageActionPerformer {
   let edit: @MainActor (_ conversationID: String, _ messageID: String, _ text: String) async throws -> Void
   let unsend: @MainActor (_ conversationID: String, _ messageID: String) async throws -> Void
   var react: (@MainActor (_ conversationID: String, _ messageID: String, _ emoji: String, _ action: MLSReactionPayload.ReactionAction) async throws -> Void)? = nil
+  var deleteForMe: (@MainActor (_ conversationID: String, _ messageID: String) async throws -> Void)? = nil
 }
 
 private enum DecodedMLSRowEvent {
@@ -77,6 +79,9 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
   private var profileCache: [String: MLSProfileEnricher.ProfileData] = [:]
   private var hasLoadedInitialProfiles = false
+  @ObservationIgnored private var profileRetryTask: Task<Void, Never>?
+  @ObservationIgnored private var profileRetryAttempt = 0
+  private static let profileRetryDelays: [Duration] = [.seconds(2), .seconds(5), .seconds(15), .seconds(45)]
 
   private var confirmedMessages: [MLSMessageAdapter] = []
   private(set) var pendingSends: [PendingMLSSend] = []
@@ -180,6 +185,9 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   func stopObserving() {
     observationID = UUID()
     isObservingCoordinator = false
+    profileRetryTask?.cancel()
+    profileRetryTask = nil
+    profileRetryAttempt = 0
   }
 
   // MARK: - Pending Sends (WS-6.5)
@@ -406,6 +414,16 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       hasReceivedInitialMessages = true
       hasMoreMessages = window.hasMore
 
+      // Clear the unread count before anything slow below, so leaving the conversation
+      // quickly still leaves it read.
+      if maxSeq > 0 {
+        await markReadLocally(through: maxSeq, using: coordinator)
+      }
+
+      // Hydrate sender names/avatars before the read-state round trips below,
+      // which can take seconds on a slow delivery service.
+      await enrichMissingProfilesIfNeeded(observationID: observationID)
+
       if maxSeq > 0 {
         try? await coordinator.acknowledgeEntriesUpTo(conversationId: conversationId, upToSeq: maxSeq)
         if let advanced = try? await coordinator.advanceReadState(
@@ -417,11 +435,30 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       } else if let readState = try? await coordinator.getReadState(conversationId: conversationId) {
         remoteReadCutoff = (epoch: 0, sequenceNumber: Int64(clamping: readState.readThroughSeq))
       }
-      await enrichMissingProfilesIfNeeded(observationID: observationID)
     } catch {
       guard self.observationID == observationID, refreshRequest == request else { return }
       self.error = error
       logger.error("Failed to load MLS messages from SDK: \(error.localizedDescription)")
+    }
+  }
+
+  /// Lowers the conversation's stored unread count to what arrived after `seq`, then refreshes
+  /// the conversation list and tab badge when the count they show is stale.
+  private func markReadLocally(through seq: Int64, using coordinator: MLSClientCoordinator) async {
+    let remaining: Int64
+    do {
+      remaining = try await coordinator.markConversationRead(conversationId: conversationId, readThroughSeq: seq)
+    } catch {
+      logger.error("Failed to mark MLS conversation read: \(error.localizedDescription)")
+      return
+    }
+    guard let appState else { return }
+    let shown = appState.mlsConversations
+      .first { $0.id.caseInsensitiveCompare(conversationId) == .orderedSame }?
+      .unreadCount
+    let isStale = shown.map { Int64($0) != remaining } ?? (appState.mlsUnreadCount > 0)
+    if isStale {
+      await appState.loadMLSConversations()
     }
   }
 
@@ -1015,10 +1052,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         )
       }
 
-      confirmedMessages.removeAll { $0.id == resolvedMessageID }
-      loadedRowsByID.removeValue(forKey: resolvedMessageID)
-      pendingIDAliases.removeValue(forKey: resolvedMessageID)
-      optimisticReactionsByMessageID.removeValue(forKey: resolvedMessageID)
+      purgeErasedMessage(resolvedMessageID, blobIDs: Self.attachmentBlobIDs(for: target.mlsEmbed))
       return true
     } catch {
       self.error = error
@@ -1030,6 +1064,87 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
   func deleteMessage(messageID: String) async {
     _ = await unsendMessage(messageID: messageID)
+  }
+
+  /// Erases one confirmed message (from any sender) for this account only. Native code
+  /// deletes the local copy and records a durable marker, then files an owner tombstone so the
+  /// account's other devices erase it too; other members keep their copies. Unlike sending,
+  /// this works while the conversation cannot send (a pending request, a blocked recovery).
+  func deleteMessageForMe(messageID: String) async {
+    guard let target = message(for: messageID), target.canDeleteForMe else { return }
+    let resolvedMessageID = target.id
+    let blobIDs = Self.attachmentBlobIDs(for: target.mlsEmbed)
+
+    do {
+      if let actionPerformer {
+        guard let deleteForMe = actionPerformer.deleteForMe else {
+          throw NSError(
+            domain: "MLS",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: String(localized: "MLS service not available")]
+          )
+        }
+        try await deleteForMe(conversationId, resolvedMessageID)
+      } else {
+        guard let coordinator = activeCoordinator else {
+          throw NSError(
+            domain: "MLS",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: String(localized: "MLS service not available")]
+          )
+        }
+        try await coordinator.deleteMessageForMe(
+          conversationId: conversationId,
+          messageId: resolvedMessageID
+        )
+      }
+      purgeErasedMessage(resolvedMessageID, blobIDs: blobIDs)
+    } catch {
+      self.error = error
+      logger.error("Failed to delete MLS message for me: \(error.localizedDescription)")
+    }
+  }
+
+  /// Blob IDs of the decrypted attachments a message references, for the local cache purge.
+  static func attachmentBlobIDs(for embed: MLSEmbedData?) -> [String] {
+    switch embed {
+    case .image(let image): [image.blobId]
+    case .audio(let audio): [audio.blobId]
+    default: []
+    }
+  }
+
+  /// Drops every copy of an erased message that this process holds: the row and its reaction
+  /// overlay, decrypted attachment bytes in the image cache, and any delivered notification
+  /// that still shows its text. The native store has already erased the durable copy.
+  private func purgeErasedMessage(_ messageID: String, blobIDs: [String]) {
+    confirmedMessages.removeAll { $0.id == messageID }
+    loadedRowsByID.removeValue(forKey: messageID)
+    pendingIDAliases.removeValue(forKey: messageID)
+    optimisticReactionsByMessageID.removeValue(forKey: messageID)
+
+    let userDID = currentUserDID
+    if !blobIDs.isEmpty {
+      Task { await MLSImageCache.shared.remove(blobIds: blobIDs, userDID: userDID) }
+    }
+    guard appState != nil || injectedCoordinator != nil else { return }
+    let conversationID = conversationId
+    Task { await Self.removeDeliveredNotifications(conversationID: conversationID, messageID: messageID) }
+  }
+
+  /// Delivered MLS notifications carry `convo_id` and `message_id` (set by the notification
+  /// service extension), so the one showing an erased message's preview can be withdrawn.
+  private static func removeDeliveredNotifications(conversationID: String, messageID: String) async {
+    let center = UNUserNotificationCenter.current()
+    let delivered = await center.deliveredNotifications()
+    let identifiers = delivered.compactMap { notification -> String? in
+      let info = notification.request.content.userInfo
+      guard info["message_id"] as? String == messageID,
+            info["convo_id"] as? String == conversationID else { return nil }
+      return notification.request.identifier
+    }
+    guard !identifiers.isEmpty else { return }
+    center.removeDeliveredNotifications(withIdentifiers: identifiers)
   }
 
   // MARK: - Profile Enrichment
@@ -1053,21 +1168,53 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   private func enrichMissingProfilesIfNeeded(observationID: UUID) async {
-    guard let appState, let client = appState.atProtoClient else { return }
-    let missingDIDs = Set(confirmedMessages.map { MLSProfileEnricher.canonicalDID($0.senderID) })
-      .filter { profileCache[$0] == nil }
-    guard !missingDIDs.isEmpty else { return }
-    let profiles = await appState.mlsProfileEnricher.ensureProfiles(
-      for: Array(missingDIDs),
-      using: client,
-      currentUserDID: currentUserDID
-    )
     guard self.observationID == observationID else { return }
-    for (did, profile) in profiles {
-      profileCache[did] = profile
+    let missingDIDs = missingSenderProfileDIDs()
+    guard !missingDIDs.isEmpty else {
+      profileRetryTask?.cancel()
+      profileRetryTask = nil
+      profileRetryAttempt = 0
+      return
     }
-    if !profiles.isEmpty {
-      rebuildMessagesWithProfiles()
+    // The client can be briefly unavailable (session restore, account switch);
+    // treat that like a failed fetch and retry rather than giving up.
+    if let appState, let client = appState.atProtoClient {
+      let profiles = await appState.mlsProfileEnricher.ensureProfiles(
+        for: Array(missingDIDs),
+        using: client,
+        currentUserDID: currentUserDID
+      )
+      guard self.observationID == observationID else { return }
+      for (did, profile) in profiles {
+        profileCache[MLSProfileEnricher.canonicalDID(did)] = profile
+      }
+      if !profiles.isEmpty {
+        rebuildMessagesWithProfiles()
+      }
+    }
+    scheduleProfileRetryIfNeeded(observationID: observationID)
+  }
+
+  private func missingSenderProfileDIDs() -> Set<String> {
+    Set(confirmedMessages.map { MLSProfileEnricher.canonicalDID($0.senderID) })
+      .filter { profileCache[$0] == nil }
+  }
+
+  /// A failed or partial profile fetch used to wait for the next incoming
+  /// message to retry, so a quiet conversation could stay nameless for good.
+  /// Retry with backoff while the conversation stays open.
+  private func scheduleProfileRetryIfNeeded(observationID: UUID) {
+    guard !missingSenderProfileDIDs().isEmpty,
+          profileRetryTask == nil,
+          profileRetryAttempt < Self.profileRetryDelays.count
+    else { return }
+    let delay = Self.profileRetryDelays[profileRetryAttempt]
+    profileRetryAttempt += 1
+    profileRetryTask = Task { @MainActor [weak self] in
+      try? await Task.sleep(for: delay)
+      guard let self, !Task.isCancelled else { return }
+      self.profileRetryTask = nil
+      await self.enrichMissingProfilesIfNeeded(observationID: observationID)
     }
   }
 

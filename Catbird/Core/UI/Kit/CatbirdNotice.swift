@@ -3,19 +3,22 @@
 //  Catbird
 //
 //  Tinted inline banner: icon, optional title, message, optional action.
+//  Colors resolve from `@Environment(\.catbirdTheme)` via `CatbirdTone`.
 //
 
 import SwiftUI
 
 struct CatbirdNotice: View {
-  var tone: CatbirdNoticeTone
+  var tone: CatbirdTone
   let title: Text?
   let message: Text
   let actionTitle: Text?
   var action: (() -> Void)?
 
+  @Environment(\.catbirdTheme) private var theme
+
   init(
-    tone: CatbirdNoticeTone = .info, title: LocalizedStringKey? = nil, message: LocalizedStringKey,
+    tone: CatbirdTone = .info, title: LocalizedStringKey? = nil, message: LocalizedStringKey,
     actionTitle: LocalizedStringKey? = nil, action: (() -> Void)? = nil
   ) {
     self.init(
@@ -24,7 +27,7 @@ struct CatbirdNotice: View {
   }
 
   init(
-    tone: CatbirdNoticeTone = .info, title: Text? = nil, message: Text, actionTitle: Text? = nil,
+    tone: CatbirdTone = .info, title: Text? = nil, message: Text, actionTitle: Text? = nil,
     action: (() -> Void)? = nil
   ) {
     self.tone = tone
@@ -35,23 +38,26 @@ struct CatbirdNotice: View {
   }
 
   var body: some View {
+    let toneColor = tone.color(in: theme)
     HStack(alignment: .top, spacing: Space.md) {
       Image(systemName: tone.systemImage)
-        .appFont(AppTextRole.headline)
-        .foregroundStyle(tone.color)
+        .catbirdSymbol(.row, weight: .semibold)
+        .foregroundStyle(toneColor)
         .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: Space.xs) {
         if let title {
-          title.appFont(AppTextRole.subheadline).fontWeight(.semibold)
+          title
+            .appFont(AppTextRole.subheadline.weight(.semibold))
+            .foregroundStyle(theme.text(.primary))
         }
         message
           .appFont(AppTextRole.footnote)
-          .foregroundStyle(title == nil ? Color.primary : Color.secondary)
+          .foregroundStyle(title == nil ? theme.text(.primary) : theme.text(.secondary))
           .fixedSize(horizontal: false, vertical: true)
         if let actionTitle, let action {
           Button(action: action) { actionTitle }
             .buttonStyle(.catbird(.quiet, size: .sm))
-            .tint(tone.color)
+            .tint(toneColor)
             .padding(.leading, -Space.md)
         }
       }

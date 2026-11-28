@@ -740,6 +740,7 @@ public extension PlatformColor {
 
 // MARK: - Platform Color Constants
 
+@available(*, deprecated, message: "Use CatbirdTheme / Brand.color")
 public struct PlatformColorConstants {
     
     // MARK: - Catbird Brand Colors

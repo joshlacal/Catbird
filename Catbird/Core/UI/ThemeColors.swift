@@ -1,11 +1,447 @@
+import CatbirdBrand
+import Foundation
 import SwiftUI
 #if os(iOS)
 import UIKit
 #elseif os(macOS)
 import AppKit
 #endif
+import os
 
-// MARK: - Theme Color System
+// MARK: - sRGB Token Math (WCAG 2.1)
+
+/// Exact sRGB color representation matching `docs/brand/contrast-audit.md` and `Brand.color` hex tokens.
+struct CatbirdSRGBColor: Sendable, Equatable, Hashable {
+  let red: Double
+  let green: Double
+  let blue: Double
+
+  init(red: Double, green: Double, blue: Double) {
+    self.red = min(max(red, 0), 1)
+    self.green = min(max(green, 0), 1)
+    self.blue = min(max(blue, 0), 1)
+  }
+
+  init?(hex: String) {
+    let trimmed = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+      .trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+    guard trimmed.count == 6, let value = UInt32(trimmed, radix: 16) else { return nil }
+    self.red = Double((value >> 16) & 0xFF) / 255.0
+    self.green = Double((value >> 8) & 0xFF) / 255.0
+    self.blue = Double(value & 0xFF) / 255.0
+  }
+
+  var hexString: String {
+    let redByte = Int((red * 255.0).rounded())
+    let greenByte = Int((green * 255.0).rounded())
+    let blueByte = Int((blue * 255.0).rounded())
+    return String(format: "#%02X%02X%02X", redByte, greenByte, blueByte)
+  }
+
+  var swiftUIColor: Color {
+    Color(.sRGB, red: red, green: green, blue: blue, opacity: 1.0)
+  }
+
+  /// WCAG 2.1 relative luminance in sRGB.
+  var relativeLuminance: Double {
+    func linearize(_ channel: Double) -> Double {
+      channel <= 0.03928 ? channel / 12.92 : pow((channel + 0.055) / 1.055, 2.4)
+    }
+    return 0.2126 * linearize(red) + 0.7152 * linearize(green) + 0.0722 * linearize(blue)
+  }
+
+  /// WCAG 2.1 contrast ratio against `other` (1.0 ... 21.0).
+  func contrastRatio(with other: CatbirdSRGBColor) -> Double {
+    let lighter = max(relativeLuminance, other.relativeLuminance)
+    let darker = min(relativeLuminance, other.relativeLuminance)
+    return (lighter + 0.05) / (darker + 0.05)
+  }
+
+  /// Darken along the exact same HSL hue/saturation until `contrastRatio(with: background) >= minimumRatio`.
+  func darkenedToContrast(
+    against background: CatbirdSRGBColor,
+    minimumRatio: Double
+  ) -> CatbirdSRGBColor {
+    if contrastRatio(with: background) >= minimumRatio {
+      return self
+    }
+    let hsl = toHSL()
+    var low = 0.0
+    var high = hsl.lightness
+    for _ in 0..<40 {
+      let mid = (low + high) * 0.5
+      let candidate = Self.fromHSL(HSL(hue: hsl.hue, saturation: hsl.saturation, lightness: mid))
+      if candidate.contrastRatio(with: background) >= minimumRatio {
+        low = mid
+      } else {
+        high = mid
+      }
+    }
+    return Self.fromHSL(HSL(hue: hsl.hue, saturation: hsl.saturation, lightness: low))
+  }
+
+  /// Highest-contrast accessible foreground (`#FFFFFF` vs `#0B0D12`) on `background`.
+  /// Prefers `#FFFFFF` whenever white already clears WCAG AA-normal (>= 4.5:1).
+  static func onAccent(for background: CatbirdSRGBColor) -> CatbirdSRGBColor {
+    let whiteRatio = pureWhite.contrastRatio(with: background)
+    let inkRatio = darkInk.contrastRatio(with: background)
+    if whiteRatio >= 4.5 || whiteRatio >= inkRatio {
+      return pureWhite
+    }
+    return darkInk
+  }
+
+  private struct HSL {
+    let hue: Double
+    let saturation: Double
+    let lightness: Double
+  }
+
+  private func toHSL() -> HSL {
+    let maxChannel = max(red, green, blue)
+    let minChannel = min(red, green, blue)
+    let delta = maxChannel - minChannel
+    let lightness = (maxChannel + minChannel) * 0.5
+    guard delta > 1e-9 else { return HSL(hue: 0, saturation: 0, lightness: lightness) }
+    let saturation = lightness > 0.5
+      ? delta / (2.0 - maxChannel - minChannel)
+      : delta / (maxChannel + minChannel)
+    let hue: Double
+    if maxChannel == red {
+      hue = ((green - blue) / delta + (green < blue ? 6.0 : 0.0)) / 6.0
+    } else if maxChannel == green {
+      hue = ((blue - red) / delta + 2.0) / 6.0
+    } else {
+      hue = ((red - green) / delta + 4.0) / 6.0
+    }
+    return HSL(hue: hue, saturation: saturation, lightness: lightness)
+  }
+
+  private static func fromHSL(_ hsl: HSL) -> CatbirdSRGBColor {
+    guard hsl.saturation > 1e-9 else {
+      return CatbirdSRGBColor(red: hsl.lightness, green: hsl.lightness, blue: hsl.lightness)
+    }
+    let upper = hsl.lightness < 0.5
+      ? hsl.lightness * (1.0 + hsl.saturation)
+      : hsl.lightness + hsl.saturation - hsl.lightness * hsl.saturation
+    let lower = 2.0 * hsl.lightness - upper
+    func hueToChannel(_ rawTurn: Double) -> Double {
+      var turn = rawTurn
+      if turn < 0 { turn += 1 }
+      if turn > 1 { turn -= 1 }
+      if turn < 1.0 / 6.0 { return lower + (upper - lower) * 6.0 * turn }
+      if turn < 0.5 { return upper }
+      if turn < 2.0 / 3.0 { return lower + (upper - lower) * (2.0 / 3.0 - turn) * 6.0 }
+      return lower
+    }
+    return CatbirdSRGBColor(
+      red: hueToChannel(hsl.hue + 1.0 / 3.0),
+      green: hueToChannel(hsl.hue),
+      blue: hueToChannel(hsl.hue - 1.0 / 3.0)
+    )
+  }
+
+  // MARK: - Canonical Token Constants (Brand.color + Color.pkl 0.2.0 Parity)
+
+  static let pureWhite = CatbirdSRGBColor(red: 1.0, green: 1.0, blue: 1.0)
+  static let darkInk = CatbirdSRGBColor(hex: "#0B0D12")!
+
+  static let catbirdFallbackAccent = CatbirdSRGBColor(hex: "#5192FF")!
+  static let catbirdFallbackTextAccent = CatbirdSRGBColor(hex: "#005EFF")!
+
+  // Light surfaces & text (`Color.pkl` 0.2.0 parity)
+  static let lightCanvas = CatbirdSRGBColor(hex: "#FFFFFF")!
+  static let lightCard = CatbirdSRGBColor(hex: "#F2F2F7")!
+  static let lightElevated = CatbirdSRGBColor(hex: "#FFFFFF")!
+  static let lightGrouped = CatbirdSRGBColor(hex: "#F2F2F7")!
+  static let lightOnSurface = CatbirdSRGBColor(hex: "#111318")!
+  static let lightOnSurfaceVariant = CatbirdSRGBColor(hex: "#5C5F66")!
+  static let lightOnSurfaceVariantHighContrast = CatbirdSRGBColor(hex: "#3C3E44")!
+  static let lightTertiaryText = CatbirdSRGBColor(hex: "#767980")!
+  static let lightDisabledText = CatbirdSRGBColor(hex: "#9B9EA6")!
+  static let lightBorderSubtle = CatbirdSRGBColor(hex: "#D1D1D6")!
+  static let lightBorderProminent = CatbirdSRGBColor(hex: "#76767B")!
+
+  // Dim surfaces & text (`Brand.color.dim`)
+  static let dimBackground = CatbirdSRGBColor(hex: Brand.color.dim.background) ?? CatbirdSRGBColor(hex: "#111318")!
+  static let dimSurface = CatbirdSRGBColor(hex: Brand.color.dim.surface) ?? CatbirdSRGBColor(hex: "#1D1F26")!
+  static let dimSurfaceContainer = CatbirdSRGBColor(hex: Brand.color.dim.surfaceContainer) ?? CatbirdSRGBColor(hex: "#23252D")!
+  static let dimSurfaceContainerHigh = CatbirdSRGBColor(hex: Brand.color.dim.surfaceContainerHigh) ?? CatbirdSRGBColor(hex: "#2A2D36")!
+  static let dimOnSurface = CatbirdSRGBColor(hex: Brand.color.dim.onSurface) ?? CatbirdSRGBColor(hex: "#E6E6EC")!
+  static let dimOnSurfaceVariant = CatbirdSRGBColor(hex: Brand.color.dim.onSurfaceVariant) ?? CatbirdSRGBColor(hex: "#A8A8B0")!
+  static let dimOnSurfaceVariantHighContrast = CatbirdSRGBColor(hex: "#C8C8D0")!
+  static let dimTertiaryText = CatbirdSRGBColor(hex: "#7E808A")!
+  static let dimDisabledText = CatbirdSRGBColor(hex: "#5A5C66")!
+  static let dimBorderSubtle = CatbirdSRGBColor(hex: "#323540")!
+  static let dimBorderProminent = CatbirdSRGBColor(hex: "#6E7280")!
+
+  // True Black surfaces & text (`Brand.color.trueBlack`)
+  static let trueBlackBackground = CatbirdSRGBColor(hex: Brand.color.trueBlack.background) ?? CatbirdSRGBColor(hex: "#000000")!
+  static let trueBlackSurface = CatbirdSRGBColor(hex: Brand.color.trueBlack.surface) ?? CatbirdSRGBColor(hex: "#0A0A0A")!
+  static let trueBlackSurfaceContainer = CatbirdSRGBColor(hex: Brand.color.trueBlack.surfaceContainer) ?? CatbirdSRGBColor(hex: "#121212")!
+  static let trueBlackSurfaceContainerHigh = CatbirdSRGBColor(hex: Brand.color.trueBlack.surfaceContainerHigh) ?? CatbirdSRGBColor(hex: "#1A1A1A")!
+  static let trueBlackOnSurface = CatbirdSRGBColor(hex: Brand.color.trueBlack.onSurface) ?? CatbirdSRGBColor(hex: "#F5F5F7")!
+  static let trueBlackOnSurfaceVariant = CatbirdSRGBColor(hex: Brand.color.trueBlack.onSurfaceVariant) ?? CatbirdSRGBColor(hex: "#8E8E93")!
+  static let trueBlackOnSurfaceVariantHighContrast = CatbirdSRGBColor(hex: "#B8B8BE")!
+  static let trueBlackTertiaryText = CatbirdSRGBColor(hex: "#68686E")!
+  static let trueBlackDisabledText = CatbirdSRGBColor(hex: "#48484D")!
+  static let trueBlackBorderSubtle = CatbirdSRGBColor(hex: "#262629")!
+  static let trueBlackBorderProminent = CatbirdSRGBColor(hex: "#636366")!
+
+  // Semantic colors (`Brand.color.semantic`)
+  static let semanticSuccess = CatbirdSRGBColor(hex: Brand.color.semantic.success) ?? CatbirdSRGBColor(hex: "#34C759")!
+  static let semanticWarning = CatbirdSRGBColor(hex: Brand.color.semantic.warning) ?? CatbirdSRGBColor(hex: "#FF9F0A")!
+  static let semanticDanger = CatbirdSRGBColor(hex: Brand.color.semantic.danger) ?? CatbirdSRGBColor(hex: "#FF3B30")!
+  static let semanticEncryptionShield = CatbirdSRGBColor(hex: Brand.color.semantic.encryptionShield) ?? CatbirdSRGBColor(hex: "#34C759")!
+}
+
+// MARK: - Unified CatbirdTheme Contract
+
+enum CatbirdSurface: CaseIterable, Sendable, Hashable {
+  case canvas
+  case card
+  case elevated
+  case grouped
+}
+
+enum CatbirdTextRoleColor: CaseIterable, Sendable, Hashable {
+  case primary
+  case secondary
+  case tertiary
+  case disabled
+}
+
+enum CatbirdBorderRole: CaseIterable, Sendable, Hashable {
+  case subtle
+  case prominent
+}
+
+enum CatbirdSemanticTone: CaseIterable, Sendable, Hashable {
+  case info
+  case accent
+  case success
+  case warning
+  case danger
+  case neutral
+  case encryptionShield
+}
+
+/// Snapshot of resolved semantic colors for the active appearance, dark-mode style,
+/// accent palette, and contrast setting. Injected via `@Environment(\.catbirdTheme)`.
+struct CatbirdThemeColors: Sendable, Equatable {
+  let colorScheme: ColorScheme
+  let darkThemeMode: ThemeManager.DarkThemeMode
+  let accentOption: AccentColorOption
+  let isHighContrast: Bool
+
+  var isDark: Bool { colorScheme == .dark }
+  var isTrueBlack: Bool { colorScheme == .dark && darkThemeMode == .black }
+  var isDim: Bool { colorScheme == .dark && darkThemeMode == .dim }
+
+  // MARK: - Accent Tokens
+
+  var accentChromeSRGB: CatbirdSRGBColor {
+    accentOption.chromeSRGB(for: colorScheme)
+  }
+
+  var accentTextSRGB: CatbirdSRGBColor {
+    accentOption.textAccentSRGB(for: colorScheme)
+  }
+
+  var onAccentSRGB: CatbirdSRGBColor {
+    accentOption.onAccentSRGB(for: colorScheme)
+  }
+
+  var accentChrome: Color { accentChromeSRGB.swiftUIColor }
+  var accentText: Color { accentTextSRGB.swiftUIColor }
+  var onAccent: Color { onAccentSRGB.swiftUIColor }
+
+  // MARK: - Surface Tokens
+
+  func surfaceSRGB(_ surface: CatbirdSurface) -> CatbirdSRGBColor {
+    switch (colorScheme, darkThemeMode, surface) {
+    case (.dark, .black, .canvas), (.dark, .black, .grouped):
+      return .trueBlackBackground
+    case (.dark, .black, .card):
+      return .trueBlackSurface
+    case (.dark, .black, .elevated):
+      return .trueBlackSurfaceContainer
+
+    case (.dark, .dim, .canvas), (.dark, .dim, .grouped):
+      return .dimBackground
+    case (.dark, .dim, .card):
+      return .dimSurface
+    case (.dark, .dim, .elevated):
+      return .dimSurfaceContainer
+
+    case (_, _, .canvas):
+      return .lightCanvas
+    case (_, _, .card):
+      return .lightCard
+    case (_, _, .elevated):
+      return .lightElevated
+    case (_, _, .grouped):
+      return .lightGrouped
+    }
+  }
+
+  func surface(_ surface: CatbirdSurface) -> Color {
+    surfaceSRGB(surface).swiftUIColor
+  }
+
+  // MARK: - Text Tokens
+
+  func textSRGB(_ role: CatbirdTextRoleColor) -> CatbirdSRGBColor {
+    if isTrueBlack {
+      return trueBlackTextSRGB(role)
+    }
+    if isDark {
+      return dimTextSRGB(role)
+    }
+    return lightTextSRGB(role)
+  }
+
+  private func trueBlackTextSRGB(_ role: CatbirdTextRoleColor) -> CatbirdSRGBColor {
+    switch role {
+    case .primary: return isHighContrast ? .pureWhite : .trueBlackOnSurface
+    case .secondary: return isHighContrast ? .trueBlackOnSurfaceVariantHighContrast : .trueBlackOnSurfaceVariant
+    case .tertiary: return isHighContrast ? .trueBlackOnSurfaceVariant : .trueBlackTertiaryText
+    case .disabled: return isHighContrast ? .trueBlackTertiaryText : .trueBlackDisabledText
+    }
+  }
+
+  private func dimTextSRGB(_ role: CatbirdTextRoleColor) -> CatbirdSRGBColor {
+    switch role {
+    case .primary: return isHighContrast ? .pureWhite : .dimOnSurface
+    case .secondary: return isHighContrast ? .dimOnSurfaceVariantHighContrast : .dimOnSurfaceVariant
+    case .tertiary: return isHighContrast ? .dimOnSurfaceVariant : .dimTertiaryText
+    case .disabled: return isHighContrast ? .dimTertiaryText : .dimDisabledText
+    }
+  }
+
+  private func lightTextSRGB(_ role: CatbirdTextRoleColor) -> CatbirdSRGBColor {
+    switch role {
+    case .primary: return isHighContrast ? CatbirdSRGBColor(red: 0, green: 0, blue: 0) : .lightOnSurface
+    case .secondary: return isHighContrast ? .lightOnSurfaceVariantHighContrast : .lightOnSurfaceVariant
+    case .tertiary: return isHighContrast ? .lightOnSurfaceVariant : .lightTertiaryText
+    case .disabled: return isHighContrast ? .lightTertiaryText : .lightDisabledText
+    }
+  }
+
+  func text(_ role: CatbirdTextRoleColor) -> Color {
+    textSRGB(role).swiftUIColor
+  }
+
+  // MARK: - Border Tokens
+
+  func borderSRGB(_ role: CatbirdBorderRole) -> CatbirdSRGBColor {
+    let effectiveRole: CatbirdBorderRole = isHighContrast ? .prominent : role
+    switch (colorScheme, darkThemeMode, effectiveRole) {
+    case (.dark, .black, .subtle):
+      return .trueBlackBorderSubtle
+    case (.dark, .black, .prominent):
+      return .trueBlackBorderProminent
+    case (.dark, .dim, .subtle):
+      return .dimBorderSubtle
+    case (.dark, .dim, .prominent):
+      return .dimBorderProminent
+    case (_, _, .subtle):
+      return .lightBorderSubtle
+    case (_, _, .prominent):
+      return .lightBorderProminent
+    }
+  }
+
+  func border(_ role: CatbirdBorderRole) -> Color {
+    borderSRGB(role).swiftUIColor
+  }
+
+  // MARK: - Semantic Tokens
+
+  func semanticSRGB(_ tone: CatbirdSemanticTone) -> CatbirdSRGBColor {
+    switch tone {
+    case .info, .accent:
+      return accentChromeSRGB
+    case .success:
+      return .semanticSuccess
+    case .warning:
+      return .semanticWarning
+    case .danger:
+      return .semanticDanger
+    case .neutral:
+      return textSRGB(.secondary)
+    case .encryptionShield:
+      return .semanticEncryptionShield
+    }
+  }
+
+  func semantic(_ tone: CatbirdSemanticTone) -> Color {
+    semanticSRGB(tone).swiftUIColor
+  }
+
+  // MARK: - Shadow Token
+
+  /// Theme-aware elevation shadow color (clear on OLED True Black where drop shadows disappear).
+  func shadowColor() -> Color {
+    if isTrueBlack {
+      return .clear
+    }
+    if isDark {
+      return Color.black.opacity(0.45)
+    }
+    return Color.black.opacity(0.14)
+  }
+
+  // MARK: - Resolvers
+
+  static func resolve(
+    themeManager: ThemeManager?,
+    colorScheme: ColorScheme,
+    contrast: ColorSchemeContrast = .standard
+  ) -> CatbirdThemeColors {
+    let effectiveScheme = themeManager?.effectiveColorScheme(for: colorScheme) ?? colorScheme
+    let darkMode = themeManager?.darkThemeMode ?? .dim
+    let accent = themeManager?.currentAccentColor ?? .catbird
+    return CatbirdThemeColors(
+      colorScheme: effectiveScheme,
+      darkThemeMode: darkMode,
+      accentOption: accent,
+      isHighContrast: contrast == .increased
+    )
+  }
+
+  static func resolve(
+    colorScheme: ColorScheme,
+    darkThemeMode: ThemeManager.DarkThemeMode = .dim,
+    accent: AccentColorOption = .catbird,
+    isHighContrast: Bool = false
+  ) -> CatbirdThemeColors {
+    CatbirdThemeColors(
+      colorScheme: colorScheme,
+      darkThemeMode: darkThemeMode,
+      accentOption: accent,
+      isHighContrast: isHighContrast
+    )
+  }
+}
+
+private struct CatbirdThemeKey: EnvironmentKey {
+  static let defaultValue = CatbirdThemeColors.resolve(
+    colorScheme: .light,
+    darkThemeMode: .dim,
+    accent: .catbird,
+    isHighContrast: false
+  )
+}
+
+extension EnvironmentValues {
+  var catbirdTheme: CatbirdThemeColors {
+    get { self[CatbirdThemeKey.self] }
+    set { self[CatbirdThemeKey.self] = newValue }
+  }
+}
+
+// MARK: - Theme Color System (Legacy Bridges Backed by Brand.color)
 
 /// Text style variations for different hierarchy levels
 enum TextStyle {
@@ -31,15 +467,15 @@ extension Color {
     
     // MARK: - Dynamic Background Colors
     
-    /// Primary background color that adapts to theme
+    /// Primary background color that adapts to theme (`Brand.color.dim.background` / `Brand.color.trueBlack.background`).
     static func dynamicBackground(_ themeManager: ThemeManager, currentScheme: ColorScheme) -> Color {
         let colorScheme = themeManager.effectiveColorScheme(for: currentScheme)
         
         switch (colorScheme, themeManager.darkThemeMode) {
         case (.dark, .black):
-            return Color(red: 0, green: 0, blue: 0) // Pure black
+            return CatbirdSRGBColor.trueBlackBackground.swiftUIColor
         case (.dark, .dim):
-            return Color(red: 0.18, green: 0.18, blue: 0.20) // Proper gray for dim mode
+            return CatbirdSRGBColor.dimBackground.swiftUIColor
         default:
             #if os(iOS)
             return Color(.systemBackground)
@@ -49,29 +485,29 @@ extension Color {
         }
     }
     
-    /// Secondary background color that adapts to theme
+    /// Secondary background color that adapts to theme (`Brand.color.dim.surfaceContainer` / `Brand.color.trueBlack.surfaceContainer`).
     static func dynamicSecondaryBackground(_ themeManager: ThemeManager, currentScheme: ColorScheme) -> Color {
         let colorScheme = themeManager.effectiveColorScheme(for: currentScheme)
         
         switch (colorScheme, themeManager.darkThemeMode) {
         case (.dark, .black):
-            return Color(white: 0.04) // Subtle elevation
+            return CatbirdSRGBColor.trueBlackSurfaceContainer.swiftUIColor
         case (.dark, .dim):
-            return Color(red: 0.25, green: 0.25, blue: 0.27) // Lighter gray for secondary
+            return CatbirdSRGBColor.dimSurfaceContainer.swiftUIColor
         default:
             return Color(platformColor: PlatformColor.platformSecondarySystemBackground)
         }
     }
     
-    /// Tertiary background color that adapts to theme
+    /// Tertiary background color that adapts to theme (`Brand.color.dim.surfaceContainerHigh` / `Brand.color.trueBlack.surfaceContainerHigh`).
     static func dynamicTertiaryBackground(_ themeManager: ThemeManager, currentScheme: ColorScheme) -> Color {
         let colorScheme = themeManager.effectiveColorScheme(for: currentScheme)
         
         switch (colorScheme, themeManager.darkThemeMode) {
         case (.dark, .black):
-            return Color(white: 0.06) // More elevation
+            return CatbirdSRGBColor.trueBlackSurfaceContainerHigh.swiftUIColor
         case (.dark, .dim):
-            return Color(red: 0.32, green: 0.32, blue: 0.34) // Even lighter gray for tertiary
+            return CatbirdSRGBColor.dimSurfaceContainerHigh.swiftUIColor
         default:
             return Color(platformColor: PlatformColor.platformTertiarySystemBackground)
         }
@@ -83,9 +519,9 @@ extension Color {
         
         switch (colorScheme, themeManager.darkThemeMode) {
         case (.dark, .black):
-            return Color(red: 0, green: 0, blue: 0) // Pure black
+            return CatbirdSRGBColor.trueBlackBackground.swiftUIColor
         case (.dark, .dim):
-            return Color(red: 0.15, green: 0.15, blue: 0.17) // Slightly darker gray for grouped background
+            return CatbirdSRGBColor.dimBackground.swiftUIColor
         default:
             #if os(iOS)
             return Color(.systemGroupedBackground)
@@ -106,67 +542,36 @@ extension Color {
     
     // MARK: - Elevated Backgrounds (with hierarchy)
     
-    /// Elevated background with proper hierarchy for depth
+    /// Elevated background with proper hierarchy for depth (`Brand.color.dim` / `Brand.color.trueBlack`).
     static func elevatedBackground(_ themeManager: ThemeManager, elevation: ColorElevation = .low, currentScheme: ColorScheme) -> Color {
         let colorScheme = themeManager.effectiveColorScheme(for: currentScheme)
-        
         guard colorScheme == .dark else {
-            // Light mode uses standard elevation
-            switch elevation {
-            case .base:
-                #if os(iOS)
-                return Color(.systemBackground)
-                #elseif os(macOS)
-                return Color(.windowBackgroundColor)
-                #endif
-            case .low, .medium:
-                #if os(iOS)
-                return Color(UIColor.secondarySystemBackground)
-                #elseif os(macOS)
-                return Color(.controlBackgroundColor)
-                #endif
-            case .high, .modal, .popover:
-                #if os(iOS)
-                return Color(platformColor: PlatformColor.platformTertiarySystemBackground)
-                #elseif os(macOS)
-                return Color(.underPageBackgroundColor)
-                #endif
-            }
+            return lightElevatedBackground(elevation)
         }
-        
-        // Dark mode elevation
-        if themeManager.darkThemeMode == .black {
-            // True black mode with subtle elevation steps
-            switch elevation {
-            case .base:
-                return Color(white: 0.00) // Pure black
-            case .low:
-                return Color(white: 0.02) // Cards
-            case .medium:
-                return Color(white: 0.04) // Elevated cards
-            case .high:
-                return Color(white: 0.06) // Modals
-            case .modal:
-                return Color(white: 0.08) // Modal overlays
-            case .popover:
-                return Color(white: 0.10) // Popovers
-            }
-        } else {
-            // Dim mode with proper gray hierarchy
-            switch elevation {
-            case .base:
-                return Color(red: 0.18, green: 0.18, blue: 0.20) // Base gray
-            case .low:
-                return Color(red: 0.22, green: 0.22, blue: 0.24) // Cards
-            case .medium:
-                return Color(red: 0.25, green: 0.25, blue: 0.27) // Elevated
-            case .high:
-                return Color(red: 0.28, green: 0.28, blue: 0.30) // Modals
-            case .modal:
-                return Color(red: 0.32, green: 0.32, blue: 0.34) // Modal overlays
-            case .popover:
-                return Color(red: 0.35, green: 0.35, blue: 0.37) // Popovers
-            }
+        return darkElevatedBackground(elevation, isTrueBlack: themeManager.darkThemeMode == .black)
+    }
+
+    private static func lightElevatedBackground(_ elevation: ColorElevation) -> Color {
+        switch elevation {
+        case .base:
+            return systemBackground
+        case .low, .medium:
+            return secondarySystemBackground
+        case .high, .modal, .popover:
+            return tertiarySystemBackground
+        }
+    }
+
+    private static func darkElevatedBackground(_ elevation: ColorElevation, isTrueBlack: Bool) -> Color {
+        switch (isTrueBlack, elevation) {
+        case (true, .base): return CatbirdSRGBColor.trueBlackBackground.swiftUIColor
+        case (true, .low): return CatbirdSRGBColor.trueBlackSurface.swiftUIColor
+        case (true, .medium): return CatbirdSRGBColor.trueBlackSurfaceContainer.swiftUIColor
+        case (true, .high), (true, .modal), (true, .popover): return CatbirdSRGBColor.trueBlackSurfaceContainerHigh.swiftUIColor
+        case (false, .base): return CatbirdSRGBColor.dimBackground.swiftUIColor
+        case (false, .low): return CatbirdSRGBColor.dimSurface.swiftUIColor
+        case (false, .medium): return CatbirdSRGBColor.dimSurfaceContainer.swiftUIColor
+        case (false, .high), (false, .modal), (false, .popover): return CatbirdSRGBColor.dimSurfaceContainerHigh.swiftUIColor
         }
     }
     
@@ -174,138 +579,44 @@ extension Color {
     
     /// Dynamic text color with proper contrast for readability
     static func dynamicText(_ themeManager: ThemeManager, style: TextStyle = .primary, currentScheme: ColorScheme, increaseContrast: Bool = false) -> Color {
-        let colorScheme = themeManager.effectiveColorScheme(for: currentScheme)
-        let isBlackMode = colorScheme == .dark && themeManager.darkThemeMode == .black
-        
-        switch style {
-        case .primary:
-            if isBlackMode {
-                return increaseContrast ? Color(white: 1.0) : Color(white: 0.95)
-            } else if colorScheme == .dark {
-                return increaseContrast ? Color(white: 0.98) : Color(white: 0.92)
-            } else {
-                return increaseContrast ? Color.black : .primary
+        let theme = CatbirdThemeColors.resolve(
+            themeManager: themeManager,
+            colorScheme: currentScheme,
+            contrast: increaseContrast ? .increased : .standard
+        )
+        let role: CatbirdTextRoleColor = {
+            switch style {
+            case .primary: return .primary
+            case .secondary: return .secondary
+            case .tertiary: return .tertiary
+            case .disabled: return .disabled
             }
-            
-        case .secondary:
-            if isBlackMode {
-                return increaseContrast ? Color(white: 0.85) : Color(white: 0.70)
-            } else if colorScheme == .dark {
-                return increaseContrast ? Color(white: 0.80) : Color(white: 0.65)
-            } else {
-                #if os(iOS)
-                return increaseContrast ? Color(.systemGray) : .secondary
-                #elseif os(macOS)
-                return increaseContrast ? Color(.secondaryLabelColor) : Color(.secondaryLabelColor)
-                #endif
-            }
-            
-        case .tertiary:
-            if isBlackMode {
-                return increaseContrast ? Color(white: 0.65) : Color(white: 0.50)
-            } else if colorScheme == .dark {
-                return increaseContrast ? Color(white: 0.60) : Color(white: 0.45)
-            } else {
-                #if os(iOS)
-                return increaseContrast ? Color(.systemGray2) : Color(.tertiaryLabel)
-                #elseif os(macOS)
-                return increaseContrast ? Color(.tertiaryLabelColor) : Color(.tertiaryLabelColor)
-                #endif
-            }
-            
-        case .disabled:
-            if isBlackMode {
-                return increaseContrast ? Color(white: 0.50) : Color(white: 0.35)
-            } else if colorScheme == .dark {
-                return increaseContrast ? Color(white: 0.45) : Color(white: 0.30)
-            } else {
-                #if os(iOS)
-                return increaseContrast ? Color(platformColor: PlatformColor.platformSystemGray3) : Color(.quaternaryLabel)
-                #elseif os(macOS)
-                return increaseContrast ? Color(.quaternaryLabelColor) : Color(.quaternaryLabelColor)
-                #endif
-            }
-        }
+        }()
+        return theme.text(role)
     }
     
     // MARK: - Separator Colors
     
     /// Dynamic separator color
     static func dynamicSeparator(_ themeManager: ThemeManager, currentScheme: ColorScheme, increaseContrast: Bool = false) -> Color {
-        let colorScheme = themeManager.effectiveColorScheme(for: currentScheme)
-        
-        switch (colorScheme, themeManager.darkThemeMode) {
-        case (.dark, .black):
-            return increaseContrast ? Color(white: 0.30, opacity: 0.8) : Color(white: 0.15, opacity: 0.6)
-        case (.dark, .dim):
-            return increaseContrast ? Color(white: 0.60, opacity: 0.8) : Color(white: 0.45, opacity: 0.6)
-        default:
-            #if os(iOS)
-            return increaseContrast ? Color(platformColor: PlatformColor.platformOpaqueSeparator) : Color(platformColor: PlatformColor.platformSeparator)
-            #elseif os(macOS)
-            return Color(platformColor: PlatformColor.platformSeparator)
-            #endif
-        }
+        let theme = CatbirdThemeColors.resolve(
+            themeManager: themeManager,
+            colorScheme: currentScheme,
+            contrast: increaseContrast ? .increased : .standard
+        )
+        return theme.border(increaseContrast ? .prominent : .subtle)
     }
     
     // MARK: - Border Colors
     
     /// Dynamic border color for cards and containers
     static func dynamicBorder(_ themeManager: ThemeManager, isProminent: Bool = false, currentScheme: ColorScheme, increaseContrast: Bool = false) -> Color {
-        let colorScheme = themeManager.effectiveColorScheme(for: currentScheme)
-        
-        switch (colorScheme, themeManager.darkThemeMode) {
-        case (.dark, .black):
-            if increaseContrast {
-                return isProminent
-                    ? Color(white: 0.40, opacity: 0.8)
-                    : Color(white: 0.30, opacity: 0.6)
-            } else {
-                return isProminent
-                    ? Color(white: 0.25, opacity: 0.5)
-                    : Color(white: 0.20, opacity: 0.3)
-            }
-        case (.dark, .dim):
-            if increaseContrast {
-                return isProminent
-                    ? Color(white: 0.65, opacity: 0.8)
-                    : Color(white: 0.55, opacity: 0.7)
-            } else {
-                return isProminent
-                    ? Color(white: 0.50, opacity: 0.6)
-                    : Color(white: 0.40, opacity: 0.5)
-            }
-        default:
-            if increaseContrast {
-                if isProminent {
-                    #if os(iOS)
-                    return Color(.systemGray2)
-                    #elseif os(macOS)
-                    return Color(.controlColor)
-                    #endif
-                } else {
-                    #if os(iOS)
-                    return Color(.systemGray4)
-                    #elseif os(macOS)
-                    return Color(.controlAccentColor)
-                    #endif
-                }
-            } else {
-                if isProminent {
-                    #if os(iOS)
-                    return Color(platformColor: PlatformColor.platformSystemGray3)
-                    #elseif os(macOS)
-                    return Color(.controlColor)
-                    #endif
-                } else {
-                    #if os(iOS)
-                    return Color(platformColor: PlatformColor.platformSystemGray5)
-                    #elseif os(macOS)
-                    return Color(.gridColor)
-                    #endif
-                }
-            }
-        }
+        let theme = CatbirdThemeColors.resolve(
+            themeManager: themeManager,
+            colorScheme: currentScheme,
+            contrast: increaseContrast ? .increased : .standard
+        )
+        return theme.border(isProminent || increaseContrast ? .prominent : .subtle)
     }
     
     // MARK: - Special Purpose Colors
@@ -331,278 +642,42 @@ extension Color {
     
     /// Shadow color that adapts to theme
     static func dynamicShadow(_ themeManager: ThemeManager, currentScheme: ColorScheme) -> Color {
-        let colorScheme = themeManager.effectiveColorScheme(for: currentScheme)
-        
-        if colorScheme == .dark && themeManager.darkThemeMode == .black {
-            // No shadows in true black mode (they won't be visible)
-            return Color.clear
-        } else if colorScheme == .dark {
-            // Subtle shadows in dim mode
-            return Color.black.opacity(0.5)
-        } else {
-            // Standard shadows in light mode
-            return Color.black.opacity(0.15)
-        }
+        CatbirdThemeColors.resolve(themeManager: themeManager, colorScheme: currentScheme).shadowColor()
     }
     
     // MARK: - Cross-Platform System Colors
-    
-    /// Cross-platform system background color
-    static var systemBackground: Color {
-        #if os(iOS)
-        return Color(.systemBackground)
-        #elseif os(macOS)
-        return Color(.windowBackgroundColor)
-        #endif
-    }
-    
-    /// Cross-platform secondary system background color
-    static var secondarySystemBackground: Color {
-        #if os(iOS)
-        return Color(platformColor: PlatformColor.platformSecondarySystemBackground)
-        #elseif os(macOS)
-        return Color(.controlBackgroundColor)
-        #endif
-    }
-    
-    /// Cross-platform tertiary system background color
-    static var tertiarySystemBackground: Color {
-        #if os(iOS)
-        return Color(platformColor: PlatformColor.platformTertiarySystemBackground)
-        #elseif os(macOS)
-        return Color(.underPageBackgroundColor)
-        #endif
-    }
-    
-    /// Cross-platform system grouped background color
-    static var systemGroupedBackground: Color {
-        #if os(iOS)
-        return Color(.systemGroupedBackground)
-        #elseif os(macOS)
-        return Color(.windowBackgroundColor)
-        #endif
-    }
-    
-    /// Cross-platform label color
-    static var label: Color {
-        #if os(iOS)
-        return Color(.label)
-        #elseif os(macOS)
-        return Color(.labelColor)
-        #endif
-    }
-    
-    /// Cross-platform secondary label color
-    static var secondaryLabel: Color {
-        #if os(iOS)
-        return Color(.secondaryLabel)
-        #elseif os(macOS)
-        return Color(.secondaryLabelColor)
-        #endif
-    }
-    
-    /// Cross-platform tertiary label color
-    static var tertiaryLabel: Color {
-        #if os(iOS)
-        return Color(.tertiaryLabel)
-        #elseif os(macOS)
-        return Color(.tertiaryLabelColor)
-        #endif
-    }
-    
-    /// Cross-platform quaternary label color
-    static var quaternaryLabel: Color {
-        #if os(iOS)
-        return Color(.quaternaryLabel)
-        #elseif os(macOS)
-        return Color(.quaternaryLabelColor)
-        #endif
-    }
-    
-    /// Cross-platform system fill color
-    static var systemFill: Color {
-        #if os(iOS)
-        return Color(.systemFill)
-        #elseif os(macOS)
-        return Color(.controlBackgroundColor)
-        #endif
-    }
-    
-    /// Cross-platform quaternary system fill color
-    static var quaternarySystemFill: Color {
-        #if os(iOS)
-        return Color(.quaternarySystemFill)
-        #elseif os(macOS)
-        return Color(.controlBackgroundColor).opacity(0.3)
-        #endif
-    }
-    
-    /// Cross-platform system blue color
-    static var systemBlue: Color {
-        #if os(iOS)
-        return Color(.systemBlue)
-        #elseif os(macOS)
-        return Color(.systemBlue)
-        #endif
-    }
-    
-    /// Cross-platform system red color
-    static var systemRed: Color {
-        #if os(iOS)
-        return Color(.systemRed)
-        #elseif os(macOS)
-        return Color(.systemRed)
-        #endif
-    }
-    
-    /// Cross-platform system green color
-    static var systemGreen: Color {
-        #if os(iOS)
-        return Color(.systemGreen)
-        #elseif os(macOS)
-        return Color(.systemGreen)
-        #endif
-    }
-    
-    /// Cross-platform system orange color
-    static var systemOrange: Color {
-        #if os(iOS)
-        return Color(.systemOrange)
-        #elseif os(macOS)
-        return Color(.systemOrange)
-        #endif
-    }
-    
-    /// Cross-platform system yellow color
-    static var systemYellow: Color {
-        #if os(iOS)
-        return Color(.systemYellow)
-        #elseif os(macOS)
-        return Color(.systemYellow)
-        #endif
-    }
-    
-    /// Cross-platform system pink color
-    static var systemPink: Color {
-        #if os(iOS)
-        return Color(.systemPink)
-        #elseif os(macOS)
-        return Color(.systemPink)
-        #endif
-    }
-    
-    /// Cross-platform system purple color
-    static var systemPurple: Color {
-        #if os(iOS)
-        return Color(.systemPurple)
-        #elseif os(macOS)
-        return Color(.systemPurple)
-        #endif
-    }
-    
-    /// Cross-platform system teal color
-    static var systemTeal: Color {
-        #if os(iOS)
-        return Color(.systemTeal)
-        #elseif os(macOS)
-        return Color(.systemTeal)
-        #endif
-    }
-    
-    /// Cross-platform system indigo color
-    static var systemIndigo: Color {
-        #if os(iOS)
-        return Color(.systemIndigo)
-        #elseif os(macOS)
-        return Color(.systemIndigo)
-        #endif
-    }
-    
-    /// Cross-platform system brown color
-    static var systemBrown: Color {
-        #if os(iOS)
-        return Color(.systemBrown)
-        #elseif os(macOS)
-        return Color(.systemBrown)
-        #endif
-    }
-    
-    /// Cross-platform system gray color
-    static var systemGray: Color {
-        #if os(iOS)
-        return Color(.systemGray)
-        #elseif os(macOS)
-        return Color(.systemGray)
-        #endif
-    }
-    
-    /// Cross-platform system gray2 color
-    static var systemGray2: Color {
-        #if os(iOS)
-        return Color(.systemGray2)
-        #elseif os(macOS)
-        return Color(.controlColor)
-        #endif
-    }
-    
-    /// Cross-platform system gray3 color
-    static var systemGray3: Color {
-        #if os(iOS)
-        return Color(platformColor: PlatformColor.platformSystemGray3)
-        #elseif os(macOS)
-        return Color(.controlColor)
-        #endif
-    }
-    
-    /// Cross-platform system gray4 color
-    static var systemGray4: Color {
-        #if os(iOS)
-        return Color(.systemGray4)
-        #elseif os(macOS)
-        return Color(nsColor: NSColor.systemGray.withAlphaComponent(0.4))
-        #endif
-    }
-    
-    /// Cross-platform system gray5 color
-    static var systemGray5: Color {
-        #if os(iOS)
-        return Color(platformColor: PlatformColor.platformSystemGray5)
-        #elseif os(macOS)
-        return Color(.gridColor)
-        #endif
-    }
-    
-    /// Cross-platform system gray6 color
-    static var systemGray6: Color {
-        #if os(iOS)
-        return Color(platformColor: PlatformColor.platformSystemGray6)
-        #elseif os(macOS)
-        return Color(.controlBackgroundColor)
-        #endif
-    }
-    
-    /// Cross-platform separator color
-    static var separator: Color {
-        #if os(iOS)
-        return Color(platformColor: PlatformColor.platformSeparator)
-        #elseif os(macOS)
-        return Color(platformColor: PlatformColor.platformSeparator)
-        #endif
-    }
-    
-    /// Cross-platform opaque separator color
-    static var opaqueSeparator: Color {
-        #if os(iOS)
-        return Color(.opaqueSeparator)
-        #elseif os(macOS)
-        return Color(platformColor: PlatformColor.platformSeparator)
-        #endif
-    }
+
+    static var systemBackground: Color { Color(platformColor: PlatformColor.platformSystemBackground) }
+    static var secondarySystemBackground: Color { Color(platformColor: PlatformColor.platformSecondarySystemBackground) }
+    static var tertiarySystemBackground: Color { Color(platformColor: PlatformColor.platformTertiarySystemBackground) }
+    static var systemGroupedBackground: Color { Color(platformColor: PlatformColor.platformSystemGroupedBackground) }
+    static var label: Color { Color(platformColor: PlatformColor.platformLabel) }
+    static var secondaryLabel: Color { Color(platformColor: PlatformColor.platformSecondaryLabel) }
+    static var tertiaryLabel: Color { Color(platformColor: PlatformColor.platformTertiaryLabel) }
+    static var quaternaryLabel: Color { Color(platformColor: PlatformColor.platformQuaternaryLabel) }
+    static var systemFill: Color { Color(platformColor: PlatformColor.platformSystemFill) }
+    static var quaternarySystemFill: Color { Color(platformColor: PlatformColor.platformQuaternarySystemFill) }
+    static var systemBlue: Color { Color(platformColor: PlatformColor.platformSystemBlue) }
+    static var systemRed: Color { Color(platformColor: PlatformColor.platformSystemRed) }
+    static var systemGreen: Color { Color(platformColor: PlatformColor.platformSystemGreen) }
+    static var systemOrange: Color { Color(platformColor: PlatformColor.platformSystemOrange) }
+    static var systemYellow: Color { Color(platformColor: PlatformColor.platformSystemYellow) }
+    static var systemPink: Color { Color(platformColor: PlatformColor.platformSystemPink) }
+    static var systemPurple: Color { Color(platformColor: PlatformColor.platformSystemPurple) }
+    static var systemTeal: Color { Color(platformColor: PlatformColor.platformSystemTeal) }
+    static var systemIndigo: Color { Color(platformColor: PlatformColor.platformSystemIndigo) }
+    static var systemBrown: Color { Color(platformColor: PlatformColor.platformSystemBrown) }
+    static var systemGray: Color { Color(platformColor: PlatformColor.platformSystemGray) }
+    static var systemGray2: Color { Color(platformColor: PlatformColor.platformSystemGray2) }
+    static var systemGray3: Color { Color(platformColor: PlatformColor.platformSystemGray3) }
+    static var systemGray4: Color { Color(platformColor: PlatformColor.platformSystemGray4) }
+    static var systemGray5: Color { Color(platformColor: PlatformColor.platformSystemGray5) }
+    static var systemGray6: Color { Color(platformColor: PlatformColor.platformSystemGray6) }
+    static var separator: Color { Color(platformColor: PlatformColor.platformSeparator) }
+    static var opaqueSeparator: Color { Color(platformColor: PlatformColor.platformOpaqueSeparator) }
 }
 
 // MARK: - Theme Color Cache
-
-import os
 
 /// Performance optimization: Cache calculated colors with lock-based thread safety
 /// Uses OSAllocatedUnfairLock for minimal blocking (nanoseconds) - much faster than DispatchQueue.sync
@@ -613,16 +688,12 @@ class ThemeColorCache {
     private let lock = OSAllocatedUnfairLock()
 
     func color(for key: String, generator: () -> Color) -> Color {
-        // Fast path: check cache with minimal lock time
         let cached: Color? = lock.withLock { cache[key] }
         if let cached = cached {
             return cached
         }
 
-        // Generate color outside of lock
         let color = generator()
-
-        // Store with minimal lock time
         lock.withLock { cache[key] = color }
         return color
     }
@@ -632,7 +703,6 @@ class ThemeColorCache {
     }
 
     /// Selectively invalidate cache entries for a specific theme
-    /// This reduces the performance impact compared to full invalidation
     func invalidateTheme(_ theme: String) {
         lock.withLock {
             cache = cache.filter { !$0.key.hasPrefix(theme) && !$0.key.hasPrefix("dynamic") }
@@ -686,7 +756,7 @@ extension Color {
     }
 }
 
-// MARK: - UIColor Extensions (for UIKit components)
+// MARK: - UIColor / NSColor Extensions
 
 #if os(iOS)
 extension UIColor {
@@ -703,8 +773,6 @@ extension UIColor {
     ) -> UIColor {
         return UIColor { traitCollection in
             if traitCollection.userInterfaceStyle == .dark {
-                // This is a limitation - we can't access ThemeManager here
-                // For now, return the dim mode color
                 return dark(.dim)
             } else {
                 return light()

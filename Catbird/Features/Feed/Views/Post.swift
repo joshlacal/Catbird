@@ -330,9 +330,17 @@ struct Post: View, Equatable {
     /// Builds the facet-styled base string. Called once per key by the enrichment
     /// task, and inline by `body` only until that task has populated the cache.
     private static func buildBaseStyledString(post: AppBskyFeedPost, key: PostStyledTextKey) -> AttributedString {
-        post.facetsAsAttributedString.applyingPostBodyLinkAccent(
+        let accentOption = AccentColorOption(rawValue: key.accentColor) ?? .catbird
+        let darkMode: ThemeManager.DarkThemeMode = key.darkThemeMode == "black" ? .black : .dim
+        let resolvedTheme = CatbirdThemeColors.resolve(
+            colorScheme: key.colorScheme,
+            darkThemeMode: darkMode,
+            accent: accentOption
+        )
+        return post.facetsAsAttributedString.applyingPostBodyLinkAccent(
             highlightLinks: key.highlightLinks,
-            linkStyle: key.linkStyle
+            linkStyle: key.linkStyle,
+            accentColor: resolvedTheme.accentText
         )
     }
 

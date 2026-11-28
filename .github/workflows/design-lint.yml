@@ -1,0 +1,119 @@
+name: Design System Lint
+
+# Enforces Catbird's neurotic design-system guardrails on every PR and push:
+#   1. SwiftSyntax unit tests for `tools/design-lint`
+#   2. Strict design-only SwiftLint (`.swiftlint-design.yml`, no lenient mode)
+#   3. SwiftSyntax AST linter + monotonic per-(file, rule) ratchet (`.design-lint-budget.json`)
+#   4. PR debt gate: increasing ANY budgeted violation count requires BOTH the
+#      `DESIGN_DEBT_APPROVED` PR label and a `docs/DECISIONS.md` reference.
+
+on:
+  pull_request:
+    paths:
+      - "**/*.swift"
+      - ".swiftlint-design.yml"
+      - ".design-lint-budget.json"
+      - "scripts/design_lint.sh"
+      - "tools/design-lint/**"
+      - ".github/workflows/design-lint.yml"
+  push:
+    branches: [main, staging]
+    paths:
+      - "**/*.swift"
+      - ".swiftlint-design.yml"
+      - ".design-lint-budget.json"
+      - "scripts/design_lint.sh"
+      - "tools/design-lint/**"
+      - ".github/workflows/design-lint.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: design-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  design-lint:
+    runs-on: xcode-27
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Ensure SwiftLint is installed
+        run: |
+          if ! command -v swiftlint >/dev/null 2>&1; then
+            brew install swiftlint
+          fi
+          swiftlint version
+
+      - name: Cache tools/design-lint SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: tools/design-lint/.build
+          key: design-lint-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/design-lint/Package.swift', 'tools/design-lint/Package.resolved', 'tools/design-lint/Sources/**') }}
+          restore-keys: |
+            design-lint-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Run tools/design-lint unit tests
+        working-directory: tools/design-lint
+        run: swift test
+
+      - name: Build tools/design-lint release binary
+        working-directory: tools/design-lint
+        run: swift build -c release --product design-lint
+
+      - name: Run full design-system lint & monotonic ratchet check
+        run: |
+          set -euo pipefail
+          DESIGN_LINT_FORCE_RELEASE=1 ./scripts/design_lint.sh --check-ratchet
+
+      - name: Enforce DESIGN_DEBT_APPROVED gate on budget ceiling increases
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_LABELS_JSON: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          if ! git cat-file -e "${BASE_SHA}:.design-lint-budget.json" 2>/dev/null; then
+            echo "Base commit has no .design-lint-budget.json (initial introduction); skipping diff gate."
+            exit 0
+          fi
+
+          git show "${BASE_SHA}:.design-lint-budget.json" > /tmp/base-design-lint-budget.json
+          if ./scripts/design_lint.sh --diff-budgets /tmp/base-design-lint-budget.json .design-lint-budget.json; then
+            echo "No budget ceiling increases ✓"
+            exit 0
+          fi
+
+          echo "::warning::This PR increases one or more .design-lint-budget.json ceilings."
+
+          has_label="$(printf '%s' "$PR_LABELS_JSON" | jq -r 'index("DESIGN_DEBT_APPROVED") != null')"
+          has_decision_ref=0
+          if printf '%s' "$PR_BODY" | grep -qE 'docs/DECISIONS\.md|DECISIONS\.md'; then
+            has_decision_ref=1
+          elif git diff --name-only "${BASE_SHA}...HEAD" | grep -qE '(^|/)DECISIONS\.md$'; then
+            has_decision_ref=1
+          fi
+
+          if [[ "$has_label" != "true" ]]; then
+            echo "::error::Budget ceiling increased without required PR label 'DESIGN_DEBT_APPROVED'. Fix the design-system violations or obtain explicit approval."
+            exit 1
+          fi
+
+          if [[ "$has_decision_ref" -ne 1 ]]; then
+            echo "::error::Budget ceiling increased without a docs/DECISIONS.md reference in the PR description (or DECISIONS.md diff)."
+            exit 1
+          fi
+
+          echo "Budget increase explicitly approved via DESIGN_DEBT_APPROVED + DECISIONS.md reference."

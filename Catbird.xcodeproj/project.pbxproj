@@ -28,7 +28,6 @@
 		219E58052EBC27FF00C8D6F2 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 219E58042EBC27FF00C8D6F2 /* Foundation.framework */; };
 		21A0C0DE300C0DE100000001 /* CatbirdMLSCore in Frameworks */ = {isa = PBXBuildFile; productRef = 21A0C0DE300C0DE100000002 /* CatbirdMLSCore */; };
 		21A0C0DE300C0DE100000003 /* PetrelCatbird in Frameworks */ = {isa = PBXBuildFile; productRef = 21A0C0DE300C0DE100000004 /* PetrelCatbird */; };
-		21AC6E642DD0E0E700251536 /* .swiftlint.yml in Resources */ = {isa = PBXBuildFile; fileRef = 21AC6E632DD0E0E700251536 /* .swiftlint.yml */; };
 		21DDE5EF2DF4EDAF009E9825 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; platformFilters = (ios, macos, ); };
 		21DDE5F02DF4EDAF009E9825 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
 		21E1082A2D70BE6F0030A71C /* OrderedCollections in Frameworks */ = {isa = PBXBuildFile; productRef = 21E108292D70BE6F0030A71C /* OrderedCollections */; };
@@ -743,7 +742,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				21AC6E642DD0E0E700251536 /* .swiftlint.yml in Resources */,
 				215795952D9E16F60030A8C7 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1774,7 +1772,7 @@
 			repositoryURL = "https://github.com/joshlacal/CatbirdBrand.git";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 0.1.0;
+				minimumVersion = 0.2.0;
 			};
 		};
 		218866A3300B678A00215DE7 /* XCRemoteSwiftPackageReference "BluemojiKit" */ = {

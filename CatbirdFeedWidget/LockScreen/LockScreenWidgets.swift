@@ -132,30 +132,30 @@ struct FeedRectangularView: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: WidgetSpacing.xs) {
+    VStack(alignment: .leading, spacing: WidgetSpacing.hairline) {
       Text(
         "Latest Posts",
         comment: "Header label inside the lock-screen Latest Posts widget."
       )
-      .font(.system(size: 10, weight: .semibold))
+      .widgetFont(.caption, weight: .semibold)
       .foregroundStyle(.secondary)
 
       if entry.posts.isEmpty {
         Text(emptyStatePrompt)
-          .font(.system(size: 10))
+          .widgetFont(.caption)
           .foregroundStyle(.tertiary)
       } else {
         ForEach(Array(entry.posts.prefix(2)), id: \.id) { post in
-          HStack(spacing: WidgetSpacing.sm) {
+          HStack(spacing: WidgetSpacing.xs) {
             Circle()
-              .fill(Color.gray.opacity(0.4))
+              .fill(Color.secondary.opacity(0.35))
               .frame(width: WidgetAvatarSize.xs, height: WidgetAvatarSize.xs)
 
             Text(
               "\(post.authorName): \(post.text)",
               comment: "Compact lock-screen post row: first placeholder is the author's name, second is the post text."
             )
-            .font(.system(size: 10))
+            .widgetFont(.caption)
             .lineLimit(1)
           }
         }

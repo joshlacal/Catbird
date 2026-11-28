@@ -22,6 +22,71 @@
       "layers" : [
         {
           "blend-mode" : "normal",
+          "fill" : "automatic",
+          "glass" : false,
+          "hidden" : false,
+          "image-name" : "Catbird-3D-icon-transparent-2048.png",
+          "name" : "Catbird-3D-icon-transparent-2048",
+          "position" : {
+            "scale" : 1.6,
+            "translation-in-points" : [
+              -12.830128838525752,
+              250.12999999999988
+            ]
+          }
+        }
+      ],
+      "lighting" : "individual",
+      "position" : {
+        "scale" : 0.44,
+        "translation-in-points" : [
+          0,
+          10
+        ]
+      },
+      "refractivity" : {
+        "depth" : 0.6721484375,
+        "enabled" : false,
+        "strength" : -0.5942578125
+      },
+      "shadow-specializations" : [
+        {
+          "value" : {
+            "kind" : "layer-color",
+            "opacity" : 0.5
+          }
+        },
+        {
+          "appearance" : "dark",
+          "value" : {
+            "kind" : "neutral",
+            "opacity" : 0.5
+          }
+        }
+      ],
+      "specular" : true,
+      "translucency-specializations" : [
+        {
+          "value" : {
+            "enabled" : true,
+            "value" : 0.6
+          }
+        },
+        {
+          "appearance" : "dark",
+          "value" : {
+            "enabled" : true,
+            "value" : 0.4
+          }
+        }
+      ]
+    },
+    {
+      "blur-material" : 0.5,
+      "hidden" : true,
+      "layers" : [
+        {
+          "blend-mode" : "normal",
           "fill-specializations" : [
             {
               "appearance" : "dark",

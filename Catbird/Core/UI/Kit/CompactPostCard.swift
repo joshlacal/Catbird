@@ -24,24 +24,32 @@ struct CompactPostCard<Footer: View>: View {
   @ViewBuilder var footer: () -> Footer
 
   @Environment(\.displayScale) private var displayScale
+  @Environment(\.catbirdTheme) private var theme
 
   var body: some View {
     let content = HStack(alignment: .top, spacing: Space.md) {
-      AsyncProfileImage(url: avatarURL, size: AvatarSize.sm, did: did)
+      CatbirdAvatar(
+        url: avatarURL,
+        displayName: displayName,
+        handle: handle,
+        size: AvatarSize.sm,
+        did: did
+      )
       VStack(alignment: .leading, spacing: Space.xs) {
         HStack(spacing: Space.xs) {
           EmbeddedAuthorNameView(name: displayName)
-            .appFont(AppTextRole.subheadline)
-            .fontWeight(.semibold)
+            .appFont(AppTextRole.subheadline.weight(.semibold))
+            .foregroundStyle(theme.text(.primary))
             .lineLimit(1)
           Text(verbatim: "@\(handle)")
             .appFont(AppTextRole.footnote)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(theme.text(.secondary))
             .lineLimit(1)
         }
         if !text.isEmpty {
           Text(text)
             .appFont(AppTextRole.subheadline)
+            .foregroundStyle(theme.text(.primary))
             .lineLimit(lineLimit)
             .multilineTextAlignment(.leading)
         }
@@ -49,13 +57,13 @@ struct CompactPostCard<Footer: View>: View {
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       if let imageURL {
-        LazyImage(request: AsyncProfileImage.resizedRequest(
+        LazyImage(request: CatbirdAvatar.resizedRequest(
           for: imageURL, sizeInPoints: AvatarSize.xl, displayScale: displayScale)
         ) { state in
           if let image = state.image {
             image.resizable().scaledToFill()
           } else {
-            Color.secondary.opacity(0.15)
+            theme.surface(.elevated)
           }
         }
         .pipeline(ImageLoadingManager.shared.pipeline)
