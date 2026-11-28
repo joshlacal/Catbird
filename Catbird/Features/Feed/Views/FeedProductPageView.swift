@@ -118,20 +118,21 @@ struct FeedProductPageView: View {
     VStack(alignment: .leading, spacing: 14) {
       HStack(alignment: .top, spacing: 14) {
         StorefrontFeedIcon(feed: feed, size: 60)
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: Space.xs) {
           Text(feed.displayName)
             .appFont(AppTextRole.title3)
             .fontWeight(.bold)
             .foregroundStyle(.primary)
             .fixedSize(horizontal: false, vertical: true)
           NavigationLink(value: NavigationDestination.profile(feed.creator.did.didString())) {
-            HStack(spacing: 4) {
+            HStack(spacing: Space.xs) {
               Text(verbatim: "@\(feed.creator.handle.description)")
                 .appFont(AppTextRole.subheadline)
                 .foregroundStyle(Color.accentColor)
                 .lineLimit(1)
               Image(systemName: "chevron.forward")
-                .font(.caption2.weight(.semibold))
+                .appFont(AppTextRole.caption2)
+                .fontWeight(.semibold)
                 .foregroundStyle(Color.accentColor.opacity(0.75))
             }
           }
@@ -142,24 +143,27 @@ struct FeedProductPageView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
       }
       let actionLayout = dynamicTypeSize.isAccessibilitySize
-        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
-        : AnyLayout(HStackLayout(alignment: .center, spacing: 10))
+        ? AnyLayout(VStackLayout(alignment: .leading, spacing: Space.sm))
+        : AnyLayout(HStackLayout(alignment: .center, spacing: Space.sm))
       actionLayout {
         FeedLibraryButton(
-          feed: feed, size: .regular, onOpen: { onOpen(feed) }, showsStatus: true, showsEducation: true)
+          feed: feed, size: .regular, onOpen: { self.onOpen(self.feed) }, showsStatus: true, showsEducation: true)
           .id(feed.id)
-        Button { onOpen(feed) } label: {
+        Button { self.onOpen(self.feed) } label: {
           Label("Open Feed", systemImage: "arrow.up.forward")
         }
         .buttonStyle(.catbird(.primary, size: .md))
         .accessibilityIdentifier("feed.discovery.open")
         if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
-        Button { if liked { unlikeFeed() } else { likeFeed() } } label: {
+        Button { if self.liked { self.unlikeFeed() } else { self.likeFeed() } } label: {
           Image(systemName: liked ? "heart.fill" : "heart")
-            .font(.subheadline.weight(.semibold))
+            .appFont(AppTextRole.subheadline)
+            .fontWeight(.semibold)
             .foregroundStyle(liked ? .pink : .secondary)
-            .frame(width: 40, height: 40)
+            .frame(width: ControlHeight.md, height: ControlHeight.md)
             .background(Color.secondary.opacity(0.10), in: Circle())
+            .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(isLiking)
@@ -170,8 +174,8 @@ struct FeedProductPageView: View {
   }
 
   private var livePreviewSection: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      HStack(alignment: .center, spacing: 8) {
+    VStack(alignment: .leading, spacing: Space.md) {
+      HStack(alignment: .center, spacing: Space.sm) {
         Text("Live Preview")
           .appFont(AppTextRole.title3)
           .fontWeight(.bold)
@@ -188,15 +192,19 @@ struct FeedProductPageView: View {
         .pickerStyle(.segmented)
         .frame(width: 84)
 
-        Button("Refresh preview", systemImage: "arrow.clockwise") {
-          retryGeneration += 1
+        Button {
+          self.retryGeneration += 1
+        } label: {
+          Image(systemName: "arrow.clockwise")
+            .appFont(AppTextRole.subheadline)
+            .foregroundStyle(.secondary)
+            .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+            .contentShape(Rectangle())
         }
-        .labelStyle(.iconOnly)
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
-        .frame(width: 32, height: 32)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Refresh preview")
       }
-      .padding(.horizontal, 16)
+      .padding(.horizontal, Space.lg)
 
       previewBody
     }

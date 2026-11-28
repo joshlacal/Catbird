@@ -841,205 +841,216 @@ struct KeyboardToolbarView: View {
 
   var body: some View {
     if #available(iOS 26.0, *) {
-      GlassEffectContainer(spacing: 4) {
-        HStack(spacing: 4) {
+      GlassEffectContainer(spacing: Space.xs) {
+        HStack(spacing: Space.xs) {
           // Left side: Individual media buttons
-          HStack(spacing: 4) {
-            Button(action: { onPhotos?() }) {
+          HStack(spacing: Space.xs) {
+            Button(action: { self.onPhotos?() }) {
               Image(systemName: "photo")
-                .font(.system(size: 16))
-                .frame(width: 30, height: 30)
+                .appFont(AppTextRole.callout)
+                .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+                .contentShape(Rectangle())
             }
             .accessibilityLabel("Add Photos")
-            .padding(4)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
             .catalystPlainButtons()
 
-            Button(action: { onVideo?() }) {
+            Button(action: { self.onVideo?() }) {
               Image(systemName: "video")
-                .font(.system(size: 16))
-                .frame(width: 30, height: 30)
+                .appFont(AppTextRole.callout)
+                .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+                .contentShape(Rectangle())
             }
             .accessibilityLabel("Add Video")
-            .padding(4)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
             .catalystPlainButtons()
 
             if allowTenor {
-              Button(action: { onGif?() }) {
+              Button(action: { self.onGif?() }) {
                 Text("GIF", comment: "Button label for attaching an animated GIF")
-                  .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                  .frame(width: 30, height: 18)
+                  .appFont(AppTextRole.caption2)
+                  .fontWeight(.semibold)
+                  .monospaced()
+                  .padding(.horizontal, Space.xs)
+                  .padding(.vertical, Space.hairline)
                   .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.accentColor, lineWidth: 1.0)
+                    Radius.xs.shape
+                      .stroke(Color.accentColor, lineWidth: 1.0)
                   )
+                  .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+                  .contentShape(Rectangle())
               }
               .accessibilityLabel("Add GIF")
-              .padding(4)
               .glassEffect(.regular.interactive())
               .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
               .catalystPlainButtons()
-
             }
 
-            Button(action: { onAudio?() }) {
+            Button(action: { self.onAudio?() }) {
               Image(systemName: "mic")
-                .font(.system(size: 16))
-                .frame(width: 30, height: 30)
+                .appFont(AppTextRole.callout)
+                .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+                .contentShape(Rectangle())
             }
             .accessibilityLabel("Record Audio")
-            .padding(4)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "mediaActions", namespace: glassNamespace)
             .catalystPlainButtons()
-
           }
-          .padding(4)
+          .padding(Space.xs)
 
-          Spacer()
+          Spacer(minLength: 0)
 
           // Right side: Settings menu, Thread, and Link
-          HStack(spacing: 4) {
+          HStack(spacing: Space.xs) {
             Menu {
-              Button(action: { onLabels?() }) {
+              Button(action: { self.onLabels?() }) {
                 Label("Labels", systemImage: "tag")
               }
 
-              Button(action: { onThreadgate?() }) {
+              Button(action: { self.onThreadgate?() }) {
                 Label("Who can reply", systemImage: "lock")
               }
 
-              Button(action: { onLanguage?() }) {
+              Button(action: { self.onLanguage?() }) {
                 Label("Languages", systemImage: "globe")
               }
             } label: {
               Image(systemName: "ellipsis")
-                .font(.system(size: 16))
-                .frame(width: 30, height: 30)
+                .appFont(AppTextRole.callout)
+                .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+                .contentShape(Rectangle())
             }
             .accessibilityLabel("Post Settings")
-            .padding(4)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "controlActions", namespace: glassNamespace)
 
-            Button(action: { onThread?() }) {
+            Button(action: { self.onThread?() }) {
               Image(systemName: "plus")
-                .font(.system(size: 16))
-                .frame(width: 30, height: 30)
+                .appFont(AppTextRole.callout)
+                .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+                .contentShape(Rectangle())
             }
             .accessibilityLabel("Add Post to Thread")
-            .padding(4)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "controlActions", namespace: glassNamespace)
             .catalystPlainButtons()
 
-            Button(action: { onLink?() }) {
+            Button(action: { self.onLink?() }) {
               Image(systemName: "link")
-                .font(.system(size: 16))
-                .frame(width: 30, height: 30)
+                .appFont(AppTextRole.callout)
+                .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+                .contentShape(Rectangle())
             }
             .accessibilityLabel("Insert Link")
-            .padding(4)
             .glassEffect(.regular.interactive())
             .glassEffectUnion(id: "controlActions", namespace: glassNamespace)
             .catalystPlainButtons()
-
           }
-          .padding(4)
-
+          .padding(Space.xs)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.horizontal, Space.sm)
+        .padding(.vertical, Space.xs)
       }
     } else {
-      HStack(spacing: 4) {
+      HStack(spacing: Space.xs) {
         // Left side: Individual media buttons (legacy)
-        HStack(spacing: 4) {
-          Button(action: { onPhotos?() }) {
+        HStack(spacing: Space.xs) {
+          Button(action: { self.onPhotos?() }) {
             Image(systemName: "photo")
-              .font(.system(size: 16))
+              .appFont(AppTextRole.callout)
               .foregroundStyle(Color.accentColor)
-              .frame(width: 30, height: 30)
+              .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+              .contentShape(Rectangle())
           }
           .accessibilityLabel("Add Photos")
 
-          Button(action: { onVideo?() }) {
+          Button(action: { self.onVideo?() }) {
             Image(systemName: "video")
-              .font(.system(size: 16))
+              .appFont(AppTextRole.callout)
               .foregroundStyle(Color.accentColor)
-              .frame(width: 30, height: 30)
+              .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+              .contentShape(Rectangle())
           }
           .accessibilityLabel("Add Video")
 
           if allowTenor {
-            Button(action: { onGif?() }) {
+            Button(action: { self.onGif?() }) {
               Text("GIF", comment: "Button label for attaching an animated GIF")
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .appFont(AppTextRole.caption2)
+                .fontWeight(.semibold)
+                .monospaced()
                 .foregroundStyle(Color.accentColor)
-                .frame(width: 30, height: 30)
+                .padding(.horizontal, Space.xs)
+                .padding(.vertical, Space.hairline)
                 .overlay(
-                  RoundedRectangle(cornerRadius: 6)
+                  Radius.xs.shape
                     .stroke(Color.primary.opacity(0.2), lineWidth: 0.5)
                 )
+                .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+                .contentShape(Rectangle())
             }
             .accessibilityLabel("Add GIF")
           }
 
-          Button(action: { onAudio?() }) {
+          Button(action: { self.onAudio?() }) {
             Image(systemName: "mic")
-              .font(.system(size: 16))
+              .appFont(AppTextRole.callout)
               .foregroundStyle(Color.accentColor)
-              .frame(width: 30, height: 30)
+              .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+              .contentShape(Rectangle())
           }
           .accessibilityLabel("Record Audio")
         }
 
-        Spacer()
+        Spacer(minLength: 0)
 
         // Right side: Settings menu, Thread, and Link (legacy)
-        HStack(spacing: 4) {
+        HStack(spacing: Space.xs) {
           Menu {
-            Button(action: { onLabels?() }) {
+            Button(action: { self.onLabels?() }) {
               Label("Labels", systemImage: "tag")
             }
 
-            Button(action: { onThreadgate?() }) {
+            Button(action: { self.onThreadgate?() }) {
               Label("Who can reply", systemImage: "lock")
             }
 
-            Button(action: { onLanguage?() }) {
+            Button(action: { self.onLanguage?() }) {
               Label("Languages", systemImage: "globe")
             }
           } label: {
             Image(systemName: "ellipsis")
-              .font(.system(size: 16))
+              .appFont(AppTextRole.callout)
               .foregroundStyle(Color.accentColor)
-              .frame(width: 30, height: 30)
+              .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+              .contentShape(Rectangle())
           }
           .accessibilityLabel("Post Settings")
 
-          Button(action: { onThread?() }) {
+          Button(action: { self.onThread?() }) {
             Image(systemName: "plus")
-              .font(.system(size: 16))
+              .appFont(AppTextRole.callout)
               .foregroundStyle(Color.accentColor)
-              .frame(width: 30, height: 30)
+              .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+              .contentShape(Rectangle())
           }
           .accessibilityLabel("Add Post to Thread")
 
-          Button(action: { onLink?() }) {
+          Button(action: { self.onLink?() }) {
             Image(systemName: "link")
-              .font(.system(size: 16))
+              .appFont(AppTextRole.callout)
               .foregroundStyle(Color.accentColor)
-              .frame(width: 30, height: 30)
+              .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+              .contentShape(Rectangle())
           }
           .accessibilityLabel("Insert Link")
         }
       }
-      .padding(.horizontal, 12)
-      .padding(.vertical, 8)
+      .padding(.horizontal, Space.md)
+      .padding(.vertical, Space.sm)
     }
   }
 }

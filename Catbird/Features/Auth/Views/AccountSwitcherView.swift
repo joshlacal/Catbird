@@ -869,11 +869,12 @@ struct ProfileAvatarView: View {
   let url: URL?
   let fallbackText: String
   var size: CGFloat = 40
+  @Environment(\.catbirdTheme) private var theme
   
   var body: some View {
     ZStack {
       Circle()
-        .fill(Color.accentColor.opacity(0.2))
+        .fill(theme.accentChrome.opacity(0.2))
         .frame(width: size, height: size)
       
       if let url = url {
@@ -887,13 +888,13 @@ struct ProfileAvatarView: View {
           } else {
             Text(fallbackText)
               .appFont(size: size * 0.5)
-              .foregroundStyle(Color("AccentTextColor"))
+              .foregroundStyle(theme.accentText)
           }
         }
       } else {
         Text(fallbackText)
           .appFont(size: size * 0.5)
-          .foregroundStyle(Color("AccentTextColor"))
+          .foregroundStyle(theme.accentText)
       }
     }
   }

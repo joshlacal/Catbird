@@ -1,16 +1,6 @@
 import Petrel
 import SwiftUI
 
-/// Thin wrapper over the kit's `FeedLibraryButton` (compact), kept for existing call sites.
-struct FeedStorefrontQuickAddButton: View {
-  let feed: AppBskyFeedDefs.GeneratorView
-  var onOpen: (() -> Void)?
-
-  var body: some View {
-    FeedLibraryButton(feed: feed, size: .compact, onOpen: onOpen)
-  }
-}
-
 /// Compact App Store "Top Charts" feed row: crisp 46pt icon, 1-line title, 1-line subtitle,
 /// and instant optimistic `+` / `✓` pill button. Keeps icons small to avoid low-res avatar blowout.
 struct FeedStorefrontRow: View {
@@ -47,12 +37,12 @@ struct FeedStorefrontRow: View {
   }
 
   var body: some View {
-    HStack(alignment: .center, spacing: 12) {
+    HStack(alignment: .center, spacing: Space.md) {
       Button(action: onSelect) {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: Space.md) {
           StorefrontFeedIcon(feed: feed, size: 46)
 
-          VStack(alignment: .leading, spacing: 2) {
+          VStack(alignment: .leading, spacing: Space.hairline) {
             Text(feed.displayName)
               .appFont(AppTextRole.subheadline)
               .fontWeight(.semibold)
@@ -73,9 +63,9 @@ struct FeedStorefrontRow: View {
       .accessibilityHint("Opens live preview and details")
       .accessibilityIdentifier("feed.storefront.row.\(feed.uri.uriString())")
 
-      FeedStorefrontQuickAddButton(feed: feed, onOpen: onOpen)
+      FeedLibraryButton(feed: feed, size: .compact, onOpen: onOpen)
     }
-    .padding(.vertical, 4)
+    .padding(.vertical, Space.xs)
   }
 }
 
@@ -116,7 +106,7 @@ struct StorefrontFeedIcon: View {
         endPoint: .bottomTrailing
       )
       Text(String(feed.displayName.prefix(1)).uppercased())
-        .font(.system(size: size * 0.42, weight: .bold, design: .rounded))
+        .appFont(size: size * 0.42, weight: .bold, relativeTo: .headline)
         .foregroundStyle(.white)
     }
   }
@@ -138,7 +128,7 @@ struct FeedStorefrontCarousel<Item: Identifiable>: View {
 
   var body: some View {
     ScrollView(.horizontal) {
-      LazyHStack(alignment: .top, spacing: 14) {
+      LazyHStack(alignment: .top, spacing: Space.md) {
         ForEach(Array(columns.enumerated()), id: \.offset) { _, column in
           VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(column.enumerated()), id: \.element.id) { rowIndex, item in
@@ -146,8 +136,8 @@ struct FeedStorefrontCarousel<Item: Identifiable>: View {
               FeedStorefrontRow(
                 feed: feed,
                 customSubtitle: subtitleForItem(item),
-                onSelect: { onSelect(feed) },
-                onOpen: { onOpen(feed) }
+                onSelect: { self.onSelect(feed) },
+                onOpen: { self.onOpen(feed) }
               )
               if rowIndex < column.count - 1 {
                 Divider()
@@ -162,7 +152,7 @@ struct FeedStorefrontCarousel<Item: Identifiable>: View {
         }
       }
       .scrollTargetLayout()
-      .padding(.horizontal, 16)
+      .padding(.horizontal, Space.lg)
     }
     .scrollIndicators(.hidden)
     .scrollTargetBehavior(.viewAligned)
@@ -176,8 +166,8 @@ struct FeedShelfHeader: View {
   var onSeeAll: (() -> Void)?
 
   var body: some View {
-    HStack(alignment: .firstTextBaseline, spacing: 8) {
-      VStack(alignment: .leading, spacing: 2) {
+    HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+      VStack(alignment: .leading, spacing: Space.hairline) {
         Text(title)
           .appFont(AppTextRole.title3)
           .fontWeight(.bold)
@@ -191,25 +181,26 @@ struct FeedShelfHeader: View {
         }
       }
 
-      Spacer(minLength: 8)
+      Spacer(minLength: Space.sm)
 
       if let onSeeAll {
         Button(action: onSeeAll) {
-          HStack(spacing: 2) {
+          HStack(spacing: Space.hairline) {
             Text("See All")
               .appFont(AppTextRole.subheadline)
             Image(systemName: "chevron.forward")
-              .font(.caption.weight(.semibold))
+              .appFont(AppTextRole.caption)
+              .fontWeight(.semibold)
           }
           .foregroundStyle(Color.accentColor)
-          .frame(minHeight: 36)
+          .frame(minHeight: ControlHeight.minHitTarget)
           .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("See all \(title)")
       }
     }
-    .padding(.horizontal, 16)
+    .padding(.horizontal, Space.lg)
   }
 }
 

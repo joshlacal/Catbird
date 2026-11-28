@@ -19,7 +19,14 @@ extension PreviewContainer {
 
 // MARK: - Usage Examples
 //
-// Basic (recommended):
+// Fixture-backed (zero credentials, zero network — recommended):
+//
+//   #Preview("MyView — fixtures") {
+//     MyView()
+//       .previewWithAuthenticatedState(mode: .mock)
+//   }
+//
+// Live authenticated:
 //
 //   #Preview {
 //     FeedView()
@@ -31,15 +38,6 @@ extension PreviewContainer {
 //   #Preview {
 //     MyButton()
 //       .previewWithMockEnvironment()
-//   }
-//
-// Direct AppState access:
-//
-//   #Preview {
-//     AsyncPreviewContent { appState in
-//       ProfileView(handle: "example.bsky.social")
-//         .environment(appState)
-//     }
 //   }
 
 /// Convenience wrapper for previews that need direct access to AppState
@@ -61,10 +59,10 @@ struct AsyncPreviewContent<Content: View>: View {
         ProgressView {
           Text(verbatim: "Authenticating…")
         }
-          .task {
-            appState = await PreviewContainer.shared.appState
-            isLoading = false
-          }
+        .task {
+          appState = await PreviewContainer.shared.appState
+          isLoading = false
+        }
       } else {
         Text(verbatim: "Configure PreviewSecrets.xcconfig")
           .foregroundStyle(.secondary)
@@ -73,13 +71,34 @@ struct AsyncPreviewContent<Content: View>: View {
   }
 }
 
+/// Preview wrapper that resolves an offline fixture-backed `AppState` (no auth, no network)
+/// before rendering — the `.mock`-mode counterpart to `AsyncPreviewContent`.
+struct FixturePreviewContent<Content: View>: View {
+  @State private var appState: AppState?
+  let content: (AppState) -> Content
+
+  init(@ViewBuilder content: @escaping (AppState) -> Content) {
+    self.content = content
+  }
+
+  var body: some View {
+    Group {
+      if let appState {
+        content(appState)
+          .modifier(AuthenticatedPreviewModifier(appState: appState, networkMode: .mock))
+      } else {
+        ProgressView {
+          Text(verbatim: "Loading fixtures…")
+        }
+        .task {
+          appState = await PreviewContainer.fixtureAppState()
+        }
+      }
+    }
+  }
+}
+
 /// Preview wrapper that loads async data (e.g., API posts) before rendering.
-/// Usage:
-///   AsyncPreviewDataContent { appState in
-///     await PreviewData.firstPostView(from: appState)
-///   } content: { appState, postView in
-///     PostView(post: postView, ...)
-///   }
 struct AsyncPreviewDataContent<Data: Sendable, Content: View>: View {
   @State private var appState: AppState?
   @State private var loadedData: Data?
@@ -104,14 +123,14 @@ struct AsyncPreviewDataContent<Data: Sendable, Content: View>: View {
         ProgressView {
           Text(verbatim: "Loading preview data…")
         }
-          .task {
-            let state = await PreviewContainer.shared.appState
-            appState = state
-            if let state {
-              loadedData = await loader(state)
-            }
-            isLoading = false
+        .task {
+          let state = await PreviewContainer.shared.appState
+          appState = state
+          if let state {
+            loadedData = await loader(state)
           }
+          isLoading = false
+        }
       } else {
         Text(verbatim: "No preview data available")
           .foregroundStyle(.secondary)

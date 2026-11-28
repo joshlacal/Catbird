@@ -1,0 +1,172 @@
+{
+  "generatedAt": "2026-07-19T09:50:41.000Z",
+  "fixtures": {
+    "timeline": {
+      "endpoint": "app.bsky.feed.getTimeline",
+      "outputType": "AppBskyFeedGetTimeline.Output"
+    },
+    "author-feed-bot": {
+      "endpoint": "app.bsky.feed.getAuthorFeed",
+      "outputType": "AppBskyFeedGetAuthorFeed.Output"
+    },
+    "author-feed-appstore": {
+      "endpoint": "app.bsky.feed.getAuthorFeed",
+      "outputType": "AppBskyFeedGetAuthorFeed.Output"
+    },
+    "author-feed-videos": {
+      "endpoint": "app.bsky.feed.getAuthorFeed",
+      "outputType": "AppBskyFeedGetAuthorFeed.Output"
+    },
+    "thread-v2": {
+      "endpoint": "app.bsky.unspecced.getPostThreadV2",
+      "outputType": "AppBskyUnspeccedGetPostThreadV2.Output"
+    },
+    "thread-classic": {
+      "endpoint": "app.bsky.feed.getPostThread",
+      "outputType": "AppBskyFeedGetPostThread.Output"
+    },
+    "posts-shapes": {
+      "endpoint": "app.bsky.feed.getPosts",
+      "outputType": "AppBskyFeedGetPosts.Output"
+    },
+    "post-video-real": {
+      "endpoint": "app.bsky.feed.getPosts",
+      "outputType": "AppBskyFeedGetPosts.Output"
+    },
+    "profile-bot": {
+      "endpoint": "app.bsky.actor.getProfile",
+      "outputType": "AppBskyActorDefs.ProfileViewDetailed"
+    },
+    "profile-real": {
+      "endpoint": "app.bsky.actor.getProfile",
+      "outputType": "AppBskyActorDefs.ProfileViewDetailed"
+    },
+    "profiles": {
+      "endpoint": "app.bsky.actor.getProfiles",
+      "outputType": "AppBskyActorGetProfiles.Output"
+    },
+    "followers": {
+      "endpoint": "app.bsky.graph.getFollowers",
+      "outputType": "AppBskyGraphGetFollowers.Output"
+    },
+    "follows": {
+      "endpoint": "app.bsky.graph.getFollows",
+      "outputType": "AppBskyGraphGetFollows.Output"
+    },
+    "list": {
+      "endpoint": "app.bsky.graph.getList",
+      "outputType": "AppBskyGraphGetList.Output"
+    },
+    "lists": {
+      "endpoint": "app.bsky.graph.getLists",
+      "outputType": "AppBskyGraphGetLists.Output"
+    },
+    "starter-pack": {
+      "endpoint": "app.bsky.graph.getStarterPack",
+      "outputType": "AppBskyGraphGetStarterPack.Output"
+    },
+    "feed-generators": {
+      "endpoint": "app.bsky.feed.getFeedGenerators",
+      "outputType": "AppBskyFeedGetFeedGenerators.Output"
+    },
+    "feed-discover": {
+      "endpoint": "app.bsky.feed.getFeed",
+      "outputType": "AppBskyFeedGetFeed.Output"
+    },
+    "popular-feed-generators": {
+      "endpoint": "app.bsky.unspecced.getPopularFeedGenerators",
+      "outputType": "AppBskyUnspeccedGetPopularFeedGenerators.Output"
+    },
+    "notifications": {
+      "endpoint": "app.bsky.notification.listNotifications",
+      "outputType": "AppBskyNotificationListNotifications.Output"
+    },
+    "likes": {
+      "endpoint": "app.bsky.feed.getLikes",
+      "outputType": "AppBskyFeedGetLikes.Output"
+    },
+    "reposted-by": {
+      "endpoint": "app.bsky.feed.getRepostedBy",
+      "outputType": "AppBskyFeedGetRepostedBy.Output"
+    },
+    "quotes": {
+      "endpoint": "app.bsky.feed.getQuotes",
+      "outputType": "AppBskyFeedGetQuotes.Output"
+    },
+    "search-posts": {
+      "endpoint": "app.bsky.feed.searchPosts",
+      "outputType": "AppBskyFeedSearchPosts.Output"
+    },
+    "search-posts-media": {
+      "endpoint": "app.bsky.feed.searchPosts",
+      "outputType": "AppBskyFeedSearchPosts.Output"
+    },
+    "search-actors": {
+      "endpoint": "app.bsky.actor.searchActors",
+      "outputType": "AppBskyActorSearchActors.Output"
+    },
+    "trends": {
+      "endpoint": "app.bsky.unspecced.getTrends",
+      "outputType": "AppBskyUnspeccedGetTrends.Output"
+    },
+    "trending-topics": {
+      "endpoint": "app.bsky.unspecced.getTrendingTopics",
+      "outputType": "AppBskyUnspeccedGetTrendingTopics.Output"
+    },
+    "tagged-suggestions": {
+      "endpoint": "app.bsky.unspecced.getTaggedSuggestions",
+      "outputType": "AppBskyUnspeccedGetTaggedSuggestions.Output"
+    },
+    "suggestions": {
+      "endpoint": "app.bsky.actor.getSuggestions",
+      "outputType": "AppBskyActorGetSuggestions.Output"
+    },
+    "labeler-services": {
+      "endpoint": "app.bsky.labeler.getServices",
+      "outputType": "AppBskyLabelerGetServices.Output"
+    },
+    "preferences": {
+      "endpoint": "app.bsky.actor.getPreferences",
+      "outputType": "AppBskyActorGetPreferences.Output"
+    },
+    "chat-convos": {
+      "endpoint": "chat.bsky.convo.listConvos",
+      "outputType": "ChatBskyConvoListConvos.Output"
+    },
+    "chat-messages": {
+      "endpoint": "chat.bsky.convo.getMessages",
+      "outputType": "ChatBskyConvoGetMessages.Output"
+    },
+    "bookmarks": {
+      "endpoint": "app.bsky.bookmark.getBookmarks",
+      "outputType": "AppBskyBookmarkGetBookmarks.Output"
+    }
+  },
+  "postShapes": {
+    "text_short": 0,
+    "text_long": 1,
+    "facets": 2,
+    "images_1": 3,
+    "images_4": 4,
+    "gallery_6": 5,
+    "external": 6,
+    "external_thumb": 7,
+    "quote_post": 8,
+    "quote_list": 9,
+    "quote_feedgen": 10,
+    "quote_starterpack": 11,
+    "quote_blocked": 12,
+    "quote_detached": 13,
+    "quote_notfound": 14,
+    "record_with_media": 15,
+    "threadgate_root": 16,
+    "postgate_root": 17,
+    "self_labels": 18,
+    "reply_root": 19,
+    "reply_l1": 20,
+    "reply_l2_appstore": 21,
+    "reply_l3": 22,
+    "mention_by_appstore": 23,
+    "quote_by_appstore": 24
+  }
+}

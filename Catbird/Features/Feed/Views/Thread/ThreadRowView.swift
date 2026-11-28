@@ -34,6 +34,7 @@ struct ThreadRowView: View {
   /// Loading state of the action behind `.readMoreUp` / `.showOtherReplies`.
   let isActionLoading: Bool
   let onAction: (() -> Void)?
+  @Environment(\.catbirdTheme) private var theme
 
   init(
     row: ThreadRow,
@@ -133,7 +134,7 @@ struct ThreadRowView: View {
           Image(systemName: "chevron.forward")
             .appFont(AppTextRole.caption)
         }
-        .foregroundStyle(Color("AccentTextColor"))
+        .foregroundStyle(theme.accentText)
         .frame(minHeight: ThreadReplyGeometry.readMoreHeight, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
         // Extend the hit area into the row's padding to reach 44pt without
@@ -175,7 +176,7 @@ struct ThreadRowView: View {
             .controlSize(.small)
         }
       }
-      .foregroundStyle(Color("AccentTextColor"))
+      .foregroundStyle(theme.accentText)
       .frame(minHeight: ThreadReplyGeometry.readMoreHeight)
       .frame(maxWidth: .infinity, alignment: alignment)
       .contentShape(Rectangle().inset(by: -Self.hitAreaOutset))

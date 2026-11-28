@@ -34,7 +34,7 @@ enum WidgetColorOption: String, AppEnum {
   
   var color: Color {
     switch self {
-    case .blue: return .blue
+    case .blue: return .accentColor
     case .red: return .red
     case .green: return .green
     case .purple: return .purple
@@ -128,7 +128,6 @@ struct Provider: AppIntentTimelineProvider {
 // Widget view
 struct NotificationWidgetEntryView: View {
   @Environment(\.widgetFamily) var family
-  @Environment(\.colorScheme) var colorScheme
 
   var entry: Provider.Entry
 
@@ -141,6 +140,10 @@ struct NotificationWidgetEntryView: View {
       : LocalizedStringResource("widget.unread.caption.other", defaultValue: "unread notifications", comment: "Caption below the large unread notification count in the Home Screen widget, used when the count is anything but 1. The count is shown above it, so the caption has no number.")
   }
   
+  private var isLockScreenFamily: Bool {
+    family == .accessoryCircular || family == .accessoryInline || family == .accessoryRectangular
+  }
+
   var body: some View {
     Group {
       if family == .systemSmall {
@@ -157,7 +160,7 @@ struct NotificationWidgetEntryView: View {
             Text("Catbird: Not signed in", comment: "Lock Screen inline widget text when no account is signed in.")
           }
         }
-        .font(.headline)
+        .notificationWidgetFont(.inlineHeadline)
         .widgetAccentable()
       } else if family == .accessoryRectangular {
         rectangularWidgetView
@@ -167,48 +170,38 @@ struct NotificationWidgetEntryView: View {
     }
     .widgetURL(URL(string: "blue.catbird://notifications")!)
     .containerBackground(for: .widget) {
-      LinearGradient(
-        colors: [
-          entry.configuration.accentColor.color.opacity(0.9),
-          entry.configuration.accentColor.color.opacity(0.6)
-        ],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-      )
-      .overlay {
-        Color(colorScheme == .dark ? .black : .white)
-          .opacity(0.7)
+      if isLockScreenFamily {
+        Color.clear
+      } else {
+        NotificationWidgetSurfaceBackground(accentColor: entry.configuration.accentColor.color)
       }
     }
   }
 
   // Small widget for Home Screen and StandBy
   private var smallWidgetView: some View {
-    VStack(spacing: 3) {
-      
+    VStack(spacing: NotificationWidgetSpacing.xs) {
       // Count area with extra large number
-      VStack(alignment: .center, spacing: 2) {
-          
-          Text(verbatim: "Catbird")
-              .font(.system(.headline, design: .rounded, weight: .heavy).lowercaseSmallCaps())
-              .foregroundStyle(.tertiary)
-              .textScale(.secondary)
-              .multilineTextAlignment(.center)
-            .widgetAccentable()
-            .minimumScaleFactor(0.8)
+      VStack(alignment: .center, spacing: NotificationWidgetSpacing.hairline) {
+        Text(verbatim: "Catbird")
+          .notificationWidgetFont(.headerSmallCaps)
+          .foregroundStyle(.tertiary)
+          .textScale(.secondary)
+          .multilineTextAlignment(.center)
+          .widgetAccentable()
+          .minimumScaleFactor(0.8)
 
         if entry.isSignedIn {
           Text(entry.count, format: .number)
-                .font(.system(size: 75, weight: .bold, design: .rounded))
+            .notificationWidgetFont(.heroCount)
             .minimumScaleFactor(0.5)
             .lineLimit(1)
             .widgetAccentable()
-            .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 1)
 
-            Text(unreadCaption)
-                .font(.system(.caption, design: .rounded))
-                .lineLimit(nil)
-                .multilineTextAlignment(.center)
+          Text(unreadCaption)
+            .notificationWidgetFont(.caption)
+            .lineLimit(nil)
+            .multilineTextAlignment(.center)
             .foregroundStyle(.secondary)
             .widgetAccentable()
         } else {
@@ -216,11 +209,11 @@ struct NotificationWidgetEntryView: View {
         }
       }
       .frame(maxWidth: .infinity)
-      
+
       // Timestamp area
       if let lastUpdated = entry.lastUpdated, entry.isSignedIn {
         Text("Updated \(lastUpdated.formatted(.relative(presentation: .named)))", comment: "Relative timestamp in the notification widget — variable is a relative time phrase such as '2 minutes ago'.")
-          .font(.system(.caption2, design: .rounded))
+          .notificationWidgetFont(.timestamp)
           .textScale(.secondary)
           .foregroundStyle(.tertiary)
           .lineLimit(1)
@@ -228,48 +221,41 @@ struct NotificationWidgetEntryView: View {
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    .containerBackground(for: .widget, content: {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(.ultraThickMaterial)
-            .padding(2)
-    })
   }
 
   // Medium widget for Home Screen
   private var mediumWidgetView: some View {
-    HStack(spacing: 20) {
+    HStack(spacing: NotificationWidgetSpacing.xl) {
       // Left section with icon and title
-      VStack(alignment: .leading, spacing: 4) {
-
+      VStack(alignment: .leading, spacing: NotificationWidgetSpacing.xs) {
         Text("Notifications", comment: "Header title in the medium Home Screen notifications widget.")
-              .font(.system(.headline, design: .rounded, weight: .heavy).lowercaseSmallCaps())
+          .notificationWidgetFont(.headerSmallCaps)
           .foregroundStyle(.secondary)
           .widgetAccentable()
           .minimumScaleFactor(0.8)
-          
+
         Spacer()
-        
+
         if let lastUpdated = entry.lastUpdated, entry.isSignedIn {
           Text("Updated \(lastUpdated.formatted(.relative(presentation: .named)))", comment: "Relative timestamp in the notification widget — variable is a relative time phrase such as '2 minutes ago'.")
-            .font(.system(.caption2, design: .rounded))
+            .notificationWidgetFont(.timestamp)
             .foregroundStyle(.tertiary)
             .lineLimit(1)
             .minimumScaleFactor(0.8)
         }
       }
-      
+
       // Right section with large count
       VStack(alignment: .trailing) {
         if entry.isSignedIn {
           Text(entry.count, format: .number)
-            .font(.system(size: 75, weight: .bold, design: .rounded))
+            .notificationWidgetFont(.heroCount)
             .minimumScaleFactor(0.6)
             .lineLimit(1)
             .widgetAccentable()
-            .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 1)
 
           Text(unreadCaption)
-            .font(.system(.caption, design: .rounded))
+            .notificationWidgetFont(.caption)
             .foregroundStyle(.secondary)
             .widgetAccentable()
             .minimumScaleFactor(0.8)
@@ -280,13 +266,7 @@ struct NotificationWidgetEntryView: View {
       .frame(maxWidth: .infinity)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .padding()
-    .containerBackground(for: .widget, content: {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(.ultraThickMaterial)
-            .padding(2)
-    })
-
+    .padding(NotificationWidgetSpacing.lg)
   }
 
   // Circular widget for Lock Screen
@@ -294,13 +274,13 @@ struct NotificationWidgetEntryView: View {
     VStack(spacing: 0) {
       // Icon area
       Image(systemName: "bell.badge.fill")
-        .font(.system(size: 20))
+        .notificationWidgetFont(.circularIcon)
         .widgetAccentable()
-      
+
       // Count with large font
       if entry.isSignedIn {
         Text(entry.count, format: .number)
-          .font(.system(size: 24, weight: .bold, design: .rounded))
+          .notificationWidgetFont(.circularCount)
           .lineLimit(1)
           .minimumScaleFactor(0.6)
           .widgetAccentable()
@@ -319,21 +299,21 @@ struct NotificationWidgetEntryView: View {
 
   // Rectangular widget for Lock Screen
   private var rectangularWidgetView: some View {
-    HStack {
+    HStack(spacing: NotificationWidgetSpacing.sm) {
       // Icon area
       Image(systemName: "bell.badge.fill")
-        .font(.system(size: 18))
+        .notificationWidgetFont(.rectangularIcon)
         .widgetAccentable()
-      
+
       if entry.isSignedIn {
         Text("**\(entry.count)** unread notifications", comment: "Lock Screen rectangular widget label showing unread notification count.")
-          .font(.system(.body, design: .rounded))
+          .notificationWidgetFont(.rectangularBody)
           .widgetAccentable()
           .lineLimit(1)
           .minimumScaleFactor(0.8)
       } else {
         Text("Open Catbird to sign in", comment: "Prompt shown in the notification widget when no account is signed in.")
-          .font(.system(.body, design: .rounded))
+          .notificationWidgetFont(.rectangularBody)
           .widgetAccentable()
           .lineLimit(2)
           .minimumScaleFactor(0.8)
@@ -344,7 +324,7 @@ struct NotificationWidgetEntryView: View {
   // Shown in place of the count when no account is signed in
   private var signedOutMessage: some View {
     Text("Open Catbird to sign in", comment: "Prompt shown in the notification widget when no account is signed in.")
-      .font(.system(.subheadline, design: .rounded, weight: .semibold))
+      .notificationWidgetFont(.signedOut)
       .multilineTextAlignment(.center)
       .foregroundStyle(.secondary)
       .minimumScaleFactor(0.8)
