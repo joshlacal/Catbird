@@ -188,6 +188,8 @@ jobs:
             -scheme Catbird \
             -destination "${{ steps.sim.outputs.destination }}" \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution -skipPackageUpdates \
             -resultBundlePath "$VISUAL_QA_DIR/logs/tier1-snapshots.xcresult" \
             -parallel-testing-enabled NO \
             -only-testing:CatbirdTests/DesignConsistencySnapshotTests \
@@ -199,7 +201,7 @@ jobs:
 
       - name: Run Tier-2 CatbirdDesignCatalogUITests (performAccessibilityAudit)
         id: tier2
-        if: ${{ inputs.run_ui_tests != false }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_ui_tests != false }}
         env:
           CATBIRD_VISUAL_OUT_DIR: ${{ env.VISUAL_QA_DIR }}/candidates
           CATBIRD_VISUAL_BASELINE_DIR: ${{ env.VISUAL_QA_DIR }}/baselines
@@ -216,6 +218,8 @@ jobs:
             -scheme Catbird \
             -destination "${{ steps.sim.outputs.destination }}" \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution -skipPackageUpdates \
             -resultBundlePath "$VISUAL_QA_DIR/logs/tier2-catalog-ui.xcresult" \
             -parallel-testing-enabled NO \
             -only-testing:CatbirdUITests/CatbirdDesignCatalogUITests \
@@ -265,7 +269,7 @@ jobs:
               --out "$VISUAL_QA_DIR/wall" \
               --delta-threshold "$DELTA_THRESHOLD" \
               --title "$TITLE" \
-              "${FAIL_FLAGS[@]}"
+              ${FAIL_FLAGS[@]+"${FAIL_FLAGS[@]}"}
             wall_status=$?
             set -e
             echo "exit_code=$wall_status" >> "$GITHUB_OUTPUT"

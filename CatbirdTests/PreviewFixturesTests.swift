@@ -9,7 +9,7 @@
 //
 
 import Foundation
-import Petrel
+@testable import Petrel
 import Testing
 @testable import Catbird
 
@@ -116,8 +116,8 @@ struct PreviewFixturesTests {
 
   @Test("OfflineFixtureURLProtocol serves XRPC & media offline and blocks unhandled hosts")
   func offlineProtocolBlocksLiveRequests() async throws {
-    await OfflineFixtureURLProtocol.install(strict: true)
-    OfflineFixtureURLProtocol.reset(clearCustomResponses: true)
+    OfflineFixtureURLProtocol.configure(strict: true)
+    defer { OfflineFixtureURLProtocol.reset(clearCustomResponses: true) }
 
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [OfflineFixtureURLProtocol.self]
@@ -147,7 +147,7 @@ struct PreviewFixturesTests {
     }
     #expect(didFailUnexpected)
     #expect(OfflineFixtureURLProtocol.unhandledRequests.count == 1)
-    OfflineFixtureURLProtocol.reset()
+    #expect(NetworkService.getNetworkTestProtocolClasses() == nil)
   }
 
   @Test("CatbirdCatalogLaunchConfig parses profiles, surfaces, explicit overrides, and catalog URLs")

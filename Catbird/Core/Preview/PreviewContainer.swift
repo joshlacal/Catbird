@@ -85,13 +85,26 @@ final class PreviewContainer {
     if let cached = cachedFixtureAppState { return cached }
 
     #if DEBUG
-    await OfflineFixtureURLProtocol.install(strict: false)
-    #endif
-
+    let client: ATProtoClient
+    if let hookedClient = try? await OfflineFixtureURLProtocol.withNetworkTestHook(strict: false, construct: {
+      await ATProtoClient(
+        baseURL: URL(string: "https://127.0.0.1")!,
+        userAgent: "Catbird/1.0-Preview"
+      )
+    }) {
+      client = hookedClient
+    } else {
+      client = await ATProtoClient(
+        baseURL: URL(string: "https://127.0.0.1")!,
+        userAgent: "Catbird/1.0-Preview"
+      )
+    }
+    #else
     let client = await ATProtoClient(
       baseURL: URL(string: "https://127.0.0.1")!,
       userAgent: "Catbird/1.0-Preview"
     )
+    #endif
     let state = AppState(
       userDID: fixtureUserDID,
       client: client,

@@ -32,6 +32,12 @@ final class OfflineFixtureURLProtocol: URLProtocol, @unchecked Sendable {
     let blue: UInt8
   }
 
+  struct NetworkHookBusyError: Error, CustomStringConvertible {
+    var description: String {
+      "Petrel's process-wide network test hook stayed occupied by another suite"
+    }
+  }
+
   private static let logger = Logger(subsystem: "blue.catbird", category: "OfflineFixtureURLProtocol")
   private static let lock = NSLock()
   nonisolated(unsafe) private static var isStrictMode = true
@@ -39,7 +45,11 @@ final class OfflineFixtureURLProtocol: URLProtocol, @unchecked Sendable {
   nonisolated(unsafe) private static var recorded: [RecordedRequest] = []
   nonisolated(unsafe) private static var unexpectedHandler: (@Sendable (URLRequest) -> Void)?
   nonisolated(unsafe) private static var installed = false
+  nonisolated(unsafe) private static var globalRegistrationCount = 0
   nonisolated(unsafe) private static var imageCache: [UInt32: Data] = [:]
+
+  @MainActor private static var networkHookHeld = false
+  @MainActor private static var networkHookWaiters: [CheckedContinuation<Void, Never>] = []
 
   /// Neutral-warm editorial swatches intentionally outside the blue hue band (205..225 deg)
   /// so deterministic placeholder images never false-trigger accent-leak pixel scanners.
@@ -52,13 +62,14 @@ final class OfflineFixtureURLProtocol: URLProtocol, @unchecked Sendable {
     RGBSwatch(red: 198, green: 194, blue: 184)
   ]
 
-  /// Installs this protocol into Foundation URL loading, Petrel's `NetworkService`,
-  /// and `Nuke.ImagePipeline.shared` so neither API nor media requests leave the device.
-  static func install(
+  /// Configures in-memory offline fixture routing and (optionally) `Nuke.ImagePipeline.shared`
+  /// without mutating Foundation's global `URLProtocol` list or Petrel's process-wide network hook.
+  static func configure(
     strict: Bool = true,
     customResponses: [String: Data] = [:],
-    onUnexpectedRequest: (@Sendable (URLRequest) -> Void)? = nil
-  ) async {
+    onUnexpectedRequest: (@Sendable (URLRequest) -> Void)? = nil,
+    configureImagePipeline: Bool = false
+  ) {
     lock.withLock {
       isStrictMode = strict
       customXRPCResponses = customResponses
@@ -66,9 +77,7 @@ final class OfflineFixtureURLProtocol: URLProtocol, @unchecked Sendable {
       recorded.removeAll(keepingCapacity: true)
     }
 
-    _ = URLProtocol.registerClass(OfflineFixtureURLProtocol.self)
-    await NetworkService.setNetworkTestProtocolClasses([OfflineFixtureURLProtocol.self])
-
+    guard configureImagePipeline else { return }
     let shouldConfigureImagePipeline = lock.withLock { () -> Bool in
       let needsInstall = !installed
       installed = true
@@ -84,6 +93,103 @@ final class OfflineFixtureURLProtocol: URLProtocol, @unchecked Sendable {
       pipelineConfig.imageCache = ImageCache(costLimit: 1024 * 1024 * 32)
       ImagePipeline.shared = ImagePipeline(configuration: pipelineConfig)
     }
+  }
+
+  /// Registers `OfflineFixtureURLProtocol` with Foundation URL loading (reference-counted)
+  /// and configures `Nuke.ImagePipeline.shared`. Does NOT occupy Petrel's process-wide
+  /// `NetworkService` test hook — use `withNetworkTestHook` around `ATProtoClient` construction.
+  static func install(
+    strict: Bool = true,
+    customResponses: [String: Data] = [:],
+    onUnexpectedRequest: (@Sendable (URLRequest) -> Void)? = nil
+  ) async {
+    configure(
+      strict: strict,
+      customResponses: customResponses,
+      onUnexpectedRequest: onUnexpectedRequest,
+      configureImagePipeline: true
+    )
+
+    let shouldRegisterGlobal = lock.withLock { () -> Bool in
+      globalRegistrationCount += 1
+      return globalRegistrationCount == 1
+    }
+    if shouldRegisterGlobal {
+      _ = URLProtocol.registerClass(OfflineFixtureURLProtocol.self)
+    }
+  }
+
+  /// Releases one reference to Foundation's global `URLProtocol` registration and clears
+  /// Petrel's test hook if it still holds `OfflineFixtureURLProtocol`.
+  static func uninstall() {
+    let shouldUnregisterGlobal = lock.withLock { () -> Bool in
+      guard globalRegistrationCount > 0 else { return false }
+      globalRegistrationCount -= 1
+      return globalRegistrationCount == 0
+    }
+    if shouldUnregisterGlobal {
+      URLProtocol.unregisterClass(OfflineFixtureURLProtocol.self)
+    }
+    clearNetworkTestHookIfOwned()
+  }
+
+  /// Temporarily claims Petrel's process-wide `NetworkService` test protocol slot solely for
+  /// client construction (Petrel copies `protocolClasses` into its `URLSessionConfiguration`
+  /// during `ATProtoClient.init`), then restores the slot to `nil` so concurrent and subsequent
+  /// test suites (`ChatLogPollErrorTests`, `ModerationStateNetworkHook`, etc.) are unaffected.
+  @MainActor
+  static func withNetworkTestHook<Result>(
+    strict: Bool = true,
+    customResponses: [String: Data] = [:],
+    onUnexpectedRequest: (@Sendable (URLRequest) -> Void)? = nil,
+    timeout: Duration = .seconds(30),
+    construct: () async throws -> Result
+  ) async throws -> Result {
+    configure(
+      strict: strict,
+      customResponses: customResponses,
+      onUnexpectedRequest: onUnexpectedRequest,
+      configureImagePipeline: true
+    )
+
+    await acquireNetworkHook()
+    defer { releaseNetworkHook() }
+
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+    while NetworkService.getNetworkTestProtocolClasses() != nil {
+      guard ContinuousClock.now < deadline else { throw NetworkHookBusyError() }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+
+    NetworkService.setNetworkTestProtocolClasses([OfflineFixtureURLProtocol.self])
+    defer { clearNetworkTestHookIfOwned() }
+    return try await construct()
+  }
+
+  @MainActor
+  private static func acquireNetworkHook() async {
+    if networkHookHeld {
+      await withCheckedContinuation { networkHookWaiters.append($0) }
+    } else {
+      networkHookHeld = true
+    }
+  }
+
+  @MainActor
+  private static func releaseNetworkHook() {
+    if networkHookWaiters.isEmpty {
+      networkHookHeld = false
+    } else {
+      networkHookWaiters.removeFirst().resume()
+    }
+  }
+
+  private static func clearNetworkTestHookIfOwned() {
+    guard let current = NetworkService.getNetworkTestProtocolClasses(),
+      current.count == 1,
+      ObjectIdentifier(current[0]) == ObjectIdentifier(OfflineFixtureURLProtocol.self)
+    else { return }
+    NetworkService.setNetworkTestProtocolClasses(nil)
   }
 
   /// Clears recorded request logs and optional custom overrides.

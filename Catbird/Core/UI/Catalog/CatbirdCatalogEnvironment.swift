@@ -36,6 +36,7 @@ final class CatbirdCatalogSession {
   func cleanup() {
     sceneContext.invalidate()
     appState.cleanup()
+    OfflineFixtureURLProtocol.uninstall()
   }
 }
 
@@ -49,7 +50,6 @@ enum CatbirdCatalogEnvironment {
     strictOffline: Bool = true
   ) async throws -> CatbirdCatalogSession {
     PetrelCatbirdLexicons.register()
-    await OfflineFixtureURLProtocol.install(strict: strictOffline)
 
     #if os(iOS)
     if config.disableAnimations {
@@ -66,10 +66,12 @@ enum CatbirdCatalogEnvironment {
     container.mainContext.insert(settings)
     try container.mainContext.save()
 
-    let client = await ATProtoClient(
-      baseURL: URL(string: "https://127.0.0.1")!,
-      userAgent: "Catbird/1.0-Catalog"
-    )
+    let client = try await OfflineFixtureURLProtocol.withNetworkTestHook(strict: strictOffline) {
+      await ATProtoClient(
+        baseURL: URL(string: "https://127.0.0.1")!,
+        userAgent: "Catbird/1.0-Catalog"
+      )
+    }
     let appState = AppState(
       userDID: did,
       client: client,
@@ -95,6 +97,8 @@ enum CatbirdCatalogEnvironment {
     appState.appSettings.initialize(with: container.mainContext, accountDID: did)
     appState.composerDraftManager.configureForTesting(modelContext: container.mainContext)
     apply(config: config, to: appState)
+
+    await OfflineFixtureURLProtocol.install(strict: strictOffline)
 
     let sceneContext = SceneNavigationContext(appState: appState, sceneID: UUID())
     return CatbirdCatalogSession(
