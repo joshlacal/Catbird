@@ -95,7 +95,8 @@ struct SystemCircleKeychain: CircleKeychain {
 /// re-wrap list (spec §6 rules 8 and 11, I8).
 ///
 /// Backed by the Keychain: one generic-password item per Space, service
-/// `blue.catbird.circles.keys`, account `<accountDID>|<spaceURI>`, accessible
+/// `blue.catbird.circles.keys`, account `<accountDID>|<spaceURI>` (the
+/// `at:space/...` form; alpha-form accounts are moved, or merged, on first read), accessible
 /// after first unlock on this device only, never synced. The item holds a JSON
 /// blob `{ "versions": { "<n>": { key, createdAt, reason, senderEpochHead?,
 /// recordCID? } }, "pending": { "<did>": "<reason>" }, "lastRewrapAt"?, "members": { "<did>": joinedAtVersion },
@@ -109,6 +110,8 @@ actor CircleKeyStore {
 
   private let accountDID: String
   private let keychain: any CircleKeychain
+  /// Whether alpha-form Keychain accounts were moved (`migrateLegacyAccountsIfNeeded`).
+  private var legacyAccountsMigrated = false
 
   init(accountDID: String, keychain: any CircleKeychain) {
     self.accountDID = accountDID
@@ -238,6 +241,22 @@ actor CircleKeyStore {
     try mutate(spaceURI) { $0.migration = nil }
   }
 
+  // MARK: Alpha rekey
+
+  /// The newest key version an item saved during the Spaces alpha held, set
+  /// when that item was moved to the current account form. Those versions
+  /// were wrapped under the old `at://{did}/space/...` form, so no device
+  /// opens their records under `at:space/...`; the owner writes one fresh
+  /// version past this one (`CircleKeyManager.rekeyAlphaCircleIfNeeded`).
+  /// Nil when nothing is owed.
+  func alphaRekeyAfterVersion(spaceURI: String) async throws -> UInt64? {
+    try load(spaceURI).alphaRekeyAfterVersion
+  }
+
+  func clearAlphaRekey(spaceURI: String) async throws {
+    try mutate(spaceURI) { $0.alphaRekeyAfterVersion = nil }
+  }
+
   // MARK: Wipe
 
   /// Returns `true` when at least one Circle key record is stored for `accountDID`.
@@ -284,6 +303,8 @@ actor CircleKeyStore {
     var lastRewrapAt: String?
     var members: [String: UInt64] = [:]
     var migration: Migration?
+    /// See `alphaRekeyAfterVersion(spaceURI:)`.
+    var alphaRekeyAfterVersion: UInt64?
 
     init() {}
 
@@ -294,23 +315,82 @@ actor CircleKeyStore {
       lastRewrapAt = try container.decodeIfPresent(String.self, forKey: .lastRewrapAt)
       members = try container.decodeIfPresent([String: UInt64].self, forKey: .members) ?? [:]
       migration = try container.decodeIfPresent(Migration.self, forKey: .migration)
+      alphaRekeyAfterVersion = try container.decodeIfPresent(UInt64.self, forKey: .alphaRekeyAfterVersion)
+    }
+
+    /// This alpha item, marked as owing a rekey past its newest version.
+    func markedForAlphaRekey() -> Blob {
+      var marked = self
+      if let newest = versions.keys.compactMap(UInt64.init).max() {
+        marked.alphaRekeyAfterVersion = max(alphaRekeyAfterVersion ?? 0, newest)
+      }
+      return marked
+    }
+
+    /// This item with what only `legacy` holds (alpha-account move): every
+    /// key version and pending re-wrap, and per member the later history
+    /// boundary. Where both hold an entry, this item's wins.
+    func merging(legacy: Blob) -> Blob {
+      var merged = self
+      merged.versions.merge(legacy.versions) { current, _ in current }
+      merged.pending.merge(legacy.pending) { current, _ in current }
+      merged.members.merge(legacy.members) { max($0, $1) }
+      merged.lastRewrapAt = lastRewrapAt ?? legacy.lastRewrapAt
+      merged.migration = migration ?? legacy.migration
+      let owed = [alphaRekeyAfterVersion, legacy.alphaRekeyAfterVersion].compactMap { $0 }
+      merged.alphaRekeyAfterVersion = owed.max()
+      return merged
     }
   }
 
   private func account(_ spaceURI: String) -> String { "\(accountDID)|\(spaceURI)" }
 
   private func load(_ spaceURI: String) throws -> Blob {
+    try migrateLegacyAccountsIfNeeded()
     guard let data = try keychain.read(service: Self.keychainService, account: account(spaceURI)) else {
       return Blob()
     }
     return try JSONDecoder().decode(Blob.self, from: data)
   }
 
+  /// Moves items saved during the Spaces alpha, account
+  /// `<accountDID>|at://{did}/space/...`, to the current account
+  /// `<accountDID>|at:space/{did}/...`, once per store. When both exist they
+  /// are merged (`Blob.merging`), and the alpha item is deleted only after the
+  /// current one is written. A Keychain error is thrown, so no read or
+  /// mutation proceeds on an unmigrated account; it is tried again on the
+  /// next call. A pair that will not decode is left in place.
+  /// Removed together with `LegacySpaceURI`.
+  private func migrateLegacyAccountsIfNeeded() throws {
+    guard !legacyAccountsMigrated else { return }
+    let prefix = "\(accountDID)|"
+    for legacyAccount in try keychain.accounts(service: Self.keychainService) where legacyAccount.hasPrefix(prefix) {
+      guard let current = LegacySpaceURI.fromLegacySpaceUri(String(legacyAccount.dropFirst(prefix.count))) else {
+        continue
+      }
+      if let legacyData = try keychain.read(service: Self.keychainService, account: legacyAccount) {
+        let decoder = JSONDecoder()
+        let legacyBlob = (try? decoder.decode(Blob.self, from: legacyData))?.markedForAlphaRekey()
+        var data = try legacyBlob.map { try JSONEncoder().encode($0) } ?? legacyData
+        if let currentData = try keychain.read(service: Self.keychainService, account: account(current)) {
+          guard let currentBlob = try? decoder.decode(Blob.self, from: currentData), let legacyBlob
+          else { continue }
+          data = try JSONEncoder().encode(currentBlob.merging(legacy: legacyBlob))
+        }
+        try keychain.write(
+          service: Self.keychainService, account: account(current), data: data, accessibility: Self.accessibility
+        )
+      }
+      try keychain.delete(service: Self.keychainService, account: legacyAccount)
+    }
+    legacyAccountsMigrated = true
+  }
+
   private func mutate(_ spaceURI: String, _ change: (inout Blob) -> Void) throws {
     var blob = try load(spaceURI)
     change(&blob)
     if blob.versions.isEmpty && blob.pending.isEmpty && blob.members.isEmpty && blob.lastRewrapAt == nil
-      && blob.migration == nil {
+      && blob.migration == nil && blob.alphaRekeyAfterVersion == nil {
       try keychain.delete(service: Self.keychainService, account: account(spaceURI))
       return
     }

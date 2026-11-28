@@ -19,35 +19,48 @@ struct DeviceApprovalCard: View {
   }
 
   private func card(_ copy: DeviceApprovalCopy) -> some View {
-    VStack(alignment: .leading, spacing: 10) {
+    VStack(alignment: .leading, spacing: Space.md) {
       Label {
         Text(copy.title)
-          .font(.headline)
+          .appFont(AppTextRole.headline)
       } icon: {
         Image(systemName: copy.tone == .blocking ? "lock.shield" : "person.badge.shield.checkmark")
-          .foregroundStyle(copy.tone == .blocking ? Color.orange : Color.blue)
+          .foregroundStyle(copy.tone == .blocking ? Color.orange : Color.accentColor)
       }
 
       Text(copy.message)
-        .font(.subheadline)
+        .appFont(AppTextRole.subheadline)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
 
       if let failure = model.failure {
-        Text(failure)
-          .font(.footnote)
+        Text(failure.message)
+          .appFont(AppTextRole.footnote)
           .foregroundStyle(.red)
+          .fixedSize(horizontal: false, vertical: true)
           .accessibilityIdentifier("device-approval-failure")
+        if let detail = failure.detail {
+          DisclosureGroup("Details for Support") {
+            Text(verbatim: detail)
+              .appFont(AppTextRole.caption2)
+              .monospaced()
+              .textSelection(.enabled)
+              .frame(maxWidth: .infinity, alignment: .leading)
+          }
+          .appFont(AppTextRole.footnote)
+          .foregroundStyle(.secondary)
+          .accessibilityIdentifier("device-approval-failure-details")
+        }
       }
 
-      HStack(spacing: 10) {
-        Button(Self.label(for: copy.primary)) { perform(copy.primary) }
-          .buttonStyle(.borderedProminent)
+      HStack(spacing: Space.sm) {
+        Button(Self.label(for: copy.primary)) { self.perform(copy.primary) }
+          .buttonStyle(.catbird(.primary, size: .sm))
           .disabled(model.isWorking)
           .accessibilityIdentifier("device-approval-primary")
         if let secondary = copy.secondary {
-          Button(Self.label(for: secondary)) { perform(secondary) }
-            .buttonStyle(.bordered)
+          Button(Self.label(for: secondary)) { self.perform(secondary) }
+            .buttonStyle(.catbird(.tonal, size: .sm))
             .disabled(model.isWorking)
             .accessibilityIdentifier("device-approval-secondary")
         }
@@ -57,9 +70,9 @@ struct DeviceApprovalCard: View {
         }
       }
     }
-    .padding(14)
+    .padding(Space.md)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 14))
+    .catbirdCard(copy.tone == .blocking ? .notice(.warning) : .embed)
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier("device-approval-card")
   }
@@ -84,7 +97,7 @@ struct DeviceApprovalCard: View {
     case .checkAgain:
       Task { @MainActor in
         await model.refresh(appState: appState)
-        await model.finishSelfApprovalIfDue(appState: appState)
+        await model.finishQueuedRestore(appState: appState, force: true)
       }
     }
   }
@@ -93,7 +106,7 @@ struct DeviceApprovalCard: View {
 // MARK: - Tracking
 
 /// Keeps a `DeviceApprovalModel` current for the view it modifies: loads it per account,
-/// reloads when the app comes back, finishes a due self-approval, and presents the restore
+/// reloads when the app comes back, publishes a queued restore, and presents the restore
 /// and Devices screens the card opens.
 struct DeviceApprovalTracking: ViewModifier {
   @Environment(AppState.self) private var appState
@@ -112,7 +125,7 @@ struct DeviceApprovalTracking: ViewModifier {
         guard phase == .active else { return }
         Task { @MainActor in
           await model.refresh(appState: appState)
-          await model.finishSelfApprovalIfDue(appState: appState)
+          await model.finishQueuedRestore(appState: appState)
         }
       }
       .sheet(item: $model.presentedSheet, onDismiss: {

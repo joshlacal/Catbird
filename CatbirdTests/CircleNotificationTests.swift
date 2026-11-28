@@ -901,7 +901,7 @@ struct CircleNotificationTests {
   func errorUIRendersContentFreeCategoryTextAndNeverLeaksCanaries() {
     let canaryServerURL = "https://sensitive.internal.server.net/v1/api"
     let canaryDID = "did:plc:topsecretcanary12345"
-    let canarySpace = "at://did:plc:canary/space/blue.catbird.circle/secretspace"
+    let canarySpace = "at:space/did:plc:canary/blue.catbird.circle/secretspace"
     let canaryMessage = "Internal database constraint violation at row 42 for token_abc123"
 
     let testErrors: [CircleError] = [
@@ -1308,10 +1308,10 @@ struct CircleNotificationTests {
       func report(post: ATProtocolURI, circle: CircleSummary, reason: CircleReportReason, details: String?) async throws -> UUID { UUID() }
       func activateCircle(space: SpaceRef) async throws -> CircleSummary { CircleTestFixtures.family }
       func publishPost(destination: CircleSummary, draft: CirclePostDraft) async throws -> ATProtocolURI {
-        try! ATProtocolURI(uriString: "at://\(E2EConstants.aliceDIDString)/space/blue.catbird.circle/family123/did:plc:alice/app.bsky.feed.post/post1")
+        try! ATProtocolURI(uriString: "at:space/\(E2EConstants.aliceDIDString)/blue.catbird.circle/family123/did:plc:alice/app.bsky.feed.post/post1")
       }
       func like(post: AppBskyFeedDefs.PostView, circle: CircleSummary) async throws -> ATProtocolURI {
-        try! ATProtocolURI(uriString: "at://\(E2EConstants.aliceDIDString)/space/blue.catbird.circle/family123/did:plc:alice/app.bsky.feed.like/like1")
+        try! ATProtocolURI(uriString: "at:space/\(E2EConstants.aliceDIDString)/blue.catbird.circle/family123/did:plc:alice/app.bsky.feed.like/like1")
       }
       func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws {}
       func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws {}

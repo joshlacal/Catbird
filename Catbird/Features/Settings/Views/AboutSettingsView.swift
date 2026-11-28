@@ -13,11 +13,7 @@ struct AboutSettingsView: View {
         Form {
             Section {
                 VStack(spacing: 16) {
-                    Image("CatbirdIcon")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 120, height: 120)
-                        .clipShape(Radius.lg.shape)
+                    BirdSpinner(size: 140)
                         .accessibilityHidden(true)
 
                     VStack(spacing: 8) {

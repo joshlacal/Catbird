@@ -82,8 +82,14 @@ struct DeviceApprovalCopy: Equatable, Sendable {
       let approver = approvers.first?.name
       if restoreQueued {
         if selfApprovesAt <= now { return finishing }
+        // An unnamed quiet approver is often a device that's gone (a wiped phone or an old
+        // browser), so don't promise it can approve: say why the wait exists instead.
+        let isQuiet: Bool
+        if case .approversQuiet = state { isQuiet = true } else { isQuiet = false }
         let sooner = approver.map { "\($0) can approve this device sooner in Settings > Devices." }
-          ?? "Another device you’re signed in on can approve it sooner in Settings > Devices."
+          ?? (isQuiet
+            ? "An older device on your account still counts as signed in, so the server waits until then. If you still have it, it can approve this one sooner in Settings > Devices."
+            : "Another device you’re signed in on can approve it sooner in Settings > Devices.")
         return DeviceApprovalCopy(
           title: "Encrypted chat unlocks \(when(selfApprovesAt))",
           message: "Your backup is restored. \(sooner)",

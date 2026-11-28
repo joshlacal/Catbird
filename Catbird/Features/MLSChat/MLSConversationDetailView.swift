@@ -76,6 +76,7 @@ struct MLSOrdinaryConversationDetailView: View {
   @State private var blockTarget: MLSModerationTarget?
   @State private var reactionDetailsTarget: MLSReactionInspectionTarget?
   @State private var showingLeaveConfirmation = false
+  @State private var deleteForMeMessageID: String?
 
   private let logger = Logger(subsystem: "blue.catbird", category: "MLSConversationDetail")
 
@@ -99,6 +100,22 @@ struct MLSOrdinaryConversationDetailView: View {
       for: dataSource.conversationRecoveryState,
       leave: dataSource.leavePresentation
     )
+  }
+
+  /// With history backup off, nothing is published for the account's other devices, so the
+  /// erase reaches this device only.
+  private var deleteForMeExplanation: String {
+    if historyBackupEnabled == false {
+      String(
+        localized: "This erases the message and its attachments from this device. Others in the conversation will still have it.",
+        comment: "Delete for Me confirmation body for an encrypted chat when history backup is off"
+      )
+    } else {
+      String(
+        localized: "This erases the message and its attachments from all your devices. Others in the conversation will still have it.",
+        comment: "Delete for Me confirmation body for an encrypted chat when history backup is on"
+      )
+    }
   }
 
   private var latestReactedMessage: MLSMessageAdapter? {
@@ -145,6 +162,10 @@ struct MLSOrdinaryConversationDetailView: View {
               displayName: message.senderDisplayName ?? profile?.displayName ?? resolvedDID,
               messageId: message.id
             )
+          },
+          onDeleteMessage: { message in
+            guard message.canDeleteForMe else { return }
+            deleteForMeMessageID = message.id
           }
         )
         .overlay(alignment: .top) {
@@ -359,6 +380,24 @@ struct MLSOrdinaryConversationDetailView: View {
           }
         )
       }
+    }
+    .alert(
+      "Delete for Me?",
+      isPresented: Binding(
+        get: { deleteForMeMessageID != nil },
+        set: { if !$0 { deleteForMeMessageID = nil } }
+      )
+    ) {
+      Button("Cancel", role: .cancel) {
+        deleteForMeMessageID = nil
+      }
+      Button("Delete", role: .destructive) {
+        guard let messageID = deleteForMeMessageID, let dataSource else { return }
+        deleteForMeMessageID = nil
+        Task { await dataSource.deleteMessageForMe(messageID: messageID) }
+      }
+    } message: {
+      Text(deleteForMeExplanation)
     }
     .alert("Leave Encrypted Conversation?", isPresented: $showingLeaveConfirmation) {
       Button("Cancel", role: .cancel) {}

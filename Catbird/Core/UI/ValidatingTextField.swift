@@ -3,105 +3,82 @@ import SwiftUI
 import UIKit
 #endif
 
-/// A text field that displays validation errors
+/// A text field that displays validation errors.
+/// Thin source-compatible wrapper backed by the Kit's `CatbirdTextField`.
 struct ValidatingTextField: View {
-    @Binding var text: String
-    var prompt: String
-    var icon: String
-    /// Name VoiceOver reads for the field; defaults to the placeholder.
-    var label: String? = nil
-    var validationError: String?
-    var isDisabled: Bool
+  @Binding var text: String
+  var prompt: String
+  var icon: String
+  /// Name VoiceOver reads for the field; defaults to the placeholder.
+  var label: String?
+  var validationError: String?
+  var isDisabled: Bool
+  #if os(iOS)
+  var keyboardType: UIKeyboardType = .default
+  var textContentType: UITextContentType?
+  #endif
+  var submitLabel: SubmitLabel = .done
+  var onSubmit: (() -> Void)?
+
+  var body: some View {
     #if os(iOS)
-    var keyboardType: UIKeyboardType = .default
-    var textContentType: UITextContentType? = nil
+    CatbirdTextField(
+      text: $text,
+      prompt: prompt,
+      label: label,
+      leadingSystemImage: icon,
+      validationError: validationError,
+      isDisabled: isDisabled,
+      autocorrectionDisabled: true,
+      keyboardType: keyboardType,
+      textContentType: textContentType,
+      autocapitalization: .never,
+      submitLabel: submitLabel,
+      onSubmit: onSubmit
+    )
+    #else
+    CatbirdTextField(
+      text: $text,
+      prompt: prompt,
+      label: label,
+      leadingSystemImage: icon,
+      validationError: validationError,
+      isDisabled: isDisabled,
+      autocorrectionDisabled: true,
+      submitLabel: submitLabel,
+      onSubmit: onSubmit
+    )
     #endif
-    var submitLabel: SubmitLabel = .done
-    var onSubmit: (() -> Void)?
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Image(systemName: icon)
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
-
-                #if os(iOS)
-                TextField(label ?? prompt, text: $text, prompt: Text(prompt))
-                    .autocorrectionDisabled(true)
-                    #if os(iOS)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(keyboardType)
-                    .textContentType(textContentType)
-                    #endif
-                    .submitLabel(submitLabel)
-                    .onSubmit { onSubmit?() }
-                #else
-                TextField(label ?? prompt, text: $text, prompt: Text(prompt))
-                    .autocorrectionDisabled(true)
-                    .submitLabel(submitLabel)
-                    .onSubmit { onSubmit?() }
-                #endif
-                
-                if !text.isEmpty {
-                    Button(action: { text = "" }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear Text")
-                }
-            }
-            .padding()
-            .background {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.systemBackground)
-                    .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(validationError != nil ? .red.opacity(0.5) : .gray.opacity(0.2), lineWidth: 1)
-            }
-            .disabled(isDisabled)
-            
-            if let error = validationError {
-                Label(error, systemImage: "exclamationmark.circle")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.red)
-                    .padding(.horizontal, 4)
-            }
-        }
-    }
-}
-
-#Preview {
-  AsyncPreviewContent { appState in
-    VStack {
-            ValidatingTextField(
-                text: .constant("test"),
-                prompt: "Enter value",
-                icon: "envelope",
-                validationError: nil,
-                isDisabled: false
-            )
-        
-            ValidatingTextField(
-                text: .constant(""),
-                prompt: "Enter value",
-                icon: "envelope",
-                validationError: "This field is required",
-                isDisabled: false
-            )
-        
-            ValidatingTextField(
-                text: .constant("test"),
-                prompt: "Enter value",
-                icon: "envelope",
-                validationError: nil,
-                isDisabled: true
-            )
-        }
-        .padding()
   }
 }
 
+#Preview {
+  AsyncPreviewContent { _ in
+    VStack(spacing: Space.md) {
+      ValidatingTextField(
+        text: .constant("test"),
+        prompt: "Enter value",
+        icon: "envelope",
+        validationError: nil,
+        isDisabled: false
+      )
+
+      ValidatingTextField(
+        text: .constant(""),
+        prompt: "Enter value",
+        icon: "envelope",
+        validationError: "This field is required",
+        isDisabled: false
+      )
+
+      ValidatingTextField(
+        text: .constant("test"),
+        prompt: "Enter value",
+        icon: "envelope",
+        validationError: nil,
+        isDisabled: true
+      )
+    }
+    .padding(Space.screenMargin)
+  }
+}

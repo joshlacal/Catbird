@@ -329,8 +329,9 @@ struct MLSMessageAdapter: UnifiedChatMessage {
     isFromCurrentUser && !isSystemMessage && !isTombstone && isServerConfirmed
   }
 
+  /// Any confirmed message, from any sender, can be erased for this account only.
   var canDeleteForMe: Bool {
-    false
+    !isSystemMessage && !isTombstone && isServerConfirmed
   }
 
   private var isServerConfirmed: Bool {

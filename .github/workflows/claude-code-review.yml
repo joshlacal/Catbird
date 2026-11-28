@@ -41,14 +41,22 @@ jobs:
 
           # Direct prompt for automated review (no @claude mention needed)
           prompt: |
-            Please review this pull request and provide feedback on:
-            - Code quality and best practices
-            - Potential bugs or issues
-            - Performance considerations
-            - Security concerns
-            - Test coverage
-            
-            Be constructive and helpful in your feedback.
+            Review this Catbird iOS/macOS pull request with strict attention to both engineering correctness and Catbird's Design System Contract:
+
+            1. **Design System & Visual Consistency (mandatory for any SwiftUI/UIKit/Widget diff)**:
+               - **Kit adoption**: Use `Core/UI/Kit/` primitives (`CatbirdButtonStyle` / `.buttonStyle(.catbird(...))`, `CatbirdIconButton`, `FollowButton`, `FeedLibraryButton`, `.catbirdCard(...)`, `CatbirdChip`, `CatbirdBadge`, `CatbirdNotice`, `CompactPostCard`, `CatbirdTextField`, `CatbirdAvatar`, `CatbirdSectionHeader`, `CatbirdHairline`, `CatbirdSheetChrome`) instead of bespoke duplicates or `.buttonStyle(.bordered/.borderedProminent)`.
+               - **Tokens & 4pt grid**: Use `CatbirdTokens` (`Space.*`, `Radius.*` / `.catbirdClip(.x)`, `ControlHeight`, `AvatarSize`, `Motion.*` / `.catbirdAnimation(...)`, `Elevation`). Flag ANY raw numeric `.padding(...)`, stack `spacing:`, off-4pt-grid values, `.cornerRadius(...)`, non-continuous `RoundedRectangle`, or legacy `DesignTokens.*`.
+               - **Typography**: All SwiftUI text must use `.appFont(AppTextRole.*)` (no `.font(.system(...))`, `.font(.body/.caption/...)`, or unattached `.fontWeight`/`.bold()`). All UIKit text must use `AppUIFont.font(...)` (no raw `UIFont.systemFont`).
+               - **Theme & Dark/Dim/True-Black parity**: Use `CatbirdTheme` (`@Environment(\.catbirdTheme)`) / `ThemeColors` semantic surfaces, text, borders, and accents (`accentChrome`, `accentText`, `onAccent`). Flag hardcoded `Color.blue`/`.blue`/`UIColor.systemBlue`, raw `Color.white`/`Color.black`/`.gray`/RGB/hex literals, magic `.opacity(...)`, and static system backgrounds that break Dim or True Black modes.
+               - **Liquid Glass & Accessibility**: Use `.catbirdGlass(...)` (never legacy `.ultraThinMaterial`/`.regularMaterial`/`UIBlurEffect`), verify Reduce Transparency + True Black opaque fallback + Reduce Motion support, and ensure every interactive control has at least a 44×44pt hit target.
+               - **Budget ratchet & lint**: Verify zero new violations in `.design-lint-budget.json` (any ceiling increase requires `DESIGN_DEBT_APPROVED` + `docs/DECISIONS.md` entry) and no unreasoned `swiftlint:disable` or `design-lint:ignore` comments.
+
+            2. **Engineering Quality**:
+               - Swift 6 strict concurrency (`@Observable`, actors, explicit `self` in closures, no data races)
+               - Cross-platform discipline (ViewModifier abstractions, NEVER inline `#if` in modifier chains, dual `@available(iOS 26.0, macOS 26.0, *)`)
+               - Potential bugs, lifecycle/state leaks, performance regressions, security/privacy issues, and test coverage
+
+            Cite exact `file:line` references for every finding and suggest the exact Catbird Kit/token replacement.
 
           # Optional: Use sticky comments to make Claude reuse the same comment on subsequent pushes to the same PR
           # use_sticky_comment: true

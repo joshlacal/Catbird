@@ -23,7 +23,7 @@ enum CircleOpenFixtures {
   static let owner = try! DID(didString: "did:plc:owner")
   static let author = try! DID(didString: "did:plc:bob")
   static let accountDID = "did:plc:reader"
-  static let spaceURI = try! SpaceRef(uriString: "at://did:plc:owner/space/blue.catbird.circle.encrypted/3enc")
+  static let spaceURI = try! SpaceRef(uriString: "at:space/did:plc:owner/blue.catbird.circle.encrypted/3enc")
   static let circleID = "3l7familycirc"
   static let secretText = "only members may read this"
   static let authorHead = Data(repeating: 0x5A, count: 32)

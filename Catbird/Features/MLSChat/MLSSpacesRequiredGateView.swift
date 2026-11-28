@@ -91,25 +91,25 @@ struct MLSSpacesRequiredGateView: View {
   }
 
   var body: some View {
-    VStack(spacing: 20) {
-      Spacer(minLength: 16)
+    VStack(spacing: Space.xl) {
+      Spacer(minLength: Space.lg)
 
       Image(systemName: iconName)
-        .font(.system(size: 44))
+        .appFont(size: 44, weight: .regular, relativeTo: .largeTitle)
         .foregroundStyle(.tint)
         .accessibilityHidden(true)
 
-      VStack(spacing: 8) {
+      VStack(spacing: Space.sm) {
         Text(headlineText)
           .appFont(AppTextRole.title3)
-          .bold()
+          .fontWeight(.bold)
           .multilineTextAlignment(.center)
 
         Text(bodyText)
           .appFont(AppTextRole.subheadline)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
-          .padding(.horizontal, 24)
+          .padding(.horizontal, Space.xxl)
       }
 
       if eligibility.blueskyDmsAvailable {
@@ -117,10 +117,10 @@ struct MLSSpacesRequiredGateView: View {
           .appFont(AppTextRole.footnote)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
-          .padding(.horizontal, 24)
+          .padding(.horizontal, Space.xxl)
       }
 
-      HStack(spacing: 12) {
+      HStack(spacing: Space.md) {
         if case .missingOAuthScopes = eligibility.reason, let onReauthorizeScopes {
           Button {
             self.requestPermissions(onReauthorizeScopes)
@@ -159,14 +159,14 @@ struct MLSSpacesRequiredGateView: View {
           .appFont(AppTextRole.footnote)
           .foregroundStyle(.red)
           .multilineTextAlignment(.center)
-          .padding(.horizontal, 24)
+          .padding(.horizontal, Space.xxl)
           .accessibilityIdentifier("mls-spaces-permission-failure")
       } else if checkedAgainWithoutChange {
         Text(checkAgainResultText)
-          .font(.footnote)
+          .appFont(AppTextRole.footnote)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
-          .padding(.horizontal, 24)
+          .padding(.horizontal, Space.xxl)
           .accessibilityIdentifier("mls-spaces-check-again-result")
       }
 
@@ -174,42 +174,44 @@ struct MLSSpacesRequiredGateView: View {
         DisclosureGroup("Details for Support") {
           detailsContent
         }
-        .font(.footnote)
+        .appFont(AppTextRole.footnote)
         .foregroundStyle(.secondary)
         .frame(maxWidth: 440, alignment: .leading)
-        .padding(.horizontal, 24)
+        .padding(.horizontal, Space.xxl)
         .accessibilityIdentifier("mls-spaces-details")
       }
 
-      Spacer(minLength: 16)
+      Spacer(minLength: Space.lg)
     }
     .accessibilityIdentifier("mls-spaces-required-gate")
   }
 
   @ViewBuilder
   private var detailsContent: some View {
-    VStack(alignment: .leading, spacing: 8) {
+    VStack(alignment: .leading, spacing: Space.sm) {
       if let detail = permissionFailure?.detail {
         Text("Server answer")
-          .font(.caption)
-          .bold()
+          .appFont(AppTextRole.caption)
+          .fontWeight(.bold)
         Text(verbatim: detail)
-          .font(.caption2.monospaced())
+          .appFont(AppTextRole.caption2)
+          .monospaced()
           .textSelection(.enabled)
       }
       if !missingScopes.isEmpty {
         Text("Permissions requested")
-          .font(.caption)
-          .bold()
+          .appFont(AppTextRole.caption)
+          .fontWeight(.bold)
         ForEach(missingScopes, id: \.self) { scope in
           Text(verbatim: scope)
-            .font(.caption2.monospaced())
+            .appFont(AppTextRole.caption2)
+            .monospaced()
             .textSelection(.enabled)
         }
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(.top, 6)
+    .padding(.top, Space.sm)
   }
 
   private func requestPermissions(

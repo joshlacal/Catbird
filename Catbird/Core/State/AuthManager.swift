@@ -1050,13 +1050,18 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
           avatarURL: profile.finalAvatarURL()
         )
       }
-      availableAccounts = availableAccounts.map { account in
+      let refreshedAccounts = availableAccounts.map { account in
         guard let profile = profiles[account.did] else { return account }
         var updated = account
         updated.cachedHandle = AccountInfo.loginHandleCandidate(profile.handle.description)
         updated.cachedDisplayName = profile.displayName
         updated.cachedAvatarURL = profile.finalAvatarURL()
         return updated
+      }
+      // Assigning an unchanged list still invalidates observers, which rebuilds an open
+      // account-switcher menu and scrolls it back to the top.
+      if refreshedAccounts != availableAccounts {
+        availableAccounts = refreshedAccounts
       }
       return profiles
     } catch {

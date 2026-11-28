@@ -276,7 +276,7 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
           } else if message.canDeleteForMe {
             Divider()
             Button("Delete for Me", role: .destructive) {
-              Task { await dataSource.deleteMessage(messageID: id) }
+              Task { await dataSource.deleteMessageForMe(messageID: id) }
             }
           }
         }

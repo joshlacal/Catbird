@@ -19,25 +19,26 @@ enum PostLinkPresentationStyle: Equatable {
 
 extension AttributedString {
   /// Returns a copy with every link/mention/hashtag run colored with the
-  /// dark text accent (`AccentTextColor`). Petrel paints mentions/tags with
-  /// the chrome `.accentColor` and leaves bare links uncolored, both of
-  /// which read too bright against post body copy.
+  /// active theme's WCAG-checked text accent (falling back to the asset-catalog
+  /// `AccentTextColor` when no explicit theme accent is provided). Petrel paints
+  /// mentions/tags with the chrome `.accentColor` and leaves bare links uncolored,
+  /// both of which read too bright against post body copy.
   func applyingPostBodyLinkAccent(
     highlightLinks: Bool = true,
-    linkStyle: String = "color"
+    linkStyle: String = "color",
+    accentColor: Color = Color("AccentTextColor")
   ) -> AttributedString {
     let style = PostLinkPresentationStyle.resolve(
       highlightLinks: highlightLinks,
       linkStyle: linkStyle
     )
     var output = self
-    let textAccent = Color("AccentTextColor")
     let linkRanges = output.runs.compactMap { $0.link != nil ? $0.range : nil }
     for range in linkRanges {
       output[range].foregroundColor = nil
       output[range].underlineStyle = nil
       if style == .color || style == .both {
-        output[range].foregroundColor = textAccent
+        output[range].foregroundColor = accentColor
       }
       if style == .underline || style == .both {
         output[range].underlineStyle = .single

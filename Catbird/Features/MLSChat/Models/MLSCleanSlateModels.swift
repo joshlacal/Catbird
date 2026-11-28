@@ -37,9 +37,11 @@ enum MLSSpaceBlobLocator {
     "\(spaceURI)|\(repoDID)|\(cid)"
   }
 
-  /// Parse either `"{spaceURI}|{repoDID}|{cid}"` or `"at://{spaceDID}/space/{spaceType}/{skey}/{repoDID}#{cid}"`.
+  /// Parse either `"{spaceURI}|{repoDID}|{cid}"` or `"at:space/{spaceDID}/{spaceType}/{skey}/{repoDID}#{cid}"`.
+  /// Locators come from message payloads, so one written during the Spaces alpha
+  /// (`at://{spaceDID}/space/...`) is read leniently and normalized.
   static func parse(_ rawLocator: String) throws -> (space: SpaceRef, repo: DID, cid: CID) {
-    let trimmed = rawLocator.trimmingCharacters(in: .whitespacesAndNewlines)
+    let trimmed = LegacySpaceURI.normalized(rawLocator.trimmingCharacters(in: .whitespacesAndNewlines))
     if trimmed.contains("|") {
       let parts = trimmed.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
       guard parts.count == 3 else {

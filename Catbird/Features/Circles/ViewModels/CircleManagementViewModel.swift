@@ -155,7 +155,7 @@ final class CircleManagementViewModel {
     self.members = []
   }
 
-  static let placeholderURIString = "at://did:plc:placeholder/space/blue.catbird.circle/new"
+  static let placeholderURIString = "at:space/did:plc:placeholder/blue.catbird.circle/new"
 
   init(service: CircleService, userDID: String = "") {
     let placeholderURI = (try? SpaceRef(uriString: Self.placeholderURIString))

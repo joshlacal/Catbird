@@ -1093,9 +1093,11 @@ private struct PostContentLayout: View {
         .foregroundStyle(secondaryColor)
         .appBody()
 
+      let effectiveScheme = appState.themeManager.effectiveColorScheme(for: colorScheme)
+      let activeAccentText = appState.themeManager.activeAccentText(for: effectiveScheme)
       if isToYou {
         let youText = Text("you", comment: "Pronoun in 'In reply to you' indicator")
-          .foregroundColor(Color("AccentTextColor"))
+          .foregroundColor(activeAccentText)
         Text(
           "In reply to \(youText)",
           comment: "Reply indicator when a post replies to the signed-in user — variable is the highlighted word 'you'"
@@ -1105,7 +1107,7 @@ private struct PostContentLayout: View {
         .foregroundStyle(secondaryColor)
       } else if let replyTarget {
         let handleText = Text(verbatim: "@\(replyTarget.handle)")
-          .foregroundColor(Color("AccentTextColor"))
+          .foregroundColor(activeAccentText)
         Text(
           "In reply to \(handleText)",
           comment: "Reply indicator showing who a post replies to — variable is the @handle"

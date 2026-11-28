@@ -1070,7 +1070,7 @@ struct EnhancedImageViewer: View {
                 "\(currentIndex + 1) of \(images.count)",
                 comment: "Image viewer header counter — first variable is current image number, second is total images"
               )
-                .foregroundColor(.white)
+                .foregroundStyle(.white)
                 .padding(.leading)
 
               Spacer()
@@ -1078,40 +1078,42 @@ struct EnhancedImageViewer: View {
               // Live Text button - only show if supported
               if liveTextSupported {
                 Button {
-                  liveTextEnabled.toggle()
+                  self.liveTextEnabled.toggle()
                 } label: {
                   Image(systemName: liveTextEnabled ? "text.viewfinder.fill" : "text.viewfinder")
                     .appFont(AppTextRole.title2)
-                    .foregroundColor(.white)
-                    .frame(width: 40, height: 40)
+                    .foregroundStyle(.white)
+                    .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+                    .contentShape(Rectangle())
                 }
-                .padding(.trailing, 8)
+                .padding(.trailing, Space.xs)
               }
 
               // Share button
               Button {
-                shareCurrentImage()
+                self.shareCurrentImage()
               } label: {
                 Image(systemName: "square.and.arrow.up")
                   .appFont(AppTextRole.title2)
-                  .foregroundColor(.white)
+                  .foregroundStyle(.white)
                   .offset(y: -3)
-
-                  .frame(width: 40, height: 40)
+                  .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+                  .contentShape(Rectangle())
               }
               .accessibilityLabel("Share image")
-              .padding(.trailing, 8)
+              .padding(.trailing, Space.xs)
 
               Button {
-                isPresented = false
+                self.isPresented = false
               } label: {
                 Image(systemName: "xmark")
-                  .foregroundColor(.white)
+                  .foregroundStyle(.white)
                   .appFont(AppTextRole.title2)
-                  .frame(width: 40, height: 40)
+                  .frame(minWidth: ControlHeight.minHitTarget, minHeight: ControlHeight.minHitTarget)
+                  .contentShape(Rectangle())
               }
               .accessibilityLabel("Close image viewer")
-              .padding(.trailing, 8)
+              .padding(.trailing, Space.xs)
 
             }
             .background(

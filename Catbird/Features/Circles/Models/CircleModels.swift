@@ -42,7 +42,7 @@ extension BlueCatbirdCircleDefs.CircleSummary {
 /// document — and is the value named in the memberspace policy's `allowedApps`. `serviceDID`
 /// is only the `atproto-proxy` target, not an OAuth client identifier.
 enum CircleConfiguration {
-  static let protocolRevision = "d4def6e9f521896ed8222f576d54923d00b5fbeb"
+  static let protocolRevision = "1f510f8e36a973f6fd055da349b586918805ae66"
 
   /// Service identifier the gateway proxies Circle reads to.
   static let serviceDID = "did:web:circles.catbird.blue#atproto_circles"

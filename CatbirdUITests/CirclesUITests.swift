@@ -174,7 +174,7 @@ final class CirclesUITests: XCTestCase {
     XCTAssertTrue(circleBadge.waitForExistence(timeout: 5), "Expected UI Family circle badge on post")
 
     // 5. Verify reply and like actions inside this post container
-    let targetContainer = postContainer(for: "at://did:plc:alicee2efixture/space/blue.catbird.circle/e2e-circle-1/did:plc:alicee2efixture/app.bsky.feed.post/e2e-post-1")
+    let targetContainer = postContainer(for: "at:space/did:plc:alicee2efixture/blue.catbird.circle/e2e-circle-1/did:plc:alicee2efixture/app.bsky.feed.post/e2e-post-1")
     let replyButton = targetContainer.buttons["replyButton"].firstMatch
     XCTAssertTrue(replyButton.waitForExistence(timeout: 5), "Expected replyButton on Circle post")
     replyButton.tap()
@@ -194,7 +194,7 @@ final class CirclesUITests: XCTestCase {
 
     // Refresh Circles feed and check reply count
     openCirclesFeed()
-    let updatedTarget = postContainer(for: "at://did:plc:alicee2efixture/space/blue.catbird.circle/e2e-circle-1/did:plc:alicee2efixture/app.bsky.feed.post/e2e-post-1")
+    let updatedTarget = postContainer(for: "at:space/did:plc:alicee2efixture/blue.catbird.circle/e2e-circle-1/did:plc:alicee2efixture/app.bsky.feed.post/e2e-post-1")
     let updatedReplyButton = updatedTarget.buttons["replyButton"].firstMatch
     XCTAssertTrue(updatedReplyButton.waitForExistence(timeout: 5), "Expected reply button on updated post")
     XCTAssertTrue(updatedReplyButton.label.contains("1"), "Reply count should be 1, got \(updatedReplyButton.label)")
@@ -318,7 +318,7 @@ final class CirclesUITests: XCTestCase {
     openCirclesFeed()
 
     // First prove a Circle post and badge exists
-    let postTarget = postContainer(for: "at://did:plc:alicee2efixture/space/blue.catbird.circle/family123/did:plc:alicee2efixture/app.bsky.feed.post/post1")
+    let postTarget = postContainer(for: "at:space/did:plc:alicee2efixture/blue.catbird.circle/family123/did:plc:alicee2efixture/app.bsky.feed.post/post1")
 
     let circlePostText = postTarget.staticTexts["Welcome to Family Circle"]
     XCTAssertTrue(circlePostText.waitForExistence(timeout: 5), "Seeded Family post text must exist")
@@ -359,7 +359,7 @@ final class CirclesUITests: XCTestCase {
 
     openCirclesFeed()
 
-    let target = postContainer(for: "at://did:plc:alicee2efixture/space/blue.catbird.circle/family123/did:plc:alicee2efixture/app.bsky.feed.post/post1")
+    let target = postContainer(for: "at:space/did:plc:alicee2efixture/blue.catbird.circle/family123/did:plc:alicee2efixture/app.bsky.feed.post/post1")
 
     let replyButton = target.buttons["replyButton"].firstMatch
     XCTAssertTrue(replyButton.waitForExistence(timeout: 5), "Expected replyButton on Circle post")
@@ -378,7 +378,7 @@ final class CirclesUITests: XCTestCase {
     let postButton = app.buttons["Post"]
     postButton.tap()
 
-    let updatedTarget = postContainer(for: "at://did:plc:alicee2efixture/space/blue.catbird.circle/family123/did:plc:alicee2efixture/app.bsky.feed.post/post1")
+    let updatedTarget = postContainer(for: "at:space/did:plc:alicee2efixture/blue.catbird.circle/family123/did:plc:alicee2efixture/app.bsky.feed.post/post1")
     let updatedReply = updatedTarget.buttons["replyButton"].firstMatch
     XCTAssertTrue(updatedReply.waitForExistence(timeout: 5), "Expected reply button")
     XCTAssertTrue(updatedReply.label.contains("1"), "Parent post reply count should be 1")

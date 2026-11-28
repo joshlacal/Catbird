@@ -92,11 +92,11 @@ struct AskCatbirdThreadFormatterTests {
             let row = try #require(rows.first { $0["id"] as? String == uri(index) })
             #expect(row["author"] as? String == "@alice.bsky.social")
             #expect(row["text"] as? String == fullText + " \(index)")
-            #expect(row["textTruncated"] as? Bool == false)
-            if index > 0 {
-                #expect(row["replyTo"] as? String == uri(index - 1))
-                #expect(row["root"] as? String == uri(0))
-            }
+            #expect(row["textTruncated"] == nil)
+            #expect(row["root"] == nil)
+            #expect(row["depth"] as? Int == index)
+            // Depth and order place direct replies; deeper replies name their parent.
+            #expect(row["replyTo"] as? String == (index > 1 ? uri(index - 1) : nil))
         }
         #expect(transcript.sources.count == count)
     }
@@ -112,10 +112,25 @@ struct AskCatbirdThreadFormatterTests {
         #expect(rows.count == 6)
         #expect(rows.first?["id"] as? String == uri(7))
         #expect(rows.first?["role"] as? String == "focus")
-        #expect(rows.first?["textTruncated"] as? Bool == false)
+        #expect(rows.first?["textTruncated"] == nil)
         #expect(rows.first?["text"] as? String == String(repeating: "x", count: 250))
         #expect(payload["omittedReturnedItems"] as? Int == 3)
         #expect(payload["serverReportsAdditionalContext"] as? Bool == true)
+    }
+
+    @Test(.enabled(if: formatterAvailable)) func shortPostIdsReplaceURIsAndExpandBack() throws {
+        guard #available(iOS 26.0, macOS 26.0, *) else { return }
+        let refs = AskCatbirdPostRefs()
+        let items = try (0 ..< 3).map { try item(index: $0, depth: $0, text: "Post \($0)") }
+        let transcript = try AskCatbirdThreadFormatter.format(.init(thread: items, hasOtherReplies: false), refs: refs)
+        #expect(!transcript.text.contains("at://"))
+        let rows = try #require(payload(transcript.text)["posts"] as? [[String: Any]])
+        #expect(rows.compactMap { $0["id"] as? String } == ["p1", "p2", "p3"])
+        #expect(rows.last?["replyTo"] as? String == "p2")
+        // Sources keep real URIs, and expanded evidence names every post by URI again.
+        #expect(transcript.sources.allSatisfy { $0.uri?.hasPrefix("at://") == true })
+        let expanded = try #require(payload(refs.expandJSON(transcript.text))["posts"] as? [[String: Any]])
+        #expect(expanded.compactMap { $0["id"] as? String } == (0 ..< 3).map(uri))
     }
 
     @Test(.enabled(if: formatterAvailable)) func unreadableFocusDoesNotReturnNeighborsAsTheAnswer() throws {
@@ -135,9 +150,8 @@ struct AskCatbirdThreadFormatterTests {
         let transcript = try AskCatbirdThreadFormatter.format(.init(thread: [focus], hasOtherReplies: false))
         let object = try payload(transcript.text)
         let row = try #require((object["posts"] as? [[String: Any]])?.first)
-        #expect(row["quotedPostURI"] as? String == uri(10))
-        let coverage = try #require(row["coverage"] as? [String])
-        #expect(coverage.contains("Quoted post contents were not supplied."))
+        let notes = try #require(row["notes"] as? [String])
+        #expect(notes.contains("Quoted post contents were not supplied."))
         #expect(row["text"] as? String == "")
     }
 
@@ -162,9 +176,8 @@ struct AskCatbirdThreadFormatterTests {
         ))
         let rows = try #require(payload(transcript.text)["posts"] as? [[String: Any]])
         let row = try #require(rows.first { $0["role"] as? String == "reply" })
-        let media = try #require((row["media"] as? [[String: Any]])?.first)
-        #expect((media["altText"] as? String)?.count == 200)
-        #expect((media["truncatedFields"] as? [String])?.contains("altText") == true)
+        let media = try #require((row["media"] as? [String])?.first)
+        #expect(media == "image: " + String(repeating: "A", count: 200) + "…")
         let quoted = try #require((row["quotedPosts"] as? [[String: Any]])?.first)
         #expect(quoted["text"] as? String == "Hydrated quoted claim")
         #expect(transcript.sources.contains { $0.uri == uri(10) })

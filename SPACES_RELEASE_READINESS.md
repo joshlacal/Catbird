@@ -6,7 +6,7 @@ Governing plan: [Spaces implementation](workspace/docs/execution-plans/2026-10-2
 
 ## November 12, 2026 alpha compatibility
 
-Catbird now speaks the Nov-12 Spaces surface through Petrel: Circle creation reads the renamed `space` result, member changes use one-element `putMembers` and `removeMembers` batches, `allowedApps` is a URI, and current PDS refusal and transient-upstream errors preserve the existing user-facing states. The Circle/AppView lockstep revision is `d4def6e9f521896ed8222f576d54923d00b5fbeb`.
+Catbird now speaks the Nov-12 Spaces surface through Petrel: Circle creation reads the renamed `space` result, member changes use one-element `putMembers` and `removeMembers` batches, `allowedApps` is a URI, and current PDS refusal and transient-upstream errors preserve the existing user-facing states. The Circle/AppView lockstep revision is `1f510f8e36a973f6fd055da349b586918805ae66`. Its Spaces Lexicons match the previous lockstep revision, and Space URIs use the `at:space/` form.
 
 Labyrinth Space history and encrypted Circles crypto are unified on the Wave 2 `CatbirdMLSFFI.xcframework` artifact.
 
