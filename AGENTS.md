@@ -25,15 +25,15 @@ Catbird is a production-ready cross-platform Bluesky client built with SwiftUI a
 ```bash
 # Build for iOS simulator
 xcodebuild -project Catbird.xcodeproj -scheme Catbird \
-  -destination 'platform=iOS Simulator,name=iPhone 16 Pro' build
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
 
 # Run tests
 xcodebuild test -project Catbird.xcodeproj -scheme Catbird \
-  -destination 'platform=iOS Simulator,name=iPhone 16 Pro'
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 
 # Single test
 xcodebuild test -project Catbird.xcodeproj -scheme Catbird \
-  -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
   -only-testing:CatbirdTests/<Suite>/<TestName>
 
 # Quick syntax check
