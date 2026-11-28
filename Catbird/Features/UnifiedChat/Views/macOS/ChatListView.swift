@@ -11,7 +11,7 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
   @Environment(AppState.self) private var appState
   @Bindable var dataSource: DataSource
   @Binding var navigationPath: NavigationPath
-  var onRequestEmojiPicker: ((String) -> Void)? = nil
+  var onRequestEmojiPicker: ((String) -> Void)?
   var isOtherMemberDeleted: Bool = false
 
   private let chatLogger = Logger(subsystem: "blue.catbird", category: "ChatListView")
@@ -265,16 +265,18 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
             }
           }
 
-          if message.canUnsend {
+          if message.canUnsend || message.canDeleteForMe {
             Divider()
+          }
+          if message.canUnsend {
             Button("Unsend", role: .destructive) {
               Task {
                 await dataSource.deleteMessage(messageID: id)
                 unsendStatus = dataSource.message(for: id) == nil ? .unsent : .failed
               }
             }
-          } else if message.canDeleteForMe {
-            Divider()
+          }
+          if message.canDeleteForMe {
             Button("Delete for Me", role: .destructive) {
               Task { await dataSource.deleteMessageForMe(messageID: id) }
             }
